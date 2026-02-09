@@ -1,0 +1,173 @@
+Match 1 : indledende runde
+Match 2 : opsamling
+Match 5 : semifinalen
+Match 6 : Finalen
+
+----------------------------------------------------------------------------
+
+	Match 7 : pulje 1 : Mach 1 (indledende runde)
+	Seat 1 : spiller 1
+	Seat 2 : spiller 2
+	Seat 3 : spiller 3
+	Seat 4 : spiller 4
+		Match 8 : "Kamp 1 pulje  1"
+		Seat 5: spiller 1
+		Seat 6: spiller 2
+		
+		Match 9 : "Kamp 2 pulje 1"
+		Seat 7: spiller 3
+		Seat 8: spiller 4
+		
+		Match 10 : "Kamp 3 pulje 1"
+		Seat 9: spiller 1
+		Seat 10: spiller 3
+		
+		Match 11 : "Kamp 4 pulje 1"
+		Seat 11: spiller 1
+		Seat 12: spiller 4
+		
+		Match 12 : "Kamp 5 pulje 1"
+		Seat 13: spiller 2
+		Seat 14: spiller 3
+		
+		Match 13 : "Kamp 6 pulje 1"
+		Seat 15: spiller 2
+		Seat 16: spiller 4
+		
+		Kampe Afviklet Trigger: 
+		Match 7 : Seat 1 : ResultMatchPlace x
+		Match 7 : Seat 2 : ResultMatchPlace y
+		Match 7 : Seat 3 : ResultMatchPlace z
+		Match 7 : Seat 4 : ResultMatchPlace p
+		
+
+	Match 14 : pulje 2 : Mach 1 (indledende runde)
+	Seat 17 : spiller 5
+	Seat 18 : spiller 6
+	Seat 19 : spiller 7
+	Seat 20 : spiller 8
+		Match 15 : "Kamp 1 pulje  2"
+		Seat 21: spiller 5
+		Seat 22: spiller 6
+		
+		Match 16 : "Kamp 2 pulje 2"
+		Seat 23: spiller 7
+		Seat 24: spiller 8
+		
+		Match 17 : "Kamp 3 pulje 2"
+		Seat 25: spiller 5
+		Seat 26: spiller 7
+		
+		Match 18 : "Kamp 4 pulje 2"
+		Seat 27: spiller 5
+		Seat 28: spiller 8
+		
+		Match 19 : "Kamp 5 pulje 2"
+		Seat 29: spiller 6
+		Seat 30: spiller 7
+		
+		Match 20 : "Kamp 6 pulje 2"
+		Seat 31: spiller 6
+		Seat 32: spiller 8
+		
+		Kampe Afviklet Trigger: 
+		Match 14 : Seat 17 : ResultMatchPlace x
+		Match 14 : Seat 18 : ResultMatchPlace y
+		Match 14 : Seat 19 : ResultMatchPlace z
+		Match 14 : Seat 20 : ResultMatchPlace p
+		
+----------------------------------------------------------------------------
+
+Match 21 : puje 1 : Mach 2 (opsamling)
+	Seat 21 : AutoSelectMatchId 7 placering 3
+	Seat 22 : AutoSelectMatchId 7 placering 4
+	Seat 23 : AutoSelectMatchId 14 placering 3
+	Seat 24 : AutoSelectMatchId 14 placering 4
+		Match 22 : "Kamp 1 pulje  1"
+		Seat 25: spiller (fra Seat 21)
+		Seat 26: spiller (fra Seat 22)
+		
+		Match 23 : "Kamp 2 pulje 1"
+		Seat 27: spiller (fra Seat 23)
+		Seat 28: spiller (fra Seat 24)
+		
+		Match 24 : "Kamp 3 pulje 1"
+		Seat 29: spiller (fra Seat 21)
+		Seat 30: spiller (fra Seat 23)
+		
+		Match 25 : "Kamp 4 pulje 1"
+		Seat 31: spiller (fra Seat 21)
+		Seat 32: spiller (fra Seat 24)
+		
+		Match 26 : "Kamp 5 pulje 1"
+		Seat 33: spiller (fra Seat 22)
+		Seat 34: spiller (fra Seat 23)
+		
+		Match 27 : "Kamp 6 pulje 1"
+		Seat 35: spiller (fra Seat 22)
+		Seat 36: spiller (fra Seat 24)
+		
+		Kampe Afviklet Trigger: 
+		Match 21 : Seat 21 : ResultMatchPlace x
+		Match 21 : Seat 22 : ResultMatchPlace y
+		Match 21 : Seat 23 : ResultMatchPlace z
+		Match 21 : Seat 24 : ResultMatchPlace p
+		
+----------------------------------------------------------------------------
+
+Match 28 : puje 1 : Mach 5 (semifinalen)
+	Seat 37 : AutoSelectMatchId 21 placering 1
+	Seat 38 : AutoSelectMatchId 7 placering 1
+
+		Match 29 : "Kamp 1 pulje  1"
+		Seat 39: spiller (fra Seat 37)
+		Seat 40: spiller (fra Seat 38)
+		
+		Kampe Afviklet Trigger: 
+		Match 28 : Seat 37 : ResultMatchPlace x
+		Match 28 : Seat 38 : ResultMatchPlace y
+
+Match 30 : puje 2 : Mach 5 (semifinalen)
+	Seat 41 : AutoSelectMatchId 21 placering 2
+	Seat 42 : AutoSelectMatchId 14 placering 1
+
+		Match 31 : "Kamp 1 pulje  2"
+		Seat 43: spiller (fra Seat 41)
+		Seat 44: spiller (fra Seat 42)
+		
+		Kampe Afviklet Trigger: 
+		Match 30 : Seat 21 : ResultMatchPlace x
+		Match 30 : Seat 22 : ResultMatchPlace y
+		
+Match 32 : puje 3 : Mach 5 (semifinalen)
+	Seat 45 : AutoSelectMatchId 7 placering 2
+	Seat 46 : AutoSelectMatchId 14 placering 4
+
+		Match 33 : "Kamp 1 pulje  3"
+		Seat 47: spiller (fra Seat 45)
+		Seat 48: spiller (fra Seat 46)
+		
+		Kampe Afviklet Trigger: 
+		Match 32 : Seat 21 : ResultMatchPlace x
+		Match 32 : Seat 22 : ResultMatchPlace y
+		
+----------------------------------------------------------------------------
+Match 34 : puje 1 : Mach 6 (Finalen)
+	Seat 49 : AutoSelectMatchId 28 placering 1
+	Seat 50 : AutoSelectMatchId 30 placering 1
+	Seat 51 : AutoSelectMatchId 32 placering 1
+		Match 35 : "Kamp 1 pulje  1"
+		Seat 52: spiller (fra Seat 49)
+		Seat 53: spiller (fra Seat 50)
+		
+		Match 36 : "Kamp 2 pulje  1"
+		Seat 54: spiller (fra Seat 49)
+		Seat 55: spiller (fra Seat 51)
+		
+		Match 37 : "Kamp 3 pulje  1"
+		Seat 56: spiller (fra Seat 51)
+		Seat 57: spiller (fra Seat 50
+		
+		Kampe Afviklet Trigger: 
+		Match 34 : Seat X : ResultMatchPlace 1 -> Vinder!!!!!!!!!!!!!!!!
+		

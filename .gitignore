@@ -1,0 +1,17 @@
+# .NET
+**/bin/
+**/obj/
+
+# IDEs
+.vs/
+.vscode/
+
+# User-specific
+*.user
+*.suo
+*.cache
+*.log
+
+# OS junk
+Thumbs.db
+.DS_Store

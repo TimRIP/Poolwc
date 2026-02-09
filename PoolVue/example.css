@@ -1,0 +1,57 @@
+.body {
+    background-color: rgb(69, 85, 96);
+    border: 2px solid grey;
+	padding: 12px;
+    padding-right: 4px;
+    margin:0;
+	font-family: 'Roboto', sans-serif;
+}
+
+.slidebar {
+	width: 100%;
+	min-height: auto;
+	float: left;
+	border-right: 1px solid rgb(235,235,235);
+	background-color: rgb(247,247,247);
+ }
+ 
+.slidebar ul {
+	padding: 0;
+	margin: 0;
+  
+}
+.slidebar li {
+	list-style-type: none;
+	margin: 0;
+	position: relative;
+	display:inline-block;
+  
+}
+
+.slidebar ul a {
+	color: rgb(140,140,140);
+	text-decoration: none;
+	font:16px/40px gotham,verdana,sans-serif;
+        box-sizing:border-box;
+	border-bottom: 1px solid rgb(235,235,235);
+	display: block;	text-indent: 17px;
+	text-transform: capitalize;
+}
+
+.slidebar li:hover {
+	background-color: rgb(255,255,255);
+	box-shadow: 1px 0 0 rgb(255,255,255),inset 10px 0 0 -1px rgb(234,83,63);
+}
+
+.sideicon {
+  padding-top: 12px;
+  padding-right: 15px;
+  float: right;
+}
+
+.selectedbutton {
+  background-color: rgb(255,255,255);
+  box-shadow: 1px 0 0 rgb(255,255,255),inset 10px 0 0 -1px rgb(234,83,63);
+  box-sizing:border-box;
+             
+}   
