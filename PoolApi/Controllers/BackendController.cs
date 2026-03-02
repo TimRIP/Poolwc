@@ -111,7 +111,7 @@ namespace TournamentBackend.Controllers
     public class MatchesController : ControllerBase
     {
         [HttpPost]
-        public IActionResult Post([FromBody] String model)
+        public IActionResult Post([FromBody] int tournamentId)
         {
             UserBackoffice ubo = new UserBackoffice();
             StringValues values;
@@ -124,7 +124,7 @@ namespace TournamentBackend.Controllers
                 return Unauthorized();
             }
 
-            string matches = ubo.SP_GetMatchesFromTournament(Int32.Parse(model));
+            string matches = ubo.SP_GetMatchesFromTournament(tournamentId);
 
             return Ok(new { matches = matches });
         }

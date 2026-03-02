@@ -54,4 +54,246 @@
   box-shadow: 1px 0 0 rgb(255,255,255),inset 10px 0 0 -1px rgb(234,83,63);
   box-sizing:border-box;
              
-}   
+}
+
+/* ===== Matches TREE UI (shared) ===== */
+#vuematch { padding: 18px; color: #e7ecff; }
+
+.matchesHeader{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:16px;
+  margin-bottom:14px;
+  padding-bottom:14px;
+  border-bottom:1px solid rgba(255,255,255,.08);
+}
+.matchesTitle{ font-size:18px; font-weight:700; }
+.matchesSub{ font-size:12px; color:#a8b3d6; margin-top:4px; }
+.matchesStats{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+
+.pill{
+  font-size:12px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.04);
+  color:#e7ecff;
+}
+
+.miniBtn{
+  font-size:12px;
+  padding:7px 10px;
+  border-radius:10px;
+  border:1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.04);
+  color:#e7ecff;
+  cursor:pointer;
+}
+.miniBtn:hover{ border-color: rgba(122,162,255,.45); }
+
+.treeWrap{ display:flex; flex-direction:column; gap:10px; }
+
+.node{
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:14px;
+  overflow:hidden;
+  background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+  box-shadow: 0 10px 30px rgba(0,0,0,.25);
+}
+
+.nodeHead{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:12px;
+  padding:12px;
+  cursor:pointer;
+  user-select:none;
+}
+.nodeHead:hover{ background: rgba(122,162,255,.06); }
+
+.leftRow{ display:flex; gap:10px; align-items:flex-start; }
+
+.chev{
+  width:18px;
+  opacity:.85;
+  transform: rotate(0deg);
+  transition: transform .15s ease;
+  margin-top:2px;
+}
+.chev.open{ transform: rotate(90deg); }
+
+.titleBlock{ display:flex; flex-direction:column; gap:6px; }
+.nameRow{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.nodeName{ font-weight:700; font-size:14px; }
+
+.badges{ display:flex; gap:6px; flex-wrap:wrap; }
+.badge{
+  font-size:11px;
+  padding:4px 8px;
+  border-radius:999px;
+  border:1px solid rgba(122,162,255,.28);
+  background: rgba(122,162,255,.14);
+}
+.badge.soft{
+  border-color: rgba(255,255,255,.12);
+  background: rgba(255,255,255,.05);
+  color:#a8b3d6;
+}
+
+.nodeBody{
+  border-top:1px solid rgba(255,255,255,.08);
+  padding:12px;
+  background: rgba(0,0,0,.08);
+}
+
+.chips{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+.chip{
+  font-size:13px;
+  padding:7px 10px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.08);
+  background: rgba(27,42,82,.7);
+}
+.chip.empty{
+  border-style:dashed;
+  background: rgba(255,255,255,.03);
+  color:#a8b3d6;
+}
+
+.children{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  margin-left:18px;
+  padding-left:12px;
+  border-left: 1px dashed rgba(255,255,255,.14);
+}
+
+.highlight{
+  outline: 2px solid rgba(122,162,255,.35);
+  outline-offset: -2px;
+}
+
+.emptyState{
+  padding:16px;
+  border:1px dashed rgba(255,255,255,.14);
+  border-radius:14px;
+  color:#a8b3d6;
+  background: rgba(255,255,255,.03);
+}
+
+/* ===== Topbar High Contrast Fix ===== */
+
+.topbar{
+  background: #1f2a36;                 /* solid dark instead of transparent */
+  border: 1px solid rgba(255,255,255,.35);
+  box-shadow: 0 6px 18px rgba(0,0,0,.5);
+}
+
+.topbar a{
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.topbar a:hover{
+  color: #ffd166;                      /* visible hover color */
+  text-decoration: none;
+}
+
+.topbar .pill,
+.topbar .miniBtn{
+  background: #2e3d4d;
+  border: 1px solid rgba(255,255,255,.4);
+  color: #ffffff;
+}
+
+.topbar .miniBtn:hover{
+  background: #3b4f63;
+  border-color: #ffffff;
+}
+
+/* ===== High-contrast overrides for Matches Tree (no layout changes) ===== */
+
+/* Make text readable on your dark background */
+#vuematch,
+#vuematch * {
+  color: #ffffff;
+}
+
+/* Header text contrast */
+.matchesSub { color: rgba(255,255,255,.78); }
+
+/* Stronger separators */
+.matchesHeader { border-bottom: 1px solid rgba(255,255,255,.22); }
+
+/* Pills + buttons: darker background + brighter border/text */
+.pill{
+  border: 1px solid rgba(255,255,255,.35);
+  background: rgba(0,0,0,.28);
+  color:#ffffff;
+}
+.miniBtn{
+  border: 1px solid rgba(255,255,255,.40);
+  background: rgba(0,0,0,.35);
+  color:#ffffff;
+}
+.miniBtn:hover{
+  border-color: rgba(255,255,255,.70);
+  background: rgba(0,0,0,.48);
+}
+
+/* Node card: increase contrast but keep same “card” style */
+.node{
+  border: 1px solid rgba(255,255,255,.32);
+  background: rgba(0,0,0,.28);              /* solid-ish instead of faint gradient */
+  box-shadow: 0 10px 22px rgba(0,0,0,.55);  /* deeper shadow */
+}
+.nodeHead:hover{
+  background: rgba(255,255,255,.08);
+}
+
+/* Badges: keep the look but make them readable */
+.badge{
+  border: 1px solid rgba(255,255,255,.45);
+  background: rgba(0,0,0,.25);
+  color:#ffffff;
+}
+.badge.soft{
+  border: 1px solid rgba(255,255,255,.28);
+  background: rgba(0,0,0,.18);
+  color: rgba(255,255,255,.86);
+}
+
+/* Body area: clearer separation */
+.nodeBody{
+  border-top: 1px solid rgba(255,255,255,.22);
+  background: rgba(0,0,0,.35);
+}
+
+/* Player chips: high contrast */
+.chip{
+  border: 1px solid rgba(255,255,255,.35);
+  background: rgba(0,0,0,.45);
+  color:#ffffff;
+}
+.chip.empty{
+  border: 1px dashed rgba(255,255,255,.35);
+  background: rgba(0,0,0,.22);
+  color: rgba(255,255,255,.75);
+}
+
+/* Children connector: more visible */
+.children{
+  border-left: 1px dashed rgba(255,255,255,.35);
+}
+
+/* Highlight result: strong outline */
+.highlight{
+  outline: 2px solid rgba(255,255,255,.65);
+  outline-offset: -2px;
+}
+
+/* Chevron more visible */
+.chev{ opacity: 1; }

@@ -594,8 +594,11 @@ namespace DrukDatabaseLayer
                     {
                         objs.Add(new
                         {
-                            Id = reader["Id"],
-                            Name = reader["Name"],
+                            level = reader["Level"],
+                            MatchId = reader["MatchId"],
+                            ParentMatchId = reader["ParentMatchId"],
+                            MatchName = reader["MatchName"],
+                            PlayerName = reader["PlayerName"],
                         });
                     }
                 }

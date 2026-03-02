@@ -583,27 +583,65 @@ END
 GO
 
 IF EXISTS (SELECT * FROM sys.objects WHERE type = 'P' AND name = 'SP_GetMatchesFromTournament')
-DROP PROCEDURE SP_GetMatchesFromTournament
+    DROP PROCEDURE dbo.SP_GetMatchesFromTournament;
 GO
 
-CREATE PROCEDURE SP_GetMatchesFromTournament
+CREATE PROCEDURE dbo.SP_GetMatchesFromTournament
     @pTournamentId INT
-
 AS
 BEGIN
+    SET NOCOUNT ON;
 
-    SET NOCOUNT ON
-	DECLARE @TournamentMatchId INT;
-	SET @TournamentMatchId = (SELECT MatchId FROM Tournament WHERE Id = @pTournamentId);
+    DECLARE @TournamentMatchId INT;
+    SELECT @TournamentMatchId = MatchId
+    FROM Tournament
+    WHERE Id = @pTournamentId;
 
-	with parentmatches as (
-		select 0 as level, null as rundeid, * from match where id=@TournamentMatchId
-		union all
-		select PM.level+1,  PM.ParentMatchId as rundeid, M.* from match M inner join parentmatches PM on M.ParentMatchId=PM.Id where M.id != @TournamentMatchId 
-	)
-	
-	select * from parentmatches P left join Seat S on P.Id = S.MatchId order by P.Id
+    ;WITH parentmatches AS
+    (
+        -- Root (anchor)
+        SELECT
+            0 AS [level],
+            CAST(NULL AS INT) AS ParentMatchId,       -- ✅ computed parent for UI tree
+            M.Id AS MatchId,
+            M.ParentMatchId AS RealParentMatchId,     -- (optional) actual DB parent
+            M.Name AS MatchName,
+            CAST('|' + CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX)) AS [path]  -- cycle guard
+        FROM [Match] M
+        WHERE M.Id = @TournamentMatchId
 
+        UNION ALL
+
+        -- Children
+        SELECT
+            PM.[level] + 1 AS [level],
+            PM.MatchId AS ParentMatchId,              -- ✅ computed parent = the node we came from
+            M.Id AS MatchId,
+            M.ParentMatchId AS RealParentMatchId,
+            M.Name AS MatchName,
+            CAST(PM.[path] + CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX)) AS [path]
+        FROM [Match] M
+        INNER JOIN parentmatches PM
+            ON M.ParentMatchId = PM.MatchId
+        WHERE
+            M.Id <> @TournamentMatchId
+            AND CHARINDEX('|' + CAST(M.Id AS VARCHAR(20)) + '|', PM.[path]) = 0   -- ✅ prevent cycles
+    )
+    SELECT
+        PM.[level],
+        PM.ParentMatchId,            -- ✅ this is the one your HTML tree should use
+        PM.MatchId,
+        PM.MatchName,
+        PL.Name AS PlayerName
+
+        -- Uncomment if you want to see the "real" parent too:
+        -- , PM.RealParentMatchId
+
+    FROM parentmatches PM
+    LEFT JOIN Seat S
+        ON PM.MatchId = S.MatchId
+    LEFT JOIN Player PL
+        ON S.PlayerId = PL.Id
+    ORDER BY PM.[level], PM.ParentMatchId, PM.MatchId;
 END
-
 GO

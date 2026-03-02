@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width">
+    <title>Matches</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.min.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
+
+    <link rel="stylesheet" type="text/css" href="example.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+  </head>
+
+  <body>
+    <div class="topbar">
+      <a href="index.htm"><i class="fa fa-arrow-left"></i> Back</a>
+
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <label for="tournamentId" style="color:#e7ecff;">TournamentId:</label>
+        <input id="tournamentId" type="number" min="0" style="padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.04); color:#e7ecff; width:140px;">
+        <button class="miniBtn" id="loadBtn">Load matches</button>
+
+        <label for="f-search" style="color:#e7ecff;">Search:</label>
+        <input type="text" id="f-search" name="f-search"
+          style="padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.04); color:#e7ecff; width:220px;">
+      </div>
+    </div>
+
+    <div id="vuematch">
+      <div class="matchesHeader">
+        <div>
+          <div class="matchesTitle">Matches (tree)</div>
+          <div class="matchesSub">Click a node to expand/collapse • Uses ParentMatchId</div>
+        </div>
+        <div class="matchesStats">
+          <span class="pill">Nodes: {{ nodes.length }}</span>
+          <span class="pill">Showing: {{ visibleCount }}</span>
+          <button class="miniBtn" @click="expandAll">Expand all</button>
+          <button class="miniBtn" @click="collapseAll">Collapse all</button>
+        </div>
+      </div>
+
+      <div class="treeWrap" v-if="roots.length">
+        <tree-node
+          v-for="r in roots"
+          :key="r.matchId"
+          :node="r"
+          :open.sync="open"
+          :query="searchText"
+        ></tree-node>
+      </div>
+
+      <div v-else class="emptyState">
+        No matches loaded yet. Enter a TournamentId and click “Load matches”.
+      </div>
+    </div>
+
+    <script src="matches.js"></script>
+  </body>
+</html>

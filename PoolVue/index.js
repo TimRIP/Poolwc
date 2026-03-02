@@ -101,26 +101,39 @@ var match = new Vue({
 			match.apipostmatches();
 		},
 		apipostmatches: function (event) {
-			//alert(JSON.stringify(this.$data))
+		  var mytoken = localStorage.getItem('token');
+		  axios.defaults.headers.common['Authorization'] = mytoken;
 
-			var json = JSON.stringify(this.$data.TurnamentId);
-			//alert(json);		
+		  const tid = Number(this.$data.TurnamentId);
 
-			var mytoken = localStorage.getItem('token')
-			axios.defaults.headers.common['Authorization'] = mytoken
+		  if (!Number.isInteger(tid)) {
+			alert("TurnamentId must be an integer. Got: " + this.$data.TurnamentId);
+			return;
+		  }
 
-			axios
-				.post("http://localhost:5000/api/matches", JSON.stringify(json), {
-					headers: {
-						'Content-type': 'application/json; charset=utf-8'
-					},
-				})
-				.then(function (response) {
-					match.TurnamentId = response.data.matches;
-				})
-				.catch(e => {
-					alert(e)
-				})
+		  axios.post(
+			"http://localhost:5000/api/matches",
+			tid, // ✅ raw number -> JSON: 227
+			{ headers: { 'Content-Type': 'application/json' } }
+		  )
+		  .then(function (response) {
+			match.TurnamentId = response.data.matches;
+		  })
+		  .catch(err => {
+			  console.log("AXIOS ERROR", err);
+
+			  if (err.response) {
+				console.log("STATUS:", err.response.status);
+				console.log("DATA:", err.response.data);
+				console.log("HEADERS:", err.response.headers);
+				alert(
+				  "Status: " + err.response.status + "\n" +
+				  "Response: " + JSON.stringify(err.response.data, null, 2)
+				);
+			  } else {
+				alert(err.message || String(err));
+			  }
+			});
 		}
 	}
 })
