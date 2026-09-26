@@ -139,8 +139,14 @@ SELECT
 FROM TournamentTree TT
 LEFT JOIN Schedule S ON TT.ScheduleId = S.Id
 LEFT JOIN Facility F ON S.FacilityId = F.Id
-WHERE TT.[Level] = 2
-  AND TT.IndividualMatch = 0
+WHERE TT.IndividualMatch = 0
+  AND EXISTS
+  (
+      SELECT 1
+      FROM [Match] ChildMatch
+      WHERE ChildMatch.ParentMatchId = TT.Id
+        AND ChildMatch.IndividualMatch = 1
+  )
 ORDER BY TT.Id
 OPTION (MAXRECURSION 1000);";
 
@@ -419,10 +425,16 @@ WHERE Id = @TournamentId;
       AND CHARINDEX('|' + CAST(M.Id AS VARCHAR(20)) + '|', TT.[Path]) = 0
 )
 SELECT COUNT(1)
-FROM TournamentTree
-WHERE Id = @PoolMatchId
-  AND [Level] = 2
-  AND IndividualMatch = 0
+FROM TournamentTree TT
+WHERE TT.Id = @PoolMatchId
+  AND TT.IndividualMatch = 0
+  AND EXISTS
+  (
+      SELECT 1
+      FROM [Match] ChildMatch
+      WHERE ChildMatch.ParentMatchId = TT.Id
+        AND ChildMatch.IndividualMatch = 1
+  )
 OPTION (MAXRECURSION 1000);";
 
             using (SqlCommand cmd = new SqlCommand(sql, conn, transaction))

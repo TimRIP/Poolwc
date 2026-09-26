@@ -60,6 +60,15 @@ Vue.component('tree-node', {
       return this.nodeSearchText(this.node).includes(q);
     },
     hasChildren() { return this.node.children && this.node.children.length > 0; },
+    isPoolNode() {
+      // A pool can occur at different depths (for example group-stage pools
+      // at level 2 and semi-final pools at level 3). Identify it by
+      // structure instead of by an absolute tree level: a pool is a
+      // grouping node whose direct children are playable leaf matches.
+      return this.hasChildren && this.node.children.every(child =>
+        !child.children || child.children.length === 0
+      );
+    },
     isSelected() { return Number(this.selectedMatchId) === Number(this.node.matchId); }
   },
   template: `
@@ -84,7 +93,7 @@ Vue.component('tree-node', {
               </div>
             </div>
 
-            <div class="poolListSchedule" v-if="Number(node.level) === 2">
+            <div class="poolListSchedule" v-if="isPoolNode">
               <span class="poolVenueBadge" :class="{ missing: !(node.schedule && node.schedule.venueName) }">
                 <i class="fa fa-map-marker"></i>
                 {{ node.schedule && node.schedule.venueName ? node.schedule.venueName : 'Venue not set' }}
@@ -234,7 +243,11 @@ const matchesApp = new Vue({
     },
 
     selectedIsPool() {
-      return !!(this.selectedNode && Number(this.selectedNode.level) === 2 && this.matchDetails && !this.matchDetails.individualMatch);
+      if (!this.selectedNode || !this.matchDetails || this.matchDetails.individualMatch) return false;
+      const children = Array.isArray(this.selectedNode.children) ? this.selectedNode.children : [];
+      return children.length > 0 && children.every(child =>
+        !child.children || child.children.length === 0
+      );
     },
 
     selectedVenueLabel() {
