@@ -33,7 +33,7 @@
       <div class="matchesHeader">
         <div>
           <div class="matchesTitle">Matches</div>
-          <div class="matchesSub">Click a pool to assign where it is played, or click a match to view rules and register the result.</div>
+          <div class="matchesSub">Click a pool to assign venue and schedule time, or click a match to view rules and register the result.</div>
         </div>
         <div class="matchesStats">
           <span class="pill">Nodes: {{ nodes.length }}</span>
@@ -126,10 +126,10 @@
             </div>
 
             <section class="resultSection">
-              <div class="resultSectionTitle">Venue</div>
+              <div class="resultSectionTitle">Venue &amp; schedule</div>
 
-              <div v-if="selectedIsPool && venueAdminAllowed" class="poolVenueEditor">
-                <label>
+              <div v-if="selectedIsPool && venueAdminAllowed" class="poolScheduleEditor">
+                <label class="scheduleVenueField">
                   <span>Play this pool at</span>
                   <select v-model="selectedVenueId">
                     <option :value="null">Not assigned</option>
@@ -138,24 +138,32 @@
                     </option>
                   </select>
                 </label>
-                <button type="button" class="saveResultBtn" @click="savePoolVenue" :disabled="savingVenue">
-                  <i class="fa fa-map-marker"></i> {{ savingVenue ? 'Saving…' : 'Save venue' }}
+
+                <label>
+                  <span>Starts</span>
+                  <input type="time" v-model="selectedScheduleFrom" step="60">
+                </label>
+
+
+                <button type="button" class="saveResultBtn scheduleSaveBtn" @click="savePoolSchedule" :disabled="savingVenue">
+                  <i class="fa fa-calendar"></i> {{ savingVenue ? 'Saving…' : 'Save schedule' }}
                 </button>
               </div>
 
-              <div v-else-if="matchDetails.venue" class="venueAssignedCard">
-                <i class="fa fa-map-marker"></i>
+              <div v-else-if="matchDetails.venue || matchDetails.schedule" class="venueAssignedCard">
+                <i class="fa fa-calendar"></i>
                 <div>
-                  <strong>{{ selectedVenueLabel }}</strong>
-                  <span v-if="matchDetails.venue.description">{{ matchDetails.venue.description }}</span>
-                  <span v-if="matchDetails.individualMatch && matchDetails.venue.assignedOnMatchId !== matchDetails.matchId">Inherited from this match's pool.</span>
+                  <strong>{{ matchDetails.venue ? selectedVenueLabel : 'Venue not assigned' }}</strong>
+                  <span v-if="matchDetails.venue && matchDetails.venue.description">{{ matchDetails.venue.description }}</span>
+                  <span><i class="fa fa-clock-o"></i> {{ scheduleDisplay(matchDetails.schedule) }}</span>
+                  <span v-if="matchDetails.individualMatch && matchDetails.schedule && matchDetails.schedule.assignedOnMatchId !== matchDetails.matchId">Inherited from this match's pool.</span>
                 </div>
               </div>
 
               <div v-else class="resultNote">
-                <span v-if="selectedIsPool">No venue has been assigned to this pool.</span>
-                <span v-else-if="matchDetails.individualMatch">This match's pool has no venue assigned.</span>
-                <span v-else>Venues are assigned on pool nodes.</span>
+                <span v-if="selectedIsPool">No venue or time has been assigned to this pool.</span>
+                <span v-else-if="matchDetails.individualMatch">This match's pool has no venue or time assigned.</span>
+                <span v-else>Venue and schedule are assigned on pool nodes.</span>
               </div>
 
               <div v-if="selectedIsPool && venueMessage" class="resultMessage success">{{ venueMessage }}</div>

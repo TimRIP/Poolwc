@@ -28,6 +28,14 @@ namespace DrukDatabaseLayer
         public int AssignedOnMatchId { get; set; }
     }
 
+    public class MatchScheduleDetails
+    {
+        public int ScheduleId { get; set; }
+        public DateTime? FromTime { get; set; }
+        public DateTime? ToTime { get; set; }
+        public int AssignedOnMatchId { get; set; }
+    }
+
     public class MatchSeatDetails
     {
         public int SeatId { get; set; }
@@ -44,6 +52,7 @@ namespace DrukDatabaseLayer
         public bool IndividualMatch { get; set; }
         public MatchRuleDetails MatchRules { get; set; }
         public MatchVenueDetails Venue { get; set; }
+        public MatchScheduleDetails Schedule { get; set; }
         public List<MatchSeatDetails> Seats { get; set; } = new List<MatchSeatDetails>();
     }
 
@@ -129,6 +138,9 @@ SELECT
     MR.PlayFrom,
     MR.PlayTo,
     MR.Description AS MatchRuleDescription,
+    SCH.Id AS ScheduleId,
+    SCH.FromTime,
+    SCH.ToTime,
     F.Id AS FacilityId,
     F.Name AS VenueName,
     F.Description AS VenueDescription,
@@ -136,7 +148,7 @@ SELECT
         WHEN M.ScheduleId IS NOT NULL THEN M.Id
         WHEN M.IndividualMatch = 1 AND PM.ScheduleId IS NOT NULL THEN PM.Id
         ELSE NULL
-    END AS VenueAssignedOnMatchId,
+    END AS ScheduleAssignedOnMatchId,
     S.Id AS SeatId,
     S.PlayerId,
     P.Name AS PlayerName,
@@ -192,6 +204,17 @@ ORDER BY S.Id;";
                                 };
                             }
 
+                            if (reader["ScheduleId"] != DBNull.Value)
+                            {
+                                details.Schedule = new MatchScheduleDetails
+                                {
+                                    ScheduleId = Convert.ToInt32(reader["ScheduleId"]),
+                                    FromTime = ToNullableDateTime(reader["FromTime"]),
+                                    ToTime = ToNullableDateTime(reader["ToTime"]),
+                                    AssignedOnMatchId = Convert.ToInt32(reader["ScheduleAssignedOnMatchId"])
+                                };
+                            }
+
                             if (reader["FacilityId"] != DBNull.Value)
                             {
                                 details.Venue = new MatchVenueDetails
@@ -199,7 +222,7 @@ ORDER BY S.Id;";
                                     FacilityId = Convert.ToInt32(reader["FacilityId"]),
                                     Name = ToNullableString(reader["VenueName"]),
                                     Description = ToNullableString(reader["VenueDescription"]),
-                                    AssignedOnMatchId = Convert.ToInt32(reader["VenueAssignedOnMatchId"])
+                                    AssignedOnMatchId = Convert.ToInt32(reader["ScheduleAssignedOnMatchId"])
                                 };
                             }
                         }
@@ -1009,6 +1032,11 @@ ORDER BY S.Id;", conn, transaction))
         private static string ToNullableString(object value)
         {
             return value == null || value == DBNull.Value ? null : Convert.ToString(value);
+        }
+
+        private static DateTime? ToNullableDateTime(object value)
+        {
+            return value == null || value == DBNull.Value ? (DateTime?)null : Convert.ToDateTime(value);
         }
     }
 }

@@ -17,6 +17,12 @@ namespace TournamentBackend.Controllers
         public int? FacilityId { get; set; }
     }
 
+    public class UpdatePoolScheduleRequest
+    {
+        public int? FacilityId { get; set; }
+        public DateTime? FromTime { get; set; }
+    }
+
     [Authorize]
     [ApiController]
     [Route("api/tournament/{tournamentId:int}/venues")]
@@ -43,6 +49,27 @@ namespace TournamentBackend.Controllers
             {
                 Console.WriteLine(ex);
                 return StatusCode(500, new { message = "Venues could not be loaded." });
+            }
+        }
+
+        [HttpGet("~/api/tournament/{tournamentId:int}/pool-schedules")]
+        public IActionResult GetPoolSchedules(int tournamentId)
+        {
+            if (!TryGetUserId(out int userId))
+            {
+                return Unauthorized();
+            }
+
+            try
+            {
+                // userId is intentionally only used to require a valid logged-in user.
+                VenueBackoffice backoffice = new VenueBackoffice();
+                return Ok(new { schedules = backoffice.GetPoolSchedulesForTournament(tournamentId) });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                return StatusCode(500, new { message = "Pool schedules could not be loaded." });
             }
         }
 
@@ -109,6 +136,7 @@ namespace TournamentBackend.Controllers
             }
         }
 
+        // Kept for backwards compatibility with the previous version.
         [HttpPut("~/api/tournament/{tournamentId:int}/pool/{poolMatchId:int}/venue")]
         public IActionResult AssignVenue(int tournamentId, int poolMatchId, [FromBody] AssignVenueRequest model)
         {
@@ -125,7 +153,7 @@ namespace TournamentBackend.Controllers
             try
             {
                 VenueBackoffice backoffice = new VenueBackoffice();
-                PoolVenueAssignment assignment = backoffice.AssignVenueToPool(
+                PoolScheduleAssignment assignment = backoffice.AssignVenueToPool(
                     tournamentId,
                     userId,
                     poolMatchId,
@@ -152,6 +180,57 @@ namespace TournamentBackend.Controllers
             {
                 Console.WriteLine(ex);
                 return StatusCode(500, new { message = "The venue assignment could not be saved." });
+            }
+        }
+
+        [HttpPut("~/api/tournament/{tournamentId:int}/pool/{poolMatchId:int}/schedule")]
+        public IActionResult UpdatePoolSchedule(int tournamentId, int poolMatchId, [FromBody] UpdatePoolScheduleRequest model)
+        {
+            if (!TryGetUserId(out int userId))
+            {
+                return Unauthorized();
+            }
+
+            if (model == null)
+            {
+                return BadRequest(new { message = "A schedule is required." });
+            }
+
+            try
+            {
+                VenueBackoffice backoffice = new VenueBackoffice();
+                PoolScheduleAssignment assignment = backoffice.UpdatePoolSchedule(
+                    tournamentId,
+                    userId,
+                    poolMatchId,
+                    model.FacilityId,
+                    model.FromTime);
+
+                return Ok(new
+                {
+                    saved = true,
+                    assignment = assignment,
+                    message = assignment.ScheduleId.HasValue
+                        ? "Pool schedule saved."
+                        : "Pool schedule cleared."
+                });
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return StatusCode(403, new { message = ex.Message });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                return StatusCode(500, new { message = "The pool schedule could not be saved." });
             }
         }
 

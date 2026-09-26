@@ -356,7 +356,8 @@
 }
 
 .venueCreateForm label,
-.poolVenueEditor label {
+.poolVenueEditor label,
+.poolScheduleEditor label {
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -364,7 +365,8 @@
 }
 
 .venueCreateForm label > span,
-.poolVenueEditor label > span {
+.poolVenueEditor label > span,
+.poolScheduleEditor label > span {
   color: #aeb9ca;
   font-size: 11px;
   font-weight: 800;
@@ -460,4 +462,87 @@
 @media (max-width: 520px) {
   .poolVenueEditor { grid-template-columns: 1fr; }
   .poolVenueEditor .saveResultBtn { width: 100%; }
+}
+
+/* Pool schedule: venue + time */
+.poolListSchedule {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.poolVenueBadge,
+.poolTimeBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 25px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(159,193,255,.24);
+  background: rgba(119,168,255,.08);
+  color: #d7e5ff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.poolVenueBadge i,
+.poolTimeBadge i { color: #9fc1ff; }
+
+.poolVenueBadge.missing,
+.poolTimeBadge.missing {
+  color: #8e9caf;
+  border-color: rgba(255,255,255,.09);
+  background: rgba(255,255,255,.025);
+}
+
+.poolVenueBadge.missing i,
+.poolTimeBadge.missing i { color: #77869b; }
+
+.poolScheduleEditor {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) minmax(175px, 1fr);
+  gap: 9px;
+  align-items: end;
+}
+
+.poolScheduleEditor label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.poolScheduleEditor label > span {
+  color: #aeb9ca;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.poolScheduleEditor select,
+.poolScheduleEditor input {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 9px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: #0d1724;
+  color: #fff;
+  padding: 8px 10px;
+  box-sizing: border-box;
+}
+
+.poolScheduleEditor .scheduleSaveBtn {
+  grid-column: 1 / -1;
+  justify-self: end;
+}
+
+@media (max-width: 760px) {
+  .poolScheduleEditor { grid-template-columns: 1fr; }
+  .poolScheduleEditor .scheduleSaveBtn {
+    grid-column: auto;
+    width: 100%;
+  }
 }

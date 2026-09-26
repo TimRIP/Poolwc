@@ -17,19 +17,39 @@ Vue.component('tree-node', {
       this.$emit('select-match', this.node);
       if (this.hasChildren) this.toggle();
     },
+    nodeSearchText(n) {
+      const schedule = n && n.schedule ? n.schedule : {};
+      return [
+        n && n.matchName ? n.matchName : '',
+        n && Array.isArray(n.players) ? n.players.join(' ') : '',
+        schedule.venueName || '',
+        schedule.fromTime || ''
+      ].join(' ').toLowerCase();
+    },
     matchesQuery() {
       const q = (this.query || '').trim().toLowerCase();
       if (!q) return true;
 
-      const hay = ((this.node.matchName || '') + ' ' + this.node.players.join(' ')).toLowerCase();
-      if (hay.includes(q)) return true;
-
+      if (this.nodeSearchText(this.node).includes(q)) return true;
       return this.node.children.some(ch => this.childMatchesQuery(ch, q));
     },
     childMatchesQuery(n, q) {
-      const hay = ((n.matchName || '') + ' ' + n.players.join(' ')).toLowerCase();
-      if (hay.includes(q)) return true;
+      if (this.nodeSearchText(n).includes(q)) return true;
       return n.children.some(c => this.childMatchesQuery(c, q));
+    },
+    formatScheduleTime(value) {
+      if (!value) return '';
+      const raw = String(value);
+      const iso = raw.match(/T(\d{2}):(\d{2})/);
+      if (iso) return iso[1] + ':' + iso[2];
+      const plain = raw.match(/^(\d{1,2}):(\d{2})/);
+      if (plain) return String(plain[1]).padStart(2, '0') + ':' + plain[2];
+      return '';
+    },
+    scheduleRange(schedule) {
+      if (!schedule) return '';
+      const from = this.formatScheduleTime(schedule.fromTime);
+      return from ? 'Starts ' + from : '';
     }
   },
   computed: {
@@ -37,8 +57,7 @@ Vue.component('tree-node', {
     shouldHighlight() {
       const q = (this.query || '').trim().toLowerCase();
       if (!q) return false;
-      const hay = ((this.node.matchName || '') + ' ' + this.node.players.join(' ')).toLowerCase();
-      return hay.includes(q);
+      return this.nodeSearchText(this.node).includes(q);
     },
     hasChildren() { return this.node.children && this.node.children.length > 0; },
     isSelected() { return Number(this.selectedMatchId) === Number(this.node.matchId); }
@@ -65,11 +84,24 @@ Vue.component('tree-node', {
               </div>
             </div>
 
+            <div class="poolListSchedule" v-if="Number(node.level) === 2">
+              <span class="poolVenueBadge" :class="{ missing: !(node.schedule && node.schedule.venueName) }">
+                <i class="fa fa-map-marker"></i>
+                {{ node.schedule && node.schedule.venueName ? node.schedule.venueName : 'Venue not set' }}
+              </span>
+              <span class="poolTimeBadge" v-if="node.schedule && scheduleRange(node.schedule)">
+                <i class="fa fa-clock-o"></i> {{ scheduleRange(node.schedule) }}
+              </span>
+              <span class="poolTimeBadge missing" v-else>
+                <i class="fa fa-clock-o"></i> Time not set
+              </span>
+            </div>
+
             <div class="badges">
               <span class="badge soft">parent {{ node.parentMatchId === null ? 'null' : node.parentMatchId }}</span>
               <span class="badge soft">{{ node.players.length }} player(s)</span>
               <span class="badge soft">{{ node.children.length }} child(ren)</span>
-              <span class="badge editBadge">click to edit result</span>
+              <span class="badge editBadge">click to edit</span>
             </div>
           </div>
         </div>
@@ -108,6 +140,7 @@ const matchesApp = new Vue({
     selectedNode: null,
     currentTournamentId: null,
     venues: [],
+    poolSchedules: {},
     venueAdminAllowed: false,
     venueLoading: false,
     venueError: '',
@@ -115,6 +148,7 @@ const matchesApp = new Vue({
     newVenueName: '',
     newVenueDescription: '',
     selectedVenueId: null,
+    selectedScheduleFrom: '',
     savingVenue: false,
     matchDetails: null,
     loadingDetails: false,
@@ -136,7 +170,8 @@ const matchesApp = new Vue({
             matchName: r.MatchName,
             level: (typeof r.level === 'number' ? r.level : 0),
             players: [],
-            children: []
+            children: [],
+            schedule: this.poolSchedules[String(id)] || null
           });
         }
 
@@ -173,7 +208,13 @@ const matchesApp = new Vue({
       if (!q) return this.nodes.length;
 
       const matchNode = (n) => {
-        const hay = ((n.matchName || '') + ' ' + n.players.join(' ')).toLowerCase();
+        const schedule = n.schedule || {};
+        const hay = [
+          n.matchName || '',
+          n.players.join(' '),
+          schedule.venueName || '',
+          schedule.fromTime || ''
+        ].join(' ').toLowerCase();
         if (hay.includes(q)) return true;
         return n.children.some(matchNode);
       };
@@ -277,6 +318,7 @@ const matchesApp = new Vue({
         individualMatch: !!details.individualMatch,
         matchRules: details.matchRules || null,
         venue: details.venue || null,
+        schedule: details.schedule || null,
         seats: seats.map(s => ({
           seatId: s.seatId,
           playerId: s.playerId === undefined ? null : s.playerId,
@@ -300,6 +342,7 @@ const matchesApp = new Vue({
         );
         this.matchDetails = this.normalizeMatchDetails(res.data);
         this.selectedVenueId = this.matchDetails.venue ? Number(this.matchDetails.venue.facilityId) : null;
+        this.selectedScheduleFrom = this.toTimeInput(this.matchDetails.schedule ? this.matchDetails.schedule.fromTime : null);
       } catch (e) {
         console.error(e);
         if (e.response && e.response.status === 401) {
@@ -311,6 +354,64 @@ const matchesApp = new Vue({
         }
       } finally {
         this.loadingDetails = false;
+      }
+    },
+
+    toTimeInput(value) {
+      if (!value) return '';
+      const raw = String(value);
+      const iso = raw.match(/T(\d{2}):(\d{2})/);
+      if (iso) return iso[1] + ':' + iso[2];
+      const plain = raw.match(/^(\d{1,2}):(\d{2})/);
+      if (plain) return String(plain[1]).padStart(2, '0') + ':' + plain[2];
+      return '';
+    },
+
+    formatTimeDisplay(value) {
+      const time = this.toTimeInput(value);
+      return time || 'Not set';
+    },
+
+    scheduleDisplay(schedule) {
+      if (!schedule) return 'Time not set';
+      const from = schedule.fromTime ? this.formatTimeDisplay(schedule.fromTime) : '';
+      return from ? 'Starts ' + from : 'Time not set';
+    },
+
+    scheduleTimeForApi(value) {
+      const time = (value || '').trim();
+      if (!time) return null;
+      const match = time.match(/^(\d{2}):(\d{2})$/);
+      if (!match) return null;
+      // Schedule currently uses SQL DATETIME columns. The date is deliberately
+      // fixed because the application schedules pools by time-of-day only.
+      return '2000-01-01T' + match[1] + ':' + match[2] + ':00';
+    },
+
+    timeToMinutes(value) {
+      const match = String(value || '').match(/^(\d{2}):(\d{2})$/);
+      if (!match) return null;
+      return Number(match[1]) * 60 + Number(match[2]);
+    },
+
+    async loadPoolSchedules(tournamentId) {
+      const tid = Number(tournamentId);
+      if (!Number.isFinite(tid) || tid <= 0) return;
+
+      try {
+        const res = await axios.get(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(tid) + '/pool-schedules',
+          { headers: this.authHeaders() }
+        );
+        const schedules = res.data && Array.isArray(res.data.schedules) ? res.data.schedules : [];
+        const next = {};
+        for (const schedule of schedules) {
+          next[String(schedule.poolMatchId)] = schedule;
+        }
+        this.poolSchedules = next;
+      } catch (e) {
+        console.error(e);
+        this.poolSchedules = {};
       }
     },
 
@@ -416,7 +517,7 @@ const matchesApp = new Vue({
       }
     },
 
-    async savePoolVenue() {
+    async savePoolSchedule() {
       if (!this.currentTournamentId || !this.matchDetails || !this.selectedIsPool) return;
 
       this.savingVenue = true;
@@ -426,11 +527,25 @@ const matchesApp = new Vue({
       const facilityId = this.selectedVenueId === '' || this.selectedVenueId === null || this.selectedVenueId === undefined
         ? null
         : Number(this.selectedVenueId);
+      const fromInput = (this.selectedScheduleFrom || '').trim() || null;
+      const fromMinutes = fromInput ? this.timeToMinutes(fromInput) : null;
+
+      if (fromInput && fromMinutes === null) {
+        this.venueError = 'Enter a valid start time.';
+        this.savingVenue = false;
+        return;
+      }
+
+      const fromTime = this.scheduleTimeForApi(fromInput);
 
       try {
+        const poolMatchId = this.matchDetails.matchId;
         const res = await axios.put(
-          'http://localhost:5000/api/tournament/' + encodeURIComponent(this.currentTournamentId) + '/pool/' + encodeURIComponent(this.matchDetails.matchId) + '/venue',
-          { facilityId: facilityId },
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(this.currentTournamentId) + '/pool/' + encodeURIComponent(poolMatchId) + '/schedule',
+          {
+            facilityId: facilityId,
+            fromTime: fromTime
+          },
           {
             headers: Object.assign(
               { 'Content-Type': 'application/json; charset=utf-8' },
@@ -439,13 +554,14 @@ const matchesApp = new Vue({
           }
         );
 
-        await this.loadMatchDetails(this.matchDetails.matchId);
-        this.venueMessage = res.data && res.data.message ? res.data.message : 'Venue assignment saved.';
+        await this.loadPoolSchedules(this.currentTournamentId);
+        await this.loadMatchDetails(poolMatchId);
+        this.venueMessage = res.data && res.data.message ? res.data.message : 'Pool schedule saved.';
       } catch (e) {
         console.error(e);
         this.venueError = (e.response && e.response.data && e.response.data.message)
           ? e.response.data.message
-          : 'Could not save the venue assignment.';
+          : 'Could not save the pool schedule.';
       } finally {
         this.savingVenue = false;
       }
@@ -699,11 +815,13 @@ const matchesApp = new Vue({
 
         this.rows = matches;
         this.currentTournamentId = tid;
+        await this.loadPoolSchedules(tid);
         await this.loadVenues(tid);
         if (!preserveSelection) {
           this.selectedMatchId = null;
           this.selectedNode = null;
           this.selectedVenueId = null;
+          this.selectedScheduleFrom = '';
           this.matchDetails = null;
           this.resultError = '';
           this.resultMessage = '';
