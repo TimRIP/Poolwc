@@ -413,3 +413,40 @@ input:disabled { color: #aeb9ca; background: rgba(255,255,255,.04); }
   .section-heading .secondary-btn { width: 100%; }
   .action-row { grid-template-columns: 1fr; }
 }
+
+/* ===== Even pool distribution ===== */
+.even-distribution-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px 13px;
+  border: 1px solid rgba(119,168,255,.24);
+  border-radius: 11px;
+  background: rgba(119,168,255,.06);
+  cursor: pointer;
+}
+.even-distribution-toggle input {
+  margin-top: 3px;
+  flex: 0 0 auto;
+}
+.even-distribution-toggle span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.even-distribution-toggle strong {
+  color: #dce9ff;
+  font-size: 13px;
+}
+.even-distribution-toggle small {
+  color: var(--muted);
+  line-height: 1.4;
+}
+.route-label small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+}

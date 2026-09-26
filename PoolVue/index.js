@@ -100,6 +100,8 @@ var dash = new Vue({
           selected: 'pool',
           BestOf: 1,
           puljesize: 4,
+          distributeEvenly: true,
+          poolSizes: [4, 4],
           valsArray: [-1, -1, -1, -1],
           playstyle: 'roundrobin'
         }
@@ -136,6 +138,66 @@ var dash = new Vue({
       return 'Knockout - ' + players + ' players';
     },
 
+    calculateEvenPoolSizes: function (players, preferredSize) {
+      players = Number(players);
+      preferredSize = Number(preferredSize);
+
+      if (!Number.isInteger(players) || players < 2 || !Number.isInteger(preferredSize) || preferredSize < 2) {
+        return [];
+      }
+
+      // Treat "players per group" as the preferred/max size, then spread
+      // players as evenly as possible. Avoid one-player groups.
+      var groups = Math.ceil(players / preferredSize);
+      while (groups > 1 && Math.floor(players / groups) < 2) groups--;
+
+      var baseSize = Math.floor(players / groups);
+      var remainder = players % groups;
+      var sizes = [];
+
+      for (var i = 0; i < groups; i++) {
+        sizes.push(baseSize + (i < remainder ? 1 : 0));
+      }
+
+      return sizes;
+    },
+
+    getPoolSizes: function (round) {
+      if (!round || round.selected !== 'pool') return [];
+
+      var players = Number(round.NbPlayers);
+      var preferredSize = Number(round.puljesize);
+      if (!Number.isInteger(players) || players < 2 || !Number.isInteger(preferredSize) || preferredSize < 2) return [];
+
+      if (round.distributeEvenly !== false) {
+        return this.calculateEvenPoolSizes(players, preferredSize);
+      }
+
+      if (players % preferredSize !== 0) return [];
+      var groups = players / preferredSize;
+      var sizes = [];
+      for (var i = 0; i < groups; i++) sizes.push(preferredSize);
+      return sizes;
+    },
+
+    playersAtPlace: function (round, place) {
+      var sizes = this.getPoolSizes(round);
+      var count = 0;
+      for (var i = 0; i < sizes.length; i++) {
+        if (sizes[i] >= place) count++;
+      }
+      return count;
+    },
+
+    updatePoolSizes: function (round) {
+      if (!round) return;
+      if (round.selected === 'pool') {
+        this.$set(round, 'poolSizes', this.getPoolSizes(round));
+      } else {
+        this.$set(round, 'poolSizes', []);
+      }
+    },
+
     createPoolStage: function (name, players, poolSize, destinationIndex, qualifiersPerPool) {
       var routes = [];
       for (var i = 0; i < poolSize; i++) {
@@ -149,6 +211,8 @@ var dash = new Vue({
         selected: 'pool',
         BestOf: 1,
         puljesize: poolSize,
+        distributeEvenly: true,
+        poolSizes: this.calculateEvenPoolSizes(players, poolSize),
         valsArray: routes,
         playstyle: 'roundrobin'
       };
@@ -162,6 +226,8 @@ var dash = new Vue({
         selected: 'knockout',
         BestOf: 1,
         puljesize: 2,
+        distributeEvenly: false,
+        poolSizes: [],
         valsArray: [hasNextStage ? stageIndex + 1 : 0, -1],
         playstyle: 'roundrobin'
       };
@@ -183,24 +249,27 @@ var dash = new Vue({
     },
 
     findGroupPreset: function (totalPlayers) {
-      var sizes = [4, 3, 5, 6, 8, 2];
+      var preferredSizes = [4, 3, 5, 6, 8, 2];
       var qualifierPreference = [2, 1, 3, 4, 5, 6, 7];
 
-      for (var s = 0; s < sizes.length; s++) {
-        var size = sizes[s];
-        if (totalPlayers % size !== 0) continue;
-
-        var groups = totalPlayers / size;
+      for (var s = 0; s < preferredSizes.length; s++) {
+        var preferredSize = preferredSizes[s];
+        var poolSizes = this.calculateEvenPoolSizes(totalPlayers, preferredSize);
+        var groups = poolSizes.length;
         if (groups < 2) continue;
+
+        var minPoolSize = Math.min.apply(null, poolSizes);
 
         for (var q = 0; q < qualifierPreference.length; q++) {
           var qualifiersPerGroup = qualifierPreference[q];
-          if (qualifiersPerGroup >= size) continue;
+          // Keep at least one player eliminated in every group for this preset.
+          if (qualifiersPerGroup >= minPoolSize) continue;
 
           var qualifiers = groups * qualifiersPerGroup;
           if (this.isPowerOfTwo(qualifiers)) {
             return {
-              poolSize: size,
+              poolSize: preferredSize,
+              poolSizes: poolSizes,
               groups: groups,
               qualifiersPerGroup: qualifiersPerGroup,
               qualifiers: qualifiers
@@ -255,7 +324,7 @@ var dash = new Vue({
         this.formdata.rundearray = [groupStage].concat(knockoutStages);
 
         if (!silent) {
-          this.uiMessage = setup.groups + ' groups of ' + setup.poolSize + '. Top ' + setup.qualifiersPerGroup + ' from each group advance (' + setup.qualifiers + ' players).';
+          this.uiMessage = 'Groups distributed as ' + setup.poolSizes.join(' / ') + ' players. Top ' + setup.qualifiersPerGroup + ' from each group advance (' + setup.qualifiers + ' players).';
         }
       }
 
@@ -268,6 +337,8 @@ var dash = new Vue({
             selected: 'pool',
             BestOf: 1,
             puljesize: Math.min(4, players),
+            distributeEvenly: true,
+            poolSizes: [],
             valsArray: [],
             playstyle: 'roundrobin'
           }
@@ -301,6 +372,8 @@ var dash = new Vue({
         selected: 'knockout',
         BestOf: 1,
         puljesize: 2,
+        distributeEvenly: false,
+        poolSizes: [],
         valsArray: [0, -1],
         playstyle: 'roundrobin'
       };
@@ -349,7 +422,15 @@ var dash = new Vue({
       var round = this.formdata.rundearray[index];
       if (!round) return;
 
-      var expected = round.selected === 'knockout' ? 2 : Math.max(0, Number(round.puljesize) || 0);
+      var expected = 0;
+      if (round.selected === 'knockout') {
+        expected = 2;
+      } else if (round.selected === 'pool') {
+        if (round.distributeEvenly === undefined) this.$set(round, 'distributeEvenly', true);
+        var sizes = this.getPoolSizes(round);
+        expected = sizes.length ? Math.max.apply(null, sizes) : Math.max(0, Number(round.puljesize) || 0);
+      }
+
       if (!Array.isArray(round.valsArray)) this.$set(round, 'valsArray', []);
 
       while (round.valsArray.length > expected) round.valsArray.pop();
@@ -362,10 +443,13 @@ var dash = new Vue({
 
       if (round.selected === 'pool') {
         this.$set(round, 'puljesize', Number(round.puljesize) >= 2 ? Number(round.puljesize) : 4);
+        if (round.distributeEvenly === undefined) this.$set(round, 'distributeEvenly', true);
         this.$set(round, 'playstyle', round.playstyle || 'roundrobin');
         this.$set(round, 'BestOf', Number(round.BestOf) >= 1 ? Number(round.BestOf) : 1);
       } else if (round.selected === 'knockout') {
         this.$set(round, 'puljesize', 2);
+        this.$set(round, 'distributeEvenly', false);
+        this.$set(round, 'poolSizes', []);
         this.$set(round, 'playstyle', 'roundrobin');
         this.$set(round, 'BestOf', Number(round.BestOf) >= 1 ? Number(round.BestOf) : 1);
       }
@@ -375,6 +459,12 @@ var dash = new Vue({
     },
 
     onPoolSizeChange: function (index) {
+      this.activePreset = 'custom';
+      this.ensureRoutes(index);
+      this.recalculate();
+    },
+
+    onEvenDistributionChange: function (index) {
       this.activePreset = 'custom';
       this.ensureRoutes(index);
       this.recalculate();
@@ -398,6 +488,8 @@ var dash = new Vue({
       if (!rounds.length) return;
 
       this.$set(rounds[0], 'NbPlayers', Number(this.formdata.tournamentplayers) || 0);
+      this.ensureRoutes(0);
+      this.updatePoolSizes(rounds[0]);
 
       for (var target = 1; target < rounds.length; target++) {
         var count = 0;
@@ -407,13 +499,10 @@ var dash = new Vue({
           if (!Array.isArray(round.valsArray)) continue;
 
           if (round.selected === 'pool') {
-            var poolSize = Number(round.puljesize);
-            var playerCount = Number(round.NbPlayers);
-            if (!poolSize || !playerCount) continue;
-
-            var groups = Math.floor(playerCount / poolSize);
             for (var place = 0; place < round.valsArray.length; place++) {
-              if (Number(round.valsArray[place]) === target) count += groups;
+              if (Number(round.valsArray[place]) === target) {
+                count += this.playersAtPlace(round, place + 1);
+              }
             }
           }
 
@@ -427,6 +516,8 @@ var dash = new Vue({
         }
 
         this.$set(rounds[target], 'NbPlayers', count);
+        this.ensureRoutes(target);
+        this.updatePoolSizes(rounds[target]);
       }
     },
 
@@ -464,8 +555,13 @@ var dash = new Vue({
           var size = Number(round.puljesize);
           if (!Number.isInteger(size) || size < 2) {
             errors.push({ type: 'pool-size-' + i, description: label + ': players per group must be at least 2.' });
-          } else if (roundPlayers > 0 && roundPlayers % size !== 0) {
-            errors.push({ type: 'pool-div-' + i, description: label + ': ' + roundPlayers + ' players cannot be split evenly into groups of ' + size + '.' });
+          } else if (round.distributeEvenly === false && roundPlayers > 0 && roundPlayers % size !== 0) {
+            errors.push({ type: 'pool-div-' + i, description: label + ': ' + roundPlayers + ' players cannot be split into equal groups of exactly ' + size + '. Turn on “Distribute players evenly” or change the group size.' });
+          } else if (round.distributeEvenly !== false && roundPlayers > 0) {
+            var sizes = this.getPoolSizes(round);
+            if (!sizes.length || sizes.some(function (poolSize) { return poolSize < 2; })) {
+              errors.push({ type: 'pool-distribution-' + i, description: label + ': could not create valid groups with at least 2 players.' });
+            }
           }
 
           if (!round.playstyle) {
@@ -506,12 +602,9 @@ var dash = new Vue({
         if (!Array.isArray(winnerRound.valsArray)) continue;
 
         if (winnerRound.selected === 'pool') {
-          var winnerPoolSize = Number(winnerRound.puljesize);
-          var winnerPlayers = Number(winnerRound.NbPlayers);
-          if (winnerPoolSize > 0 && winnerPlayers > 0 && winnerPlayers % winnerPoolSize === 0) {
-            var winnerGroups = winnerPlayers / winnerPoolSize;
-            for (var wp = 0; wp < winnerRound.valsArray.length; wp++) {
-              if (Number(winnerRound.valsArray[wp]) === 0) winnerCount += winnerGroups;
+          for (var wp = 0; wp < winnerRound.valsArray.length; wp++) {
+            if (Number(winnerRound.valsArray[wp]) === 0) {
+              winnerCount += this.playersAtPlace(winnerRound, wp + 1);
             }
           }
         } else if (winnerRound.selected === 'knockout') {
@@ -537,8 +630,10 @@ var dash = new Vue({
     },
 
     recalculate: function () {
-      for (var i = 0; i < this.formdata.rundearray.length; i++) this.ensureRoutes(i);
       this.calculatePlayerCounts();
+      for (var i = 0; i < this.formdata.rundearray.length; i++) {
+        this.updatePoolSizes(this.formdata.rundearray[i]);
+      }
       this.validate();
     },
 
@@ -551,10 +646,17 @@ var dash = new Vue({
     groupSummary: function (round) {
       var players = Number(round.NbPlayers) || 0;
       var size = Number(round.puljesize) || 0;
-      if (!size) return '';
-      var groups = players / size;
-      if (!Number.isInteger(groups)) return players + ' players / groups of ' + size;
-      return groups + ' group' + (groups === 1 ? '' : 's') + ' × ' + size + ' players';
+      if (!size || players < 1) return '';
+
+      var sizes = this.getPoolSizes(round);
+      if (!sizes.length) return players + ' players / groups of ' + size;
+
+      var allSame = sizes.every(function (value) { return value === sizes[0]; });
+      if (allSame) {
+        return sizes.length + ' group' + (sizes.length === 1 ? '' : 's') + ' × ' + sizes[0] + ' players';
+      }
+
+      return sizes.length + ' groups: ' + sizes.join(' / ') + ' players';
     },
 
     stageSummary: function (round) {
@@ -598,6 +700,9 @@ var dash = new Vue({
       for (var i = 0; i < this.formdata.rundearray.length; i++) {
         if (!this.formdata.rundearray[i]._key) {
           this.$set(this.formdata.rundearray[i], '_key', this.newKey());
+        }
+        if (this.formdata.rundearray[i].selected === 'pool' && this.formdata.rundearray[i].distributeEvenly === undefined) {
+          this.$set(this.formdata.rundearray[i], 'distributeEvenly', true);
         }
       }
       this.recalculate();

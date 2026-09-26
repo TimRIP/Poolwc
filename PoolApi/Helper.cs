@@ -95,6 +95,7 @@ namespace TournamentBackend
             public string name;
             public int NbPlayers;
             public int puljesize;
+            public List<int> poolSizes = new List<int>();
             public string playstyle;
             public int BestOf;
             public List<int> whereto = new List<int>();
@@ -263,6 +264,43 @@ namespace TournamentBackend
             }
 
         }
+        private static List<int> BuildEvenPoolSizes(int nbPlayers, int preferredPoolSize)
+        {
+            List<int> sizes = new List<int>();
+
+            if (nbPlayers < 2 || preferredPoolSize < 2)
+            {
+                return sizes;
+            }
+
+            int groups = (int)Math.Ceiling((double)nbPlayers / preferredPoolSize);
+
+            // Never create a one-player pool. If necessary, use slightly larger
+            // pools than the preferred size instead.
+            while (groups > 1 && (nbPlayers / groups) < 2)
+            {
+                groups--;
+            }
+
+            int baseSize = nbPlayers / groups;
+            int remainder = nbPlayers % groups;
+
+            for (int i = 0; i < groups; i++)
+            {
+                sizes.Add(baseSize + (i < remainder ? 1 : 0));
+            }
+
+            return sizes;
+        }
+
+        private static bool IsValidPoolSizes(List<int> sizes, int nbPlayers)
+        {
+            return sizes != null
+                && sizes.Count > 0
+                && sizes.All(size => size >= 2)
+                && sizes.Sum() == nbPlayers;
+        }
+
         public int CreateTournamentFromString(string jsontext)
         {
             UserBackoffice ubo = new UserBackoffice();
@@ -311,10 +349,53 @@ namespace TournamentBackend
                 run.NbPlayers = NbPlayers;
                 run.puljesize = puljesize;
 
+                // New format: the frontend can send the actual size of every pool,
+                // e.g. 13 players -> [4,3,3,3]. Old payloads are still supported.
+                List<int> poolSizes = new List<int>();
+                JToken poolSizesToken = item.GetValue("poolSizes");
+                if (poolSizesToken != null && poolSizesToken.Type == JTokenType.Array)
+                {
+                    poolSizes = poolSizesToken.ToObject<List<int>>();
+                }
+
+                bool distributeEvenly = false;
+                JToken distributeToken = item.GetValue("distributeEvenly");
+                if (distributeToken != null)
+                {
+                    distributeEvenly = distributeToken.ToObject<bool>();
+                }
+
+                if (!IsValidPoolSizes(poolSizes, NbPlayers))
+                {
+                    if (distributeEvenly)
+                    {
+                        poolSizes = BuildEvenPoolSizes(NbPlayers, puljesize);
+                    }
+                    else
+                    {
+                        if (puljesize < 2 || NbPlayers % puljesize != 0)
+                        {
+                            throw new ArgumentException("The number of players cannot be divided into the requested pool size.");
+                        }
+
+                        for (int i = 0; i < NbPlayers / puljesize; i++)
+                        {
+                            poolSizes.Add(puljesize);
+                        }
+                    }
+                }
+
+                if (!IsValidPoolSizes(poolSizes, NbPlayers))
+                {
+                    throw new ArgumentException("Invalid pool distribution.");
+                }
+
+                run.poolSizes = poolSizes;
                 turn.runder.Add(run);
 
-                for (int i = 0; i < NbPlayers / puljesize; i++)
+                for (int i = 0; i < poolSizes.Count; i++)
                 {
+                    int currentPoolSize = poolSizes[i];
                     Tournament.Pulje pu = new Tournament.Pulje();
                     Tournament.Match puljematch = new Tournament.Match() { ParentMatchId = LastMatchId, name = "pulje" + " " + (i + 1).ToString(), Individual = false };
                     int puljeMatchId = ubo.SP_CreateMatch("pulje" + " " + (i + 1).ToString(), LastMatchId, null, false);
@@ -322,7 +403,7 @@ namespace TournamentBackend
                     pu.PuljeMatch = puljematch;
 
                     //We create Seats for Puljer
-                    for (int r = 0; r < puljesize; r++)
+                    for (int r = 0; r < currentPoolSize; r++)
                     {
                         int SeatId = ubo.SP_CreateSeat(null, null, puljeMatchId, null, null);
                         puljematch.seats.Add(new Tournament.Seat() { SeatId = SeatId });
@@ -353,7 +434,7 @@ namespace TournamentBackend
                         Tournament.Match mat = new Tournament.Match() { Individual = true, MatchId = matchId, name = "runde: " + item.GetValue("navn").ToString() + " Pulje " + (i + 1) + " Alle i en kamp ", ParentMatchId = puljeMatchId };
                         pu.matches.Add(mat);
 
-                        for (int l = 0; l < puljesize; l++)
+                        for (int l = 0; l < currentPoolSize; l++)
                         {
                             int FirstSeatId = ubo.SP_CreateSeat(puljematch.seats[l].SeatId, null, mat.MatchId, null, null);
                             mat.seats.Add(new Tournament.Seat() { SeatId = FirstSeatId, ParentSeatId = puljematch.seats[l].SeatId });
@@ -364,9 +445,9 @@ namespace TournamentBackend
 
                         //create individual matches
                         int kampnr = 1;
-                        int iterate = puljesize;
+                        int iterate = currentPoolSize;
                         int nb = 1;
-                        for (int j = 0; j < puljesize; j++)
+                        for (int j = 0; j < currentPoolSize; j++)
                         {
                             for (int k = iterate; k > nb; k--)
                             {

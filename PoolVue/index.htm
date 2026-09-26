@@ -120,7 +120,7 @@
                   <template v-if="runde.selected === 'pool'">
                     <div class="form-grid three-col">
                       <label class="field">
-                        <span>Players per group</span>
+                        <span>Preferred players per group</span>
                         <input type="number" min="2" step="1" v-model.number="runde.puljesize" @change="onPoolSizeChange(index)">
                       </label>
 
@@ -139,6 +139,14 @@
                       </label>
                     </div>
 
+                    <label class="even-distribution-toggle">
+                      <input type="checkbox" v-model="runde.distributeEvenly" @change="onEvenDistributionChange(index)">
+                      <span>
+                        <strong>Distribute players evenly</strong>
+                        <small>If the number does not divide exactly, the groups differ by at most one player. Example: 13 players with preferred group size 4 becomes 4 / 3 / 3 / 3.</small>
+                      </span>
+                    </label>
+
                     <div class="group-summary" v-if="runde.puljesize > 0">
                       <span>{{ groupSummary(runde) }}</span>
                     </div>
@@ -151,8 +159,11 @@
                         </div>
                       </div>
 
-                      <div class="route-row" v-for="n in Number(runde.puljesize) || 0" :key="'route-' + index + '-' + n">
-                        <div class="route-label">{{ placeLabel(n) }}</div>
+                      <div class="route-row" v-for="n in runde.valsArray.length" :key="'route-' + index + '-' + n">
+                        <div class="route-label">
+                          {{ placeLabel(n) }}
+                          <small v-if="runde.distributeEvenly">{{ playersAtPlace(runde, n) }} player{{ playersAtPlace(runde, n) === 1 ? '' : 's' }}</small>
+                        </div>
                         <i class="fa fa-long-arrow-right route-arrow"></i>
                         <select v-model.number="runde.valsArray[n - 1]" @change="recalculate">
                           <option :value="-1">Eliminated</option>
