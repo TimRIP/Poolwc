@@ -162,6 +162,22 @@
               <div v-if="resultError" class="resultMessage error">{{ resultError }}</div>
               <div v-if="resultMessage" class="resultMessage success">{{ resultMessage }}</div>
 
+              <div v-if="lastAdvancement" class="advanceSummary">
+                <div class="advanceSummaryTitle">Stage status</div>
+                <div class="advanceSummaryLine">
+                  <strong>{{ lastAdvancement.stageName || 'Stage' }}</strong>
+                  <span v-if="lastAdvancement.stageComplete && lastAdvancement.placementResolved">complete</span>
+                  <span v-else-if="lastAdvancement.stageComplete">needs tiebreaker</span>
+                  <span v-else>not complete yet</span>
+                </div>
+                <div v-if="lastAdvancement.advancedPlayers && lastAdvancement.advancedPlayers.length" class="advancedPlayers">
+                  <div v-for="move in lastAdvancement.advancedPlayers" :key="move.destinationSeatId" class="advancedPlayerRow">
+                    <span>{{ move.playerName || ('Player #' + move.playerId) }}</span>
+                    <span>place {{ move.place }} → {{ move.destinationMatchName || ('match #' + move.destinationMatchId) }} / seat #{{ move.destinationSeatId }}</span>
+                  </div>
+                </div>
+              </div>
+
               <div class="resultActions">
                 <button type="button" class="miniBtn" @click="clearResult" :disabled="savingResult || activeSeats.length === 0">
                   Clear result

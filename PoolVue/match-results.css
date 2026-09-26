@@ -245,3 +245,54 @@
   .resultActions { flex-direction: column-reverse; }
   .resultActions > button { width: 100%; }
 }
+
+.advanceSummary {
+  margin-top: 10px;
+  padding: 11px 12px;
+  border: 1px solid rgba(159,193,255,.22);
+  border-radius: 10px;
+  background: rgba(119,168,255,.06);
+}
+
+.advanceSummaryTitle {
+  margin-bottom: 7px;
+  color: #9fc1ff;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.advanceSummaryLine {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #dce7f8;
+  font-size: 12px;
+}
+
+.advancedPlayers {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.advancedPlayerRow {
+  display: grid;
+  grid-template-columns: minmax(100px, .8fr) minmax(0, 1.4fr);
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255,255,255,.08);
+  color: #b9c8dd;
+  font-size: 11px;
+}
+
+.advancedPlayerRow span:first-child {
+  color: #fff;
+  font-weight: 800;
+}
+
+@media (max-width: 520px) {
+  .advanceSummaryLine,
+  .advancedPlayerRow { grid-template-columns: 1fr; flex-direction: column; }
+}

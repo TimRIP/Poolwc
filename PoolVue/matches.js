@@ -109,7 +109,8 @@ const matchesApp = new Vue({
     loadingDetails: false,
     savingResult: false,
     resultError: '',
-    resultMessage: ''
+    resultMessage: '',
+    lastAdvancement: null
   },
 
   computed: {
@@ -211,6 +212,7 @@ const matchesApp = new Vue({
     async selectMatch(node) {
       if (!node || !node.matchId) return;
       this.selectedMatchId = node.matchId;
+      this.lastAdvancement = null;
       await this.loadMatchDetails(node.matchId);
     },
 
@@ -285,8 +287,9 @@ const matchesApp = new Vue({
       this.resultMessage = '';
 
       try {
-        await axios.delete(
-          'http://localhost:5000/api/match/' + encodeURIComponent(this.matchDetails.matchId) + '/result',
+        const currentMatchId = this.matchDetails.matchId;
+        const res = await axios.delete(
+          'http://localhost:5000/api/match/' + encodeURIComponent(currentMatchId) + '/result',
           { headers: this.authHeaders() }
         );
 
@@ -294,7 +297,17 @@ const matchesApp = new Vue({
           seat.resultMatchPlace = null;
           seat.resultPoints = null;
         }
-        this.resultMessage = 'Result cleared.';
+
+        const lastTournamentId = localStorage.getItem('lastTournamentId');
+        if (lastTournamentId) {
+          await this.loadMatches(lastTournamentId, true);
+          await this.loadMatchDetails(currentMatchId);
+        }
+
+        this.lastAdvancement = res.data && res.data.advancement ? res.data.advancement : null;
+        this.resultMessage = (res.data && res.data.message)
+          ? res.data.message
+          : 'Result cleared.';
       } catch (e) {
         console.error(e);
         if (e.response && e.response.status === 401) {
@@ -363,7 +376,8 @@ const matchesApp = new Vue({
       };
 
       try {
-        await axios.post(
+        const currentMatchId = this.matchDetails.matchId;
+        const res = await axios.post(
           'http://localhost:5000/api/match/result',
           payload,
           {
@@ -374,9 +388,32 @@ const matchesApp = new Vue({
           }
         );
 
-        this.resultMessage = 'Result saved.';
-        await this.loadMatchDetails(this.matchDetails.matchId);
-        this.resultMessage = 'Result saved.';
+        const lastTournamentId = localStorage.getItem('lastTournamentId');
+        if (lastTournamentId) {
+          await this.loadMatches(lastTournamentId, true);
+        }
+        await this.loadMatchDetails(currentMatchId);
+
+        this.lastAdvancement = res.data && res.data.advancement ? res.data.advancement : null;
+
+        const message = res.data && res.data.message
+          ? res.data.message
+          : 'Result saved.';
+
+        const advanced = res.data && res.data.advancement && Array.isArray(res.data.advancement.advancedPlayers)
+          ? res.data.advancement.advancedPlayers
+          : [];
+
+        if (advanced.length) {
+          const moved = advanced.map(x =>
+            (x.playerName || ('Player #' + x.playerId)) +
+            ' (place ' + x.place + ') → ' +
+            (x.destinationMatchName || ('match #' + x.destinationMatchId))
+          );
+          this.resultMessage = message + ' ' + moved.join('; ');
+        } else {
+          this.resultMessage = message;
+        }
       } catch (e) {
         console.error(e);
         if (e.response && e.response.status === 401) {
@@ -391,7 +428,7 @@ const matchesApp = new Vue({
       }
     },
 
-    async loadMatches(tournamentId) {
+    async loadMatches(tournamentId, preserveSelection) {
       const tid = Number(tournamentId);
       if (!Number.isFinite(tid)) {
         alert('Please enter a valid TournamentId');
@@ -420,10 +457,13 @@ const matchesApp = new Vue({
         }
 
         this.rows = matches;
-        this.selectedMatchId = null;
-        this.matchDetails = null;
-        this.resultError = '';
-        this.resultMessage = '';
+        if (!preserveSelection) {
+          this.selectedMatchId = null;
+          this.matchDetails = null;
+          this.resultError = '';
+          this.resultMessage = '';
+          this.lastAdvancement = null;
+        }
         this.expandAll();
         localStorage.setItem('lastTournamentId', String(tid));
       } catch (e) {

@@ -103,16 +103,23 @@ namespace TournamentBackend.Controllers
 
             try
             {
-                backoffice.SaveMatchResults(model.MatchId, model.Results);
-                return Ok(new { saved = true, matchId = model.MatchId });
+                StageAdvanceResult advancement = backoffice.SaveMatchResultsAndAdvance(model.MatchId, model.Results);
+                return Ok(new
+                {
+                    saved = true,
+                    matchId = model.MatchId,
+                    message = advancement.Message,
+                    advancement = advancement
+                });
             }
             catch (InvalidOperationException ex)
             {
                 return BadRequest(new { message = ex.Message });
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                return StatusCode(500, new { message = "The match result could not be saved." });
+                Console.WriteLine(ex);
+                return StatusCode(500, new { message = "The match result could not be saved or advanced." });
             }
         }
 
@@ -132,8 +139,22 @@ namespace TournamentBackend.Controllers
                 return NotFound();
             }
 
-            backoffice.ClearMatchResults(matchId);
-            return Ok(new { cleared = true, matchId = matchId });
+            try
+            {
+                StageAdvanceResult advancement = backoffice.ClearMatchResultsAndDownstream(matchId);
+                return Ok(new
+                {
+                    cleared = true,
+                    matchId = matchId,
+                    message = advancement.Message,
+                    advancement = advancement
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                return StatusCode(500, new { message = "The match result could not be cleared." });
+            }
         }
 
         private bool TryGetUserId(out int userId)
