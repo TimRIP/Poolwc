@@ -296,3 +296,13 @@
   .advanceSummaryLine,
   .advancedPlayerRow { grid-template-columns: 1fr; flex-direction: column; }
 }
+
+.scoreField input:disabled {
+  opacity: .72;
+  cursor: not-allowed;
+}
+
+.scoreMarginNote {
+  margin-top: 10px;
+  font-weight: 800;
+}

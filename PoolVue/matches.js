@@ -179,6 +179,34 @@ const matchesApp = new Vue({
     activeSeats() {
       if (!this.matchDetails || !Array.isArray(this.matchDetails.seats)) return [];
       return this.matchDetails.seats.filter(s => s.playerId !== null && s.playerId !== undefined);
+    },
+
+    scoreDirectionText() {
+      if (!this.matchDetails || !this.matchDetails.matchRules) return '';
+      const from = Number(this.matchDetails.matchRules.playFrom);
+      const to = Number(this.matchDetails.matchRules.playTo);
+      if (!Number.isFinite(from) || !Number.isFinite(to)) return '';
+      return 'Winner finishes on ' + to + '; stage tiebreak uses score difference';
+    },
+
+    hasPlayTo() {
+      if (!this.matchDetails || !this.matchDetails.matchRules) return false;
+      const to = Number(this.matchDetails.matchRules.playTo);
+      return Number.isFinite(to);
+    },
+
+    scoreMarginText() {
+      if (this.activeSeats.length !== 2 || !this.hasPlayTo) return '';
+      const a = this.activeSeats[0];
+      const b = this.activeSeats[1];
+      const aScore = Number(a.resultPoints);
+      const bScore = Number(b.resultPoints);
+      const bothEntered =
+        a.resultPoints !== '' && a.resultPoints !== null && a.resultPoints !== undefined &&
+        b.resultPoints !== '' && b.resultPoints !== null && b.resultPoints !== undefined &&
+        Number.isFinite(aScore) && Number.isFinite(bScore);
+      if (!bothEntered) return '';
+      return 'Score difference: ' + Math.abs(aScore - bScore);
     }
   },
 
@@ -263,8 +291,16 @@ const matchesApp = new Vue({
 
     setWinner(seat) {
       if (!seat || this.activeSeats.length !== 2) return;
+      const playTo = this.matchDetails && this.matchDetails.matchRules
+        ? Number(this.matchDetails.matchRules.playTo)
+        : NaN;
       for (const current of this.activeSeats) {
-        current.resultMatchPlace = current.seatId === seat.seatId ? 1 : 2;
+        const isWinner = current.seatId === seat.seatId;
+        current.resultMatchPlace = isWinner ? 1 : 2;
+        if (Number.isFinite(playTo)) {
+          if (isWinner) current.resultPoints = playTo;
+          else if (Number(current.resultPoints) === playTo) current.resultPoints = null;
+        }
       }
       this.resultError = '';
       this.resultMessage = '';
@@ -272,8 +308,16 @@ const matchesApp = new Vue({
 
     setLoser(seat) {
       if (!seat || this.activeSeats.length !== 2) return;
+      const playTo = this.matchDetails && this.matchDetails.matchRules
+        ? Number(this.matchDetails.matchRules.playTo)
+        : NaN;
       for (const current of this.activeSeats) {
-        current.resultMatchPlace = current.seatId === seat.seatId ? 2 : 1;
+        const isWinner = current.seatId !== seat.seatId;
+        current.resultMatchPlace = isWinner ? 1 : 2;
+        if (Number.isFinite(playTo)) {
+          if (isWinner) current.resultPoints = playTo;
+          else if (Number(current.resultPoints) === playTo) current.resultPoints = null;
+        }
       }
       this.resultError = '';
       this.resultMessage = '';
@@ -347,6 +391,41 @@ const matchesApp = new Vue({
 
       if (!places.includes(1)) {
         return 'A winner must be selected.';
+      }
+
+      // In this scoring model every player starts at PlayFrom and the winner
+      // always finishes exactly on PlayTo. The loser's remaining score determines
+      // the winning margin / score difference.
+      if (this.activeSeats.length === 2 && this.matchDetails.matchRules) {
+        const rules = this.matchDetails.matchRules;
+        const from = Number(rules.playFrom);
+        const to = Number(rules.playTo);
+        const winner = this.activeSeats.find(s => Number(s.resultMatchPlace) === 1);
+        const loser = this.activeSeats.find(s => Number(s.resultMatchPlace) === 2);
+
+        if (Number.isFinite(to)) {
+          if (!winner || winner.resultPoints === '' || winner.resultPoints === null || winner.resultPoints === undefined) {
+            return 'The winner must have a final score of ' + to + '.';
+          }
+          if (Number(winner.resultPoints) !== to) {
+            return 'The winner must finish exactly on PlayTo (' + to + ').';
+          }
+          if (!loser || loser.resultPoints === '' || loser.resultPoints === null || loser.resultPoints === undefined || !Number.isFinite(Number(loser.resultPoints))) {
+            return "Enter the loser's remaining score so the score difference can be calculated.";
+          }
+          if (Number(loser.resultPoints) === to) {
+            return 'The loser cannot also finish on PlayTo (' + to + ').';
+          }
+
+          if (Number.isFinite(from)) {
+            const min = Math.min(from, to);
+            const max = Math.max(from, to);
+            const loserScore = Number(loser.resultPoints);
+            if (loserScore < min || loserScore > max) {
+              return "The loser's score must be between PlayFrom (" + from + ") and PlayTo (" + to + ").";
+            }
+          }
+        }
       }
 
       return '';

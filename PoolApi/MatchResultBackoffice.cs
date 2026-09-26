@@ -70,7 +70,7 @@ namespace DrukDatabaseLayer
         public int PlayerId { get; set; }
         public string PlayerName { get; set; }
         public int Wins { get; set; }
-        public int Points { get; set; }
+        public int? ScoreDifference { get; set; }
         public int HeadToHeadWins { get; set; }
         public int? DirectPlace { get; set; }
         public int? DirectPoints { get; set; }
@@ -354,9 +354,11 @@ WHERE Id = @SeatId
 
             response.StageComplete = true;
 
+            int? playTo = GetPlayTo(conn, transaction, stageId);
+
             List<StageSeatScore> ranked;
             string unresolvedReason;
-            if (!TryRankStage(stageSeats, childResults, childMatchIds, out ranked, out unresolvedReason))
+            if (!TryRankStage(stageSeats, childResults, childMatchIds, playTo, out ranked, out unresolvedReason))
             {
                 ClearStageOutcomeAndDestinations(conn, transaction, stageId, false, new HashSet<int>());
                 response.Message = "All matches are complete, but the stage placement is tied. " + unresolvedReason;
@@ -387,6 +389,7 @@ WHERE Id = @SeatId
             List<StageSeatScore> stageSeats,
             List<ChildSeatResult> childResults,
             List<int> childMatchIds,
+            int? playTo,
             out List<StageSeatScore> ranked,
             out string unresolvedReason)
         {
@@ -434,13 +437,63 @@ WHERE Id = @SeatId
                     .ToList();
 
                 stageSeat.Wins = playerResults.Count(x => x.ResultMatchPlace == 1);
-                stageSeat.Points = playerResults.Sum(x => x.ResultPoints ?? 0);
+
+                // Score difference measures how far ahead/behind a player finished.
+                // The winner always ends on PlayTo. Example with 70 -> 0:
+                // 0-35 gives the winner +35 and the loser -35.
+                // 0-22 gives +22/-22, so +35 is the better result.
+                if (playTo.HasValue)
+                {
+                    int difference = 0;
+                    bool completeScores = true;
+
+                    foreach (ChildSeatResult ownResult in playerResults)
+                    {
+                        if (!ownResult.ResultPoints.HasValue)
+                        {
+                            completeScores = false;
+                            break;
+                        }
+
+                        List<ChildSeatResult> opponents = childResults
+                            .Where(x =>
+                                x.MatchId == ownResult.MatchId &&
+                                x.PlayerId > 0 &&
+                                x.StageSeatId != stageSeat.SeatId)
+                            .ToList();
+
+                        if (opponents.Count == 0 || opponents.Any(x => !x.ResultPoints.HasValue))
+                        {
+                            completeScores = false;
+                            break;
+                        }
+
+                        int ownDistanceToTarget = Math.Abs(ownResult.ResultPoints.Value - playTo.Value);
+                        foreach (ChildSeatResult opponent in opponents)
+                        {
+                            int opponentDistanceToTarget = Math.Abs(opponent.ResultPoints.Value - playTo.Value);
+                            difference += opponentDistanceToTarget - ownDistanceToTarget;
+                        }
+                    }
+
+                    stageSeat.ScoreDifference = completeScores ? (int?)difference : null;
+                }
+                else
+                {
+                    stageSeat.ScoreDifference = null;
+                }
             }
 
-            List<StageSeatScore> initial = stageSeats
-                .OrderByDescending(x => x.Wins)
-                .ThenByDescending(x => x.Points)
-                .ToList();
+            bool scoreDifferenceAvailable = stageSeats.All(x => x.ScoreDifference.HasValue);
+
+            List<StageSeatScore> initial = scoreDifferenceAvailable
+                ? stageSeats
+                    .OrderByDescending(x => x.Wins)
+                    .ThenByDescending(x => x.ScoreDifference.Value)
+                    .ToList()
+                : stageSeats
+                    .OrderByDescending(x => x.Wins)
+                    .ToList();
 
             List<StageSeatScore> finalRanking = new List<StageSeatScore>();
             int index = 0;
@@ -449,7 +502,9 @@ WHERE Id = @SeatId
                 StageSeatScore first = initial[index];
                 List<StageSeatScore> tied = initial
                     .Skip(index)
-                    .TakeWhile(x => x.Wins == first.Wins && x.Points == first.Points)
+                    .TakeWhile(x =>
+                        x.Wins == first.Wins &&
+                        (!scoreDifferenceAvailable || x.ScoreDifference == first.ScoreDifference))
                     .ToList();
 
                 if (tied.Count == 1)
@@ -496,7 +551,9 @@ WHERE Id = @SeatId
 
                 if (stillTied)
                 {
-                    unresolvedReason = "Use points as a tiebreaker or play an extra deciding match before advancing players.";
+                    unresolvedReason = scoreDifferenceAvailable
+                        ? "The players are still tied on wins, score difference and head-to-head results. Play an extra deciding match before advancing them."
+                        : "Scores are missing, so score difference cannot break the tie. Enter the final score for every match or play an extra deciding match.";
                     return false;
                 }
 
@@ -523,7 +580,7 @@ WHERE Id = @SeatId;";
             {
                 StageSeatScore player = ranked[i];
                 int place = player.DirectPlace ?? (i + 1);
-                int points = player.DirectPoints ?? player.Points;
+                int points = player.DirectPoints ?? player.ScoreDifference ?? 0;
 
                 using (SqlCommand cmd = new SqlCommand(sql, conn, transaction))
                 {
@@ -745,6 +802,33 @@ ORDER BY S.Id;", conn, transaction))
                 }
             }
             return result;
+        }
+
+
+        private static int? GetPlayTo(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int stageMatchId)
+        {
+            // Prefer the rules on a playable child match. If none are found,
+            // fall back to rules attached to the stage itself.
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT TOP 1 MR.PlayTo
+FROM [Match] M
+INNER JOIN MatchRules MR ON MR.Id = M.MatchRulesId
+WHERE (M.ParentMatchId = @StageMatchId AND M.IndividualMatch = 1)
+   OR M.Id = @StageMatchId
+ORDER BY CASE WHEN M.ParentMatchId = @StageMatchId THEN 0 ELSE 1 END, M.Id;", conn, transaction))
+            {
+                cmd.Parameters.Add("@StageMatchId", SqlDbType.Int).Value = stageMatchId;
+                object value = cmd.ExecuteScalar();
+                if (value == null || value == DBNull.Value)
+                {
+                    return null;
+                }
+
+                return Convert.ToInt32(value);
+            }
         }
 
         private static List<int> GetChildMatchIds(

@@ -97,6 +97,10 @@
                   <span>Play to</span>
                   <strong>{{ displayValue(matchDetails.matchRules.playTo) }}</strong>
                 </div>
+                <div class="ruleItem" v-if="scoreDirectionText">
+                  <span>Scoring</span>
+                  <strong>{{ scoreDirectionText }}</strong>
+                </div>
                 <div class="ruleItem" v-if="matchDetails.matchRules.description">
                   <span>Description</span>
                   <strong>{{ matchDetails.matchRules.description }}</strong>
@@ -126,8 +130,11 @@
 
                 <div class="playerResultControls" v-if="seat.playerId !== null">
                   <label class="scoreField">
-                    <span>Points</span>
-                    <input type="number" v-model.number="seat.resultPoints" placeholder="-">
+                    <span>Final score</span>
+                    <input type="number"
+                           v-model.number="seat.resultPoints"
+                           :disabled="activeSeats.length === 2 && seat.resultMatchPlace === 1 && hasPlayTo"
+                           placeholder="-">
                   </label>
 
                   <div class="winnerLoserButtons" v-if="activeSeats.length === 2">
@@ -157,6 +164,10 @@
                 </div>
 
                 <div v-else class="waitingBadge">No player assigned</div>
+              </div>
+
+              <div v-if="scoreMarginText" class="resultNote scoreMarginNote">
+                {{ scoreMarginText }}
               </div>
 
               <div v-if="resultError" class="resultMessage error">{{ resultError }}</div>
