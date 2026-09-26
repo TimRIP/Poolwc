@@ -1,583 +1,689 @@
+/* =========================
+   Small API test panel
+   ========================= */
 new Vue({
-	el: '#app',
-	data() {
-		return {
-			info: []
-		}
-	},
-	methods: {
-		testpost: function (event) {
-
-			var mytoken = localStorage.getItem('token')
-
-			axios.defaults.headers.common['Authorization'] = mytoken
-
-			axios
-				.get("http://localhost:5000/api/test", {
-					headers: {
-						'Content-type': 'application/json; charset=utf-8'
-					},
-				})
-				.then(response => {
-					console.log(response)
-					this.info = response.data
-				})
-				.catch(e => {
-					alert(e)
-				})
-
-		}
-
-	},
-
-	mounted() {
-		axios
-			.get('https://api.coindesk.com/v1/bpi/currentprice.json')
-			.then(response => {
-				console.log(response)
-				this.info = response
-			})
-	}
-})
-
-
-new Vue({
-	el: '#vueformapp',
-	data: function () {
-		return {
-			username: "timrip",
-			password: "ug2-gj-8"
-		}
-	},
-	methods: {
-		dynamic: function (event) {
-			alert("BUMB")
-		}
-		,
-		apipost: function (event) {
-			//alert(JSON.stringify(this.$data))
-
-			var json = JSON.stringify(this.$data);
-			//alert(json);
-
-			axios
-				.post("http://localhost:5000/api/token", json, {
-					headers: {
-						'Content-type': 'application/json; charset=utf-8'
-					},
-				})
-				.then(function (response) {
-
-					/*var mytoken = JSON.stringify(response.data.token);
-		
-					if (mytoken.startsWith("\"")) {
-					 mytoken = mytoken.substring(1, mytoken.length);
-					}
-					if (mytoken.endsWith("\"")) {
-					 mytoken = mytoken.substring(0, mytoken.length - 1);
-					}*/
-
-					const AuthStr = `Bearer ${response.data.token}`
-					alert(AuthStr);
-
-					localStorage.setItem('token', AuthStr);
-
-				})
-				.catch(e => {
-					alert(e)
-				})
-		}
-	}
-})
-
-var match = new Vue({
-	el: '#vuematch',
-	data: {
-		TurnamentId: "0"
-	},
-	methods: {
-		dynamic: function (event) {
-			alert(this.$data.TurnamentId)
-			match.apipostmatches();
-		},
-		apipostmatches: function (event) {
-		  var mytoken = localStorage.getItem('token');
-		  axios.defaults.headers.common['Authorization'] = mytoken;
-
-		  const tid = Number(this.$data.TurnamentId);
-
-		  if (!Number.isInteger(tid)) {
-			alert("TurnamentId must be an integer. Got: " + this.$data.TurnamentId);
-			return;
-		  }
-
-		  axios.post(
-			"http://localhost:5000/api/matches",
-			tid, // ✅ raw number -> JSON: 227
-			{ headers: { 'Content-Type': 'application/json' } }
-		  )
-		  .then(function (response) {
-			match.TurnamentId = response.data.matches;
-		  })
-		  .catch(err => {
-			  console.log("AXIOS ERROR", err);
-
-			  if (err.response) {
-				console.log("STATUS:", err.response.status);
-				console.log("DATA:", err.response.data);
-				console.log("HEADERS:", err.response.headers);
-				alert(
-				  "Status: " + err.response.status + "\n" +
-				  "Response: " + JSON.stringify(err.response.data, null, 2)
-				);
-			  } else {
-				alert(err.message || String(err));
-			  }
-			});
-		}
-	}
-})
-
-
-
-var dash = new Vue({
-	el: '#dashboard',
-	data: {
-		formdata: {
-			errors: [
-				{
-					type: 0,
-					description: "Vælg antal spillere"
-				}
-			],
-			tournamentname: "new tournament",
-			tournamentplayers: "3",
-			rundearray: [
-				{
-					navn: "runde nr.1",
-					NbPlayers: "3",
-
-					//valsArray : [],
-					//selected: "",
-					//puljesize: "",
-				}
-			]
-		}
-	}
-	,
-	methods: {
-		apipostturnament: function (event) {
-			//alert(JSON.stringify(this.$data))
-
-			var json = JSON.stringify(this.$data.formdata);
-			//alert(json);		
-
-			var mytoken = localStorage.getItem('token')
-			axios.defaults.headers.common['Authorization'] = mytoken
-
-	
-			axios
-				.post("http://localhost:5000/api/tournament", JSON.stringify(json), {
-					headers: {
-						'Content-type': 'application/json; charset=utf-8'
-					},
-				})
-				.then(function (response) {
-
-
-					match.TurnamentId = response.data.tournament;
-					match.dynamic();
-
-					ShowMyDiv("vuematch");
-					//alert(response.data.tournament);
-				})
-				.catch(e => {
-					alert(e)
-				})
-		},
-		removeerror: function (type) {
-			var len = dash.formdata.errors.length;
-			var i;
-			for (i = 0; i < len; i++) {
-				if (dash.formdata.errors[i].type == type) {
-					dash.formdata.errors.splice(i, 1);
-					len--;
-					i--;
-				}
-			}
-
-		},
-		addrunde: function (event) {
-			this.formdata.rundearray.push({ navn: 'runde nr.' + (this.formdata.rundearray.length + 1) })
-			this.onChangeNbPlayers(event);
-		},
-		removerunde(index) {
-			this.formdata.rundearray.splice(index, 1)
-		},
-		openStorage() {
-			return JSON.parse(localStorage.getItem('form'))
-		},
-		saveStorage(form) {
-			localStorage.setItem('form', JSON.stringify(form))
-		},
-		loaddatapost: function (event) {
-			dash.$data.formdata = this.openStorage();
-			this.onChangeNbPlayers(event);
-		},
-		getdatapost: function (event) {
-			this.saveStorage(dash.$data.formdata);
-
-		},
-		onChangeNbPlayers(event) {
-
-			//We remove initial error
-			//this.$set(dash.formdata.rundearray[0], 'NbPlayers' , event.target.value)
-			this.$set(dash.formdata.rundearray[0], 'NbPlayers', dash.formdata.tournamentplayers)
-
-
-			this.removeerror(0);
-			this.removeerror(1);
-			this.removeerror(2);
-			//run through runder and calculate NbPlayers	
-			for (var j = 1; j < dash.formdata.rundearray.length; j++) {
-				var nb = 0;
-				var k;
-				for (k = j - 1; k >= 0; k--) {
-					if (dash.formdata.rundearray[k].selected == "pool") {
-						var nbinpool = 0;
-						for (var i = 0; i < dash.formdata.rundearray[k].valsArray.length; i++) {
-							if (dash.formdata.rundearray[k].valsArray[i] == j) {
-								nbinpool++;
-							}
-						}
-
-						nb += (Math.floor(dash.formdata.rundearray[k].NbPlayers / dash.formdata.rundearray[k].puljesize) * nbinpool)
-
-					} else if (dash.formdata.rundearray[k].selected == "knockout") {
-						if (dash.formdata.rundearray[k].valsArray[0] == j) {
-							nb += (Math.floor(dash.formdata.rundearray[k].NbPlayers / 2))
-						}
-						if (dash.formdata.rundearray[k].valsArray[1] == j) {
-							nb += (Math.floor(dash.formdata.rundearray[k].NbPlayers / 2))
-						}
-					}
-				}
-				this.$set(dash.formdata.rundearray[j], 'NbPlayers', nb)
-
-			}
-
-			//Check Players vs Pool Size!!
-			for (var j = 0; j < dash.formdata.rundearray.length; j++) {
-				if (dash.formdata.rundearray[j].selected == "pool") {
-					if (dash.formdata.rundearray[j].NbPlayers % dash.formdata.rundearray[j].puljesize != 0) {
-						dash.formdata.errors.push({ type: 1, description: 'pulje størrelse(' + dash.formdata.rundearray[j].puljesize + ') i runde' + (j + 1) + ', går ikke op i antal spillere(' + dash.formdata.rundearray[j].NbPlayers + ')!' })
-					}
-				}
-				else if (dash.formdata.rundearray[j].selected == "knockout") {
-					if (dash.formdata.rundearray[j].NbPlayers % 2 != 0) {
-						dash.formdata.errors.push({ type: 1, description: 'knockout runde' + (j + 1) + ', med antal spillere(' + dash.formdata.rundearray[j].NbPlayers + ') går ikke op i 2!' })
-					}
-				}
-			}
-			//Check if Runde Type is selected
-			for (var j = 0; j < dash.formdata.rundearray.length; j++) {
-				if (dash.formdata.rundearray[j].selected == undefined) {
-					dash.formdata.errors.push({ type: 2, description: 'runde' + (j + 1) + ', typen . . ikke valgt' })
-				}
-
-				if (dash.formdata.rundearray[j].BestOf == undefined) {
-					dash.formdata.errors.push({ type: 2, description: 'runde' + (j + 1) + ', Bedst af . . ikke valgt' })
-				}
-
-				if (dash.formdata.rundearray[j].selected == "pool" && dash.formdata.rundearray[j].playstyle == undefined) {
-					dash.formdata.errors.push({ type: 2, description: 'runde' + (j + 1) + ', afvikles som . . ikke valgt' })
-				}
-				if (dash.formdata.rundearray[j].selected == "pool" && dash.formdata.rundearray[j].playstyle == "swiss" && dash.formdata.rundearray[j].swissNb == undefined) {
-					dash.formdata.errors.push({ type: 2, description: 'runde' + (j + 1) + ', swiss antal runder . . ikke valgt' })
-				}
-			}
-
-			initCanvas();
-		},
-		onChange(event, index) {
-
-			if (event.target.value == "pool") {
-				this.$set(dash.formdata.rundearray[index], 'BestOf', 1)
-				this.$set(dash.formdata.rundearray[index], 'puljesize', 4)
-				this.$set(dash.formdata.rundearray[index], 'valsArray', [])
-				var i;
-				for (i = 0; i < dash.formdata.rundearray[index].puljesize; i++) {
-					this.$set(dash.formdata.rundearray[index].valsArray, i, -1)
-				}
-
-				this.$set(dash.formdata.rundearray[index], 'playstyle', 'roundrobin')
-
-
-			} else if (event.target.value == "knockout") {
-				this.$set(dash.formdata.rundearray[index], 'BestOf', 1)
-				this.$set(dash.formdata.rundearray[index], 'puljesize', 2)
-				this.$set(dash.formdata.rundearray[index], 'valsArray', [])
-
-				var i;
-				for (i = 0; i < dash.formdata.rundearray[index].puljesize; i++) {
-					this.$set(dash.formdata.rundearray[index].valsArray, i, -1)
-				}
-
-				this.$set(dash.formdata.rundearray[index], 'playstyle', 'roundrobin')
-			}
-			else {
-				this.$set(dash.formdata.rundearray[index], 'BestOf', undefined)
-				this.$set(dash.formdata.rundearray[index], 'puljesize', undefined)
-				this.$set(dash.formdata.rundearray[index], 'valsArray', undefined)
-				this.$set(dash.formdata.rundearray[index], 'playstyle', undefined)
-			}
-
-			this.onChangeNbPlayers(event);
-		},
-		onChangePlayStyle(event, index) {
-			if (event.target.value == "beerpot") {
-				this.$set(dash.formdata.rundearray[index], 'BestOf', undefined)
-				this.$set(dash.formdata.rundearray[index], 'swissNb', undefined)
-			} else if (event.target.value == "roundrobin") {
-				this.$set(dash.formdata.rundearray[index], 'BestOf', 1)
-				this.$set(dash.formdata.rundearray[index], 'swissNb', undefined)
-			} else if (event.target.value == "swiss") {
-				this.$set(dash.formdata.rundearray[index], 'BestOf', 1)
-				this.$set(dash.formdata.rundearray[index], 'swissNb', 1)
-			}
-			onChangeNbPlayers(event);
-		},
-		onChangeNumber(event, index) {
-			this.formdata.rundearray[index].valsArray.splice(event.target.value, (this.formdata.rundearray[index].valsArray.length - event.target.value))
-
-			var i;
-			for (i = 0; i < dash.formdata.rundearray[index].puljesize; i++) {
-				if (dash.formdata.rundearray[index].valsArray[i] == undefined || dash.formdata.rundearray[index].valsArray[i] == null) {
-					this.$set(dash.formdata.rundearray[index].valsArray, i, -1)
-				}
-			}
-			this.onChangeNbPlayers(event);
-		},
-		onChangeDirection(event) {
-			this.onChangeNbPlayers(event);
-		}
-	}
-})
-
-function initCanvas() {
-
-	var ctx = document.getElementById("canvas").getContext("2d");
-	ctx.fillStyle = "black";
-	ctx.clearRect(0, 0, canvas.width, canvas.height);
-	ctx.beginPath();
-	ctx.rect(0, 0, 1500, 1500);
-	ctx.stroke();
-
-	ctx.font = "10px Comic Sans MS";
-	ctx.fillStyle = "black";
-	ctx.textAlign = "left";
-	ctx.fillText("Tournament: " + dash.formdata.tournamentname, 5, 10);
-
-	var setspace = { "px": 30, "playersize": 25, "space_between_player": 5, "space_between_puljer": 20, "defaultHight": 70, "space_between_runder": 15, "initialHight": 20 };
-
-	let points = [];
-
-
-	for (var i = 0; i < dash.formdata.rundearray.length; i++) {
-		var rundespace = ((setspace.playersize + setspace.space_between_player)
-		) * dash.formdata.rundearray[i].NbPlayers + (dash.formdata.rundearray[i].NbPlayers / dash.formdata.rundearray[i].puljesize) * setspace.space_between_puljer;
-
-		var overflow = 380;
-		var px = setspace.px;
-		var py = (setspace.defaultHight + setspace.space_between_runder) * (i) + setspace.initialHight;
-		var pwidth = rundespace; //owerflow => ...
-		var phight = setspace.defaultHight;
-
-		//runderne
-		if (overflow < px + pwidth) {
-			ctx.rect(px, py, overflow - px + 100, phight);
-			pwidth = overflow - px + 100;
-			//truncated graphic
-			ctx.moveTo(px + (overflow - px + 10) , py + 12);
-			ctx.lineTo(px + (overflow - px + 10) + 10 , py + 23);
-			ctx.lineTo(px + (overflow - px + 10) , py + 34);
-			ctx.lineTo(px + (overflow - px + 10) + 10 , py + 45);
-			ctx.lineTo(px + (overflow - px + 10) , py + 56);
-
-			ctx.moveTo(10 + px + (overflow - px + 10) , py + 12);
-			ctx.lineTo(10 + px + (overflow - px + 10) + 10 , py + 23);
-			ctx.lineTo(10 + px + (overflow - px + 10) , py + 34);
-			ctx.lineTo(10 + px + (overflow - px + 10) + 10 , py + 45);
-			ctx.lineTo(10 + px + (overflow - px + 10) , py + 56);
-			
-			ctx.fillText("Spillere i alt:", 25 + px + (overflow - px + 10), py + 30);
-			ctx.fillText(dash.formdata.rundearray[i].NbPlayers, 25 + px + (overflow - px + 10), py + 45);
-
-		} else {
-			ctx.rect(px, py, pwidth, phight);
-		}
-
-		var p = { "x": px + pwidth, "y": py + phight / 2, "up": 0, "down": 0 };
-		points.push(p);
-
-		ctx.fillText(dash.formdata.rundearray[i].navn, setspace.px, (setspace.defaultHight + setspace.space_between_runder) * (i) + 10 + setspace.initialHight);
-
-		for (var j = 0; j < dash.formdata.rundearray[i].NbPlayers / dash.formdata.rundearray[i].puljesize; j++) {
-
-			//Puljerne
-			var myx = px + 10 + j * setspace.space_between_puljer + (j * dash.formdata.rundearray[i].puljesize * (setspace.playersize + setspace.space_between_player));
-			var mwidth = dash.formdata.rundearray[i].puljesize * (setspace.playersize + setspace.space_between_player) + 5;
-			if(overflow < myx){
-				//console.log("Removed");
-			}
-			else if (overflow <= myx + mwidth) {
-				//console.log("length: " + Math.abs(overflow - myx) + " myx: " + myx + " mwidth: " + mwidth);
-				ctx.rect(myx, py + 10, Math.abs(overflow - myx) + 5, phight - 20);
-				
-			} else {
-				ctx.rect(myx, py + 10, mwidth, phight - 20);
-			}
-
-			//Spillerne
-			var xx = myx + 5;
-			var yy = py + 15;
-			var ww = setspace.playersize;
-
-			for (let k = 0; k < dash.formdata.rundearray[i].puljesize; k++) {
-
-				var plx = xx + k * (setspace.space_between_player + ww);
-				if (overflow >= plx + ww) {
-
-					if (dash.formdata.rundearray[i].valsArray[k] == -1) {
-						ctx.fillRect(plx, yy, ww, 40);
-						ctx.font = "25px Arial";
-						ctx.fillStyle = "white";
-						ctx.fillText("X", plx + 4, yy + 30);
-						ctx.font = "10px Comic Sans MS";
-						ctx.fillStyle = "black";
-					} else {
-						ctx.rect(plx, yy, ww, 40);
-					}
-				}
-			}
-		}
-	}
-
-	var shift = 1;
-	while (shift <= points.length) {
-
-
-		for (var l = 0; l < (points.length - shift); l++) {
-
-			var pressent = false;
-			var text = "spiller: ";
-			//Loop through RundeArray decide if draw line
-			for (let r = 0; r < dash.formdata.rundearray[l].valsArray.length; r++) {
-				if (dash.formdata.rundearray[l].valsArray[r] == l + shift) {
-					if (!pressent) {
-						text = text + (r + 1);
-					}
-					else {
-						text = text + ", " + (r + 1);
-					}
-					pressent = true;
-				}
-			}
-
-			if (pressent) {
-
-				//ctx.beginPath(); // Start a new path
-				ctx.moveTo(points[l].x, points[l].y + (phight / 2) - 5 - (points[l].down * 10));
-
-
-				var maxx = 0;
-				if (points[l].x > points[l + shift].x) {
-					maxx = points[l].x;
-				}
-				else {
-					maxx = points[l + shift].x;
-				}
-				ctx.lineTo(maxx + 10 + (points[l].down * 15), points[l].y + (phight / 2) - 5 - (points[l].down * 10));
-
-				ctx.lineTo(maxx + 10 + (points[l].down * 15), points[l + shift].y - (phight / 2) + 5 + (points[l + shift].up * 10));
-
-				ctx.lineTo(points[l + shift].x, points[l + shift].y - (phight / 2) + 5 + (points[l + shift].up * 10));
-
-
-				//litlle arrow
-				ctx.lineTo(points[l + shift].x + 7, points[l + shift].y - (phight / 2) + 5 + (points[l + shift].up * 10) - 5);
-				ctx.moveTo(points[l + shift].x, points[l + shift].y - (phight / 2) + 5 + (points[l + shift].up * 10));
-				ctx.lineTo(points[l + shift].x + 7, points[l + shift].y - (phight / 2) + 5 + (points[l + shift].up * 10) + 5);
-
-
-				//Fill text out
-				ctx.fillText(text, maxx + 10 + (points[l].down * 15) + 2, (points[l].y + (phight / 2) - 5 - (points[l].down * 10)) + ((points[l + shift].y - (phight / 2) + 5 + (points[l + shift].up * 10)) - (points[l].y + (phight / 2) - 5 - (points[l].down * 10))) / 2);
-
-				points[l].down++;
-				points[l + shift].up++;
-
-				ctx.stroke(); // Render the path
-
-			}
-
-			//ctx.rect(points[l].x,points[l].y,2,2 );
-		}
-
-		shift++;
-
-	}
-
-	ctx.stroke();
-
-}
-
-window.addEventListener('load', function (event) {
-	initCanvas();
+  el: '#app',
+  data: function () {
+    return { info: [] };
+  },
+  methods: {
+    testpost: function () {
+      var token = localStorage.getItem('token');
+      if (token) axios.defaults.headers.common['Authorization'] = token;
+
+      axios.get('http://localhost:5000/api/test', {
+        headers: { 'Content-type': 'application/json; charset=utf-8' }
+      })
+      .then(response => { this.info = response.data; })
+      .catch(error => {
+        this.info = error.response ? error.response.data : error.message;
+      });
+    }
+  }
 });
 
+/* =========================
+   Login panel
+   ========================= */
+new Vue({
+  el: '#vueformapp',
+  data: function () {
+    return {
+      username: '',
+      password: '',
+      message: ''
+    };
+  },
+  methods: {
+    apipost: function () {
+      this.message = '';
 
+      axios.post('http://localhost:5000/api/token', {
+        username: this.username,
+        password: this.password
+      }, {
+        headers: { 'Content-type': 'application/json; charset=utf-8' }
+      })
+      .then(function (response) {
+        var auth = 'Bearer ' + response.data.token;
+        localStorage.setItem('token', auth);
+        axios.defaults.headers.common['Authorization'] = auth;
 
-function draw_square() {
-	for (i = 0; i < dash.formdata.rundearray.length; i++) {
-		var draw = SVG().addTo('#dashboard').size(300, 300)
-		var rect = draw.rect(50, 50).attr({ fill: '#f07' })
-	}
-}
+        if (typeof dash !== 'undefined') {
+          dash.authToken = auth;
+          dash.apiError = '';
+        }
 
-function ShowMyDiv(mydiv) {
+        this.message = 'Login successful. You can now create tournaments.';
+      }.bind(this))
+      .catch(function (error) {
+        this.message = error.response && error.response.status === 401
+          ? 'Login failed. Check username and password.'
+          : 'Login failed: ' + (error.message || String(error));
+      }.bind(this));
+    }
+  }
+});
 
-	//$("div.mainContent").hide();
+/* =========================
+   Last tournament panel
+   ========================= */
+var match = new Vue({
+  el: '#vuematch',
+  data: {
+    TurnamentId: localStorage.getItem('lastTournamentId') || 'None yet'
+  }
+});
 
-	var divs = $("#dashboard, #app, #vueformapp, #vuematch")
+/* =========================
+   Tournament builder
+   ========================= */
+var dash = new Vue({
+  el: '#dashboard',
+  data: {
+    authToken: localStorage.getItem('token') || '',
+    activePreset: 'custom',
+    uiMessage: '',
+    apiError: '',
+    creating: false,
+    createdTournamentId: localStorage.getItem('lastTournamentId') || '',
+    nextKey: 2,
+    formdata: {
+      errors: [],
+      tournamentname: 'New tournament',
+      tournamentplayers: 8,
+      rundearray: [
+        {
+          _key: 1,
+          navn: 'Stage 1',
+          NbPlayers: 8,
+          selected: 'pool',
+          BestOf: 1,
+          puljesize: 4,
+          valsArray: [-1, -1, -1, -1],
+          playstyle: 'roundrobin'
+        }
+      ]
+    }
+  },
 
-	divs.not(("#" + $(mydiv).attr("class"))).hide();
-	$("#" + mydiv).show();
-	$('.admin-panel .slidebar li').removeClass('selectedbutton');
-	$("#" + mydiv + "Item").addClass('selectedbutton');
+  computed: {
+    tokenAvailable: function () {
+      return !!this.authToken;
+    },
+    isValid: function () {
+      return this.formdata.errors.length === 0;
+    }
+  },
 
+  methods: {
+    newKey: function () {
+      return this.nextKey++;
+    },
+
+    isPowerOfTwo: function (value) {
+      value = Number(value);
+      return value >= 2 && Number.isInteger(value) && (value & (value - 1)) === 0;
+    },
+
+    knockoutName: function (players) {
+      players = Number(players);
+      if (players === 2) return 'Final';
+      if (players === 4) return 'Semi-finals';
+      if (players === 8) return 'Quarter-finals';
+      if (players === 16) return 'Round of 16';
+      if (players === 32) return 'Round of 32';
+      return 'Knockout - ' + players + ' players';
+    },
+
+    createPoolStage: function (name, players, poolSize, destinationIndex, qualifiersPerPool) {
+      var routes = [];
+      for (var i = 0; i < poolSize; i++) {
+        routes.push(i < qualifiersPerPool ? destinationIndex : -1);
+      }
+
+      return {
+        _key: this.newKey(),
+        navn: name,
+        NbPlayers: players,
+        selected: 'pool',
+        BestOf: 1,
+        puljesize: poolSize,
+        valsArray: routes,
+        playstyle: 'roundrobin'
+      };
+    },
+
+    createKnockoutStage: function (players, stageIndex, hasNextStage) {
+      return {
+        _key: this.newKey(),
+        navn: this.knockoutName(players),
+        NbPlayers: players,
+        selected: 'knockout',
+        BestOf: 1,
+        puljesize: 2,
+        valsArray: [hasNextStage ? stageIndex + 1 : 0, -1],
+        playstyle: 'roundrobin'
+      };
+    },
+
+    buildKnockoutStages: function (startingPlayers, firstIndex) {
+      var stages = [];
+      var players = Number(startingPlayers);
+      var index = Number(firstIndex);
+
+      while (players >= 2) {
+        var hasNext = players > 2;
+        stages.push(this.createKnockoutStage(players, index, hasNext));
+        players = Math.floor(players / 2);
+        index++;
+      }
+
+      return stages;
+    },
+
+    findGroupPreset: function (totalPlayers) {
+      var sizes = [4, 3, 5, 6, 8, 2];
+      var qualifierPreference = [2, 1, 3, 4, 5, 6, 7];
+
+      for (var s = 0; s < sizes.length; s++) {
+        var size = sizes[s];
+        if (totalPlayers % size !== 0) continue;
+
+        var groups = totalPlayers / size;
+        if (groups < 2) continue;
+
+        for (var q = 0; q < qualifierPreference.length; q++) {
+          var qualifiersPerGroup = qualifierPreference[q];
+          if (qualifiersPerGroup >= size) continue;
+
+          var qualifiers = groups * qualifiersPerGroup;
+          if (this.isPowerOfTwo(qualifiers)) {
+            return {
+              poolSize: size,
+              groups: groups,
+              qualifiersPerGroup: qualifiersPerGroup,
+              qualifiers: qualifiers
+            };
+          }
+        }
+      }
+
+      return null;
+    },
+
+    applyPreset: function (preset, silent) {
+      var players = Number(this.formdata.tournamentplayers);
+      this.uiMessage = '';
+      this.activePreset = preset;
+
+      if (!Number.isInteger(players) || players < 2) {
+        this.uiMessage = 'Choose at least 2 starting players first.';
+        this.recalculate();
+        return;
+      }
+
+      if (preset === 'knockout') {
+        if (!this.isPowerOfTwo(players)) {
+          this.uiMessage = 'Single elimination needs 2, 4, 8, 16, 32… players with the current backend (no byes yet).';
+          this.activePreset = 'custom';
+          this.recalculate();
+          return;
+        }
+
+        this.formdata.rundearray = this.buildKnockoutStages(players, 0);
+        if (!silent) this.uiMessage = 'Single-elimination structure created automatically.';
+      }
+
+      if (preset === 'groups') {
+        var setup = this.findGroupPreset(players);
+        if (!setup) {
+          this.uiMessage = 'I could not make an even groups → knockout preset for this player count. Use Custom or change the number of players.';
+          this.activePreset = 'custom';
+          this.recalculate();
+          return;
+        }
+
+        var groupStage = this.createPoolStage(
+          'Group stage',
+          players,
+          setup.poolSize,
+          1,
+          setup.qualifiersPerGroup
+        );
+        var knockoutStages = this.buildKnockoutStages(setup.qualifiers, 1);
+        this.formdata.rundearray = [groupStage].concat(knockoutStages);
+
+        if (!silent) {
+          this.uiMessage = setup.groups + ' groups of ' + setup.poolSize + '. Top ' + setup.qualifiersPerGroup + ' from each group advance (' + setup.qualifiers + ' players).';
+        }
+      }
+
+      if (preset === 'custom') {
+        this.formdata.rundearray = [
+          {
+            _key: this.newKey(),
+            navn: 'Stage 1',
+            NbPlayers: players,
+            selected: 'pool',
+            BestOf: 1,
+            puljesize: Math.min(4, players),
+            valsArray: [],
+            playstyle: 'roundrobin'
+          }
+        ];
+        this.ensureRoutes(0);
+        if (!silent) this.uiMessage = 'Custom setup started. Add stages and choose the routes yourself.';
+      }
+
+      this.recalculate();
+    },
+
+    onTournamentPlayersChange: function () {
+      if (this.activePreset === 'groups' || this.activePreset === 'knockout') {
+        this.applyPreset(this.activePreset, true);
+      } else {
+        this.recalculate();
+      }
+    },
+
+    addrunde: function () {
+      this.activePreset = 'custom';
+      this.uiMessage = '';
+
+      var newIndex = this.formdata.rundearray.length;
+      var previous = this.formdata.rundearray[newIndex - 1];
+
+      var stage = {
+        _key: this.newKey(),
+        navn: 'Stage ' + (newIndex + 1),
+        NbPlayers: 0,
+        selected: 'knockout',
+        BestOf: 1,
+        puljesize: 2,
+        valsArray: [0, -1],
+        playstyle: 'roundrobin'
+      };
+
+      this.formdata.rundearray.push(stage);
+
+      // Make the most common connection automatically: first place / winner -> new stage.
+      if (previous && Array.isArray(previous.valsArray) && previous.valsArray.length > 0) {
+        this.$set(previous.valsArray, 0, newIndex);
+      }
+
+      this.recalculate();
+    },
+
+    removerunde: function (index) {
+      if (this.formdata.rundearray.length <= 1) return;
+
+      this.activePreset = 'custom';
+      this.uiMessage = '';
+      this.formdata.rundearray.splice(index, 1);
+
+      // Repair destinations because stage indexes changed.
+      for (var i = 0; i < this.formdata.rundearray.length; i++) {
+        var round = this.formdata.rundearray[i];
+        if (!Array.isArray(round.valsArray)) continue;
+
+        for (var p = 0; p < round.valsArray.length; p++) {
+          var destination = Number(round.valsArray[p]);
+          if (destination === index) {
+            this.$set(round.valsArray, p, -1);
+          } else if (destination > index) {
+            this.$set(round.valsArray, p, destination - 1);
+          }
+
+          // A route may only point forward. 0 is reserved for tournament winner.
+          if (Number(round.valsArray[p]) > 0 && Number(round.valsArray[p]) <= i) {
+            this.$set(round.valsArray, p, -1);
+          }
+        }
+      }
+
+      this.recalculate();
+    },
+
+    ensureRoutes: function (index) {
+      var round = this.formdata.rundearray[index];
+      if (!round) return;
+
+      var expected = round.selected === 'knockout' ? 2 : Math.max(0, Number(round.puljesize) || 0);
+      if (!Array.isArray(round.valsArray)) this.$set(round, 'valsArray', []);
+
+      while (round.valsArray.length > expected) round.valsArray.pop();
+      while (round.valsArray.length < expected) round.valsArray.push(-1);
+    },
+
+    onStageTypeChange: function (index) {
+      this.activePreset = 'custom';
+      var round = this.formdata.rundearray[index];
+
+      if (round.selected === 'pool') {
+        this.$set(round, 'puljesize', Number(round.puljesize) >= 2 ? Number(round.puljesize) : 4);
+        this.$set(round, 'playstyle', round.playstyle || 'roundrobin');
+        this.$set(round, 'BestOf', Number(round.BestOf) >= 1 ? Number(round.BestOf) : 1);
+      } else if (round.selected === 'knockout') {
+        this.$set(round, 'puljesize', 2);
+        this.$set(round, 'playstyle', 'roundrobin');
+        this.$set(round, 'BestOf', Number(round.BestOf) >= 1 ? Number(round.BestOf) : 1);
+      }
+
+      this.ensureRoutes(index);
+      this.recalculate();
+    },
+
+    onPoolSizeChange: function (index) {
+      this.activePreset = 'custom';
+      this.ensureRoutes(index);
+      this.recalculate();
+    },
+
+    onPlayStyleChange: function (index) {
+      this.activePreset = 'custom';
+      var round = this.formdata.rundearray[index];
+
+      if (round.playstyle === 'beerpot') {
+        this.$delete(round, 'BestOf');
+      } else if (!Number.isInteger(Number(round.BestOf)) || Number(round.BestOf) < 1) {
+        this.$set(round, 'BestOf', 1);
+      }
+
+      this.recalculate();
+    },
+
+    calculatePlayerCounts: function () {
+      var rounds = this.formdata.rundearray;
+      if (!rounds.length) return;
+
+      this.$set(rounds[0], 'NbPlayers', Number(this.formdata.tournamentplayers) || 0);
+
+      for (var target = 1; target < rounds.length; target++) {
+        var count = 0;
+
+        for (var source = 0; source < target; source++) {
+          var round = rounds[source];
+          if (!Array.isArray(round.valsArray)) continue;
+
+          if (round.selected === 'pool') {
+            var poolSize = Number(round.puljesize);
+            var playerCount = Number(round.NbPlayers);
+            if (!poolSize || !playerCount) continue;
+
+            var groups = Math.floor(playerCount / poolSize);
+            for (var place = 0; place < round.valsArray.length; place++) {
+              if (Number(round.valsArray[place]) === target) count += groups;
+            }
+          }
+
+          if (round.selected === 'knockout') {
+            var koPlayers = Number(round.NbPlayers);
+            if (!koPlayers) continue;
+            var half = Math.floor(koPlayers / 2);
+            if (Number(round.valsArray[0]) === target) count += half;
+            if (Number(round.valsArray[1]) === target) count += half;
+          }
+        }
+
+        this.$set(rounds[target], 'NbPlayers', count);
+      }
+    },
+
+    validate: function () {
+      var errors = [];
+      var name = (this.formdata.tournamentname || '').trim();
+      var totalPlayers = Number(this.formdata.tournamentplayers);
+      var rounds = this.formdata.rundearray;
+
+      if (!name) errors.push({ type: 'name', description: 'Tournament name is required.' });
+      if (!Number.isInteger(totalPlayers) || totalPlayers < 2) {
+        errors.push({ type: 'players', description: 'Starting players must be a whole number of at least 2.' });
+      }
+      if (!rounds.length) errors.push({ type: 'rounds', description: 'Add at least one stage.' });
+
+      for (var i = 0; i < rounds.length; i++) {
+        var round = rounds[i];
+        var label = round.navn || ('Stage ' + (i + 1));
+        var roundPlayers = Number(round.NbPlayers);
+
+        if (!(round.navn || '').trim()) {
+          errors.push({ type: 'stage-name-' + i, description: 'Stage ' + (i + 1) + ' needs a name.' });
+        }
+
+        if (round.selected !== 'pool' && round.selected !== 'knockout') {
+          errors.push({ type: 'stage-type-' + i, description: label + ': choose Pool / group or Knockout.' });
+          continue;
+        }
+
+        if (!Number.isInteger(roundPlayers) || roundPlayers < 2) {
+          errors.push({ type: 'stage-players-' + i, description: label + ': fewer than 2 players are routed into this stage.' });
+        }
+
+        if (round.selected === 'pool') {
+          var size = Number(round.puljesize);
+          if (!Number.isInteger(size) || size < 2) {
+            errors.push({ type: 'pool-size-' + i, description: label + ': players per group must be at least 2.' });
+          } else if (roundPlayers > 0 && roundPlayers % size !== 0) {
+            errors.push({ type: 'pool-div-' + i, description: label + ': ' + roundPlayers + ' players cannot be split evenly into groups of ' + size + '.' });
+          }
+
+          if (!round.playstyle) {
+            errors.push({ type: 'style-' + i, description: label + ': choose how the group is played.' });
+          }
+
+          if (round.playstyle !== 'beerpot' && (!Number.isInteger(Number(round.BestOf)) || Number(round.BestOf) < 1)) {
+            errors.push({ type: 'bestof-' + i, description: label + ': Best of must be at least 1.' });
+          }
+        }
+
+        if (round.selected === 'knockout') {
+          if (roundPlayers > 0 && roundPlayers % 2 !== 0) {
+            errors.push({ type: 'ko-even-' + i, description: label + ': knockout needs an even number of players. Currently ' + roundPlayers + '.' });
+          }
+          if (!Number.isInteger(Number(round.BestOf)) || Number(round.BestOf) < 1) {
+            errors.push({ type: 'ko-bestof-' + i, description: label + ': Best of must be at least 1.' });
+          }
+        }
+
+        if (Array.isArray(round.valsArray)) {
+          for (var r = 0; r < round.valsArray.length; r++) {
+            var destination = Number(round.valsArray[r]);
+            if (destination > 0 && destination <= i) {
+              errors.push({ type: 'route-' + i + '-' + r, description: label + ': a route can only point to a later stage.' });
+            }
+            if (destination >= rounds.length) {
+              errors.push({ type: 'route-missing-' + i + '-' + r, description: label + ': a route points to a stage that no longer exists.' });
+            }
+          }
+        }
+      }
+
+      // The routes should ultimately produce exactly one tournament winner.
+      var winnerCount = 0;
+      for (var w = 0; w < rounds.length; w++) {
+        var winnerRound = rounds[w];
+        if (!Array.isArray(winnerRound.valsArray)) continue;
+
+        if (winnerRound.selected === 'pool') {
+          var winnerPoolSize = Number(winnerRound.puljesize);
+          var winnerPlayers = Number(winnerRound.NbPlayers);
+          if (winnerPoolSize > 0 && winnerPlayers > 0 && winnerPlayers % winnerPoolSize === 0) {
+            var winnerGroups = winnerPlayers / winnerPoolSize;
+            for (var wp = 0; wp < winnerRound.valsArray.length; wp++) {
+              if (Number(winnerRound.valsArray[wp]) === 0) winnerCount += winnerGroups;
+            }
+          }
+        } else if (winnerRound.selected === 'knockout') {
+          var winnerKoPlayers = Number(winnerRound.NbPlayers);
+          if (winnerKoPlayers > 0) {
+            var winnerHalf = Math.floor(winnerKoPlayers / 2);
+            if (Number(winnerRound.valsArray[0]) === 0) winnerCount += winnerHalf;
+            if (Number(winnerRound.valsArray[1]) === 0) winnerCount += winnerHalf;
+          }
+        }
+      }
+
+      if (winnerCount !== 1) {
+        errors.push({
+          type: 'winner-count',
+          description: winnerCount === 0
+            ? 'No tournament winner is defined. Route exactly one final result to “Tournament winner”.'
+            : 'The current routes create ' + winnerCount + ' tournament winners. Route exactly one final result to “Tournament winner”.'
+        });
+      }
+
+      this.formdata.errors = errors;
+    },
+
+    recalculate: function () {
+      for (var i = 0; i < this.formdata.rundearray.length; i++) this.ensureRoutes(i);
+      this.calculatePlayerCounts();
+      this.validate();
+    },
+
+    placeLabel: function (n) {
+      var endings = ['th', 'st', 'nd', 'rd'];
+      var v = n % 100;
+      return n + (endings[(v - 20) % 10] || endings[v] || endings[0]) + ' place';
+    },
+
+    groupSummary: function (round) {
+      var players = Number(round.NbPlayers) || 0;
+      var size = Number(round.puljesize) || 0;
+      if (!size) return '';
+      var groups = players / size;
+      if (!Number.isInteger(groups)) return players + ' players / groups of ' + size;
+      return groups + ' group' + (groups === 1 ? '' : 's') + ' × ' + size + ' players';
+    },
+
+    stageSummary: function (round) {
+      var players = Number(round.NbPlayers) || 0;
+      if (round.selected === 'pool') {
+        var styleNames = { roundrobin: 'Round robin', swiss: 'Swiss', beerpot: 'Beer pot' };
+        return players + ' players • ' + this.groupSummary(round) + ' • ' + (styleNames[round.playstyle] || 'Pool');
+      }
+      if (round.selected === 'knockout') {
+        return players + ' players • Knockout • Best of ' + (round.BestOf || 1);
+      }
+      return players + ' players • Format not selected';
+    },
+
+    saveStorage: function (form) {
+      localStorage.setItem('form', JSON.stringify(form));
+    },
+
+    openStorage: function () {
+      var raw = localStorage.getItem('form');
+      return raw ? JSON.parse(raw) : null;
+    },
+
+    getdatapost: function () {
+      this.recalculate();
+      this.saveStorage(this.formdata);
+      this.uiMessage = 'Draft saved in this browser.';
+    },
+
+    loaddatapost: function () {
+      var saved = this.openStorage();
+      if (!saved) {
+        this.uiMessage = 'No saved draft was found in this browser.';
+        return;
+      }
+
+      this.formdata = saved;
+      this.activePreset = 'custom';
+      this.uiMessage = 'Saved draft loaded.';
+
+      for (var i = 0; i < this.formdata.rundearray.length; i++) {
+        if (!this.formdata.rundearray[i]._key) {
+          this.$set(this.formdata.rundearray[i], '_key', this.newKey());
+        }
+      }
+      this.recalculate();
+    },
+
+    apiPayload: function () {
+      // _key is only for Vue rendering. The backend does not need it.
+      var payload = JSON.parse(JSON.stringify(this.formdata));
+      payload.errors = [];
+      payload.rundearray.forEach(function (round) { delete round._key; });
+      return payload;
+    },
+
+    apipostturnament: function () {
+      this.apiError = '';
+      this.createdTournamentId = '';
+      this.authToken = localStorage.getItem('token') || '';
+      this.recalculate();
+
+      if (!this.isValid) {
+        this.apiError = 'Fix the tournament structure before creating it.';
+        return;
+      }
+
+      if (!this.authToken) {
+        this.apiError = 'Login first. Open “Login & token” in the top menu.';
+        return;
+      }
+
+      this.creating = true;
+      axios.defaults.headers.common['Authorization'] = this.authToken;
+
+      var json = JSON.stringify(this.apiPayload());
+
+      // TournamentController expects [FromBody] string, so the JSON document
+      // must be sent as a JSON string (same contract as the original project).
+      axios.post('http://localhost:5000/api/tournament', JSON.stringify(json), {
+        headers: { 'Content-type': 'application/json; charset=utf-8' }
+      })
+      .then(function (response) {
+        var id = response.data.tournament !== undefined
+          ? response.data.tournament
+          : response.data.Tournament;
+
+        this.createdTournamentId = id;
+        localStorage.setItem('lastTournamentId', String(id));
+        match.TurnamentId = id;
+      }.bind(this))
+      .catch(function (error) {
+        if (error.response && error.response.status === 401) {
+          this.apiError = '401 Unauthorized. Your login token is missing, expired, or rejected. Login again and retry.';
+        } else if (error.response) {
+          this.apiError = 'Server error ' + error.response.status + ': ' + JSON.stringify(error.response.data);
+        } else {
+          this.apiError = error.message || String(error);
+        }
+      }.bind(this))
+      .finally(function () {
+        this.creating = false;
+      }.bind(this));
+    }
+  },
+
+  mounted: function () {
+    this.recalculate();
+  }
+});
+
+/* =========================
+   Navigation
+   ========================= */
+function showSection(sectionId) {
+  var sections = $('#dashboard, #app, #vueformapp, #vuematch');
+  sections.hide();
+  $('#' + sectionId).show();
+
+  $('.admin-panel .slidebar li').removeClass('selectedbutton');
+  $('#' + sectionId + 'Item').parent().addClass('selectedbutton');
 }
 
 $(document).ready(function () {
+  $('.mainContent').show();
+  showSection('dashboard');
 
-	$("div.mainContent").hide();
-
-	var divs = $("#dashboard, #app, #vueformapp, #vuematch")
-
-	$(".admin-panel .slidebar li a").click(function () {
-		$("div.mainContent").fadeIn().show();
-		$("#" + $(this).attr("class")).fadeIn().show();
-		divs.not(("#" + $(this).attr("class"))).hide();
-
-	});
-
-	$('.admin-panel .slidebar li').on('click', function () {
-		$('.admin-panel .slidebar li').removeClass('selectedbutton');
-
-		$("#dashboardItem").removeClass('selectedbutton');
-		$("#appItem").removeClass('selectedbutton');
-		$("#vueformappItem").removeClass('selectedbutton');
-		$("#vuematchItem").removeClass('selectedbutton');
-
-		$(this).addClass('selectedbutton');
-	});
+  $('.admin-panel .slidebar a[href="#"]').on('click', function (event) {
+    event.preventDefault();
+    showSection($(this).attr('class'));
+  });
 });

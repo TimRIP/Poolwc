@@ -3,219 +3,299 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width">
-    <title>My App</title>
-	<script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.min.js"></script>
-	<script src="https://unpkg.com/axios/dist/axios.min.js"></script>
-	<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
-	<script src="https://cdn.jsdelivr.net/npm/@svgdotjs/svg.js@3.0/dist/svg.min.js"></script>
-	<link rel="stylesheet" Type="text/css" href="example.css">
-	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+    <title>Pool Tournament Builder</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.min.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="example.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
   </head>
   <body>
-	
-	<div id="search">
-		<label for="f-search">search:</label>
-		<input type="text" id="f-search" name="f-search">
+    <div class="admin-panel">
+      <div class="slidebar">
+        <ul>
+          <li><a id="dashboardItem" class="dashboard" href="#">Tournament builder<i class="sideicon fa fa-sitemap"></i></a></li>
+          <li><a id="vuematchItem" class="vuematch" href="matches.html">Matches<i class="sideicon fa fa-area-chart"></i></a></li>
+          <li><a id="appItem" class="app" href="#">Test API<i class="sideicon fa fa-cube"></i></a></li>
+          <li><a id="vueformappItem" class="vueformapp" href="#">Login &amp; token<i class="sideicon fa fa-file-text-o"></i></a></li>
+        </ul>
+      </div>
     </div>
-	
-	<div class="admin-panel">
-		<div class="slidebar">
-		<ul>
-			<li>
-				<a id="vuematchItem" class="vuematch" href="matches.html">Matches<i class="sideicon fa fa-area-chart"></i></a>
-			</li>
-			<li>
-				<a id="dashboardItem" class="dashboard" href="#">dashboard<i class="sideicon fa fa-area-chart"></i></a>
-			</li>
-			<li>
-				<a id="appItem" class="app" href="#">Test API<i class="sideicon fa fa-cube"></i></a>
-			</li>
-			<li>
-				<a id="vueformappItem" class="vueformapp" href="#">Login & token<i class="sideicon fa fa-file-text-o "></i></a>
-			</li>
-		</ul>  
-		</div>	
-	</div>
-  
-  
-	<div class="mainContent">
-	
-		<div id="vuematch">
-			{{ TurnamentId }}
-		</div>
-		
-        <div id="dashboard">
-        
-			<!--svg id="mytest" xmlns="http://www.w3.org/2000/svg" version="1.1" xmlns:xlink="http://www.w3.org/1999/xlink" width="300" height="300">
-				<rect width="100" height="100" fill="#f06"></rect>
-			</svg-->
-		
 
-			<table>
-				<tr>
-					<td style="vertical-align: top;">
-						<p v-if="formdata.errors.length">	
-							<b>Please correct the following error(s):</b>
-							<ul>
-								<li v-for="error in formdata.errors">{{ error.description }}</li>
-							</ul>
-						</p>
-						
-						<div>
-							<label class="label">Tournament Name</label>
-							<input type="text" v-model="formdata.tournamentname">
-					
-						</div>
-						
-						<div>
-							<label class="label">Number of players</label>
-							<input type="number"  min="3" v-on:change="onChangeNbPlayers($event)" v-model.number="formdata.tournamentplayers"/>
-						</div>
-						
-						<div  v-for="(runde, index) in formdata.rundearray">
-						
-							<label class="label" for="navn">navn (index: {{index}})</label>
-							<input type="text" name="navn" id="navn" v-model="runde.navn">
-							
-							<div>
-								<label class="label">players in round</label>
-								<input type="number"  min="3" v-model.number="runde.NbPlayers" disabled/>
-							</div>
-							
-							<div v-if="runde.playstyle !== 'beerpot'">
-								<label class="label">Bedst af:</label>
-								<input type="number"  min="1" v-on:change="onChangeNbPlayers($event)" v-model.number="runde.BestOf"/>
-							</div>
-							
-							<select class="form-control" v-on:change="onChange($event, index)" v-model="runde.selected">
-								<option value="" selected></option>
-								<option value="pool">Pulje</option>
-								<option value="knockout">Knockout</option>
-							</select>
-							
-							<div v-if="runde.selected === 'pool'">
-								<input type="number"  min="2" v-on:change="onChangeNumber($event, index)" v-model.number="runde.puljesize"/>
-								<div  v-for="n in runde.puljesize" >
-									
-									<select class="form-control" v-on:change="onChangeDirection($event)" v-model="runde.valsArray[n-1]">
-										<option value="-1" >Lost</option>
-										<option value="0">Won</option>
-										<option v-for="(runde2, index2) in formdata.rundearray" v-if="index2 > index" :value="index2">{{runde2.navn}}</option>
-									</select>
-									
-								</div>
-								
-								
-								<div>
-								<label class="label">afvikles som</label>
-									<select class="form-control" v-on:change="onChangePlayStyle($event, index)" v-model="runde.playstyle">
-										<option value="roundrobin" selected>Alle mod Alle</option>
-										<option value="swiss">Swiss</option>
-										<option value="beerpot">Bajer pot</option>
-									</select>
-								</div>
-								
-								<div v-if="runde.playstyle === 'swiss'">
-									<label class="label">swiss antal runder</label>
-									<input type="number"  min="2" :max='runde.puljesize-1' v-on:change="onChangeNbPlayers($event)" v-model.number="runde.swissNb"/>
-								</div>
-								
-							</div>
-							<div v-else-if="runde.selected === 'knockout'">
-								
-								
-								<div  v-for="n in runde.puljesize" >
-									
-									<select class="form-control" v-on:change="onChangeDirection($event)" v-model="runde.valsArray[n-1]">
-										<option value="-1" >Lost</option>
-										<option value="0">Won</option>
-										<option v-for="(runde2, index2) in formdata.rundearray" v-if="index2 > index" :value="index2">{{runde2.navn}}</option>
-									</select>
-									
-								</div>
-								
-							</div>
-							
-							<div v-if="runde.selected === 'item2'">
-				
-							</div>
-							
-							<button v-on:click="removerunde(index)">Remove</button>
-							
-						</div>
-						
-						<div>
-							<button v-on:click="addrunde">Tilføj runde</button>
-						</div>
-						
-						<div>
-							<button v-on:click="getdatapost">Save Data</button>
-						</div>	
-						
-						<div>
-							<button v-on:click="loaddatapost">Load Data</button>
-						</div>	
-						
-						<div>
-							<button v-on:click="apipostturnament">Create Tournament</button>
-						</div>	
-						
-						
-					</td>
-					<td style="vertical-align: top;">
-						<div class="debug">
-							<pre><code>{{ $data }}</code></pre>
-						</div>
-					</td>
-					<td style="vertical-align: top;">
-						<div class="debug">
-							<canvas id="canvas" width="1500" height="1500">
-							</canvas>
-							
-							<pre><code>{{ $data.formdata.rundearray.length }}</code></pre>
-						</div>
-					</td>
-				</tr>
-			</table>	
-			
+    <div class="mainContent">
+      <div id="dashboard" class="builder-page">
+        <div class="builder-header">
+          <div>
+            <div class="eyebrow">POOL</div>
+            <h1>Tournament builder</h1>
+            <p>Build the tournament from stages. Player counts in later stages are calculated automatically from the routes you choose.</p>
+          </div>
+          <div class="auth-pill" :class="{ ok: tokenAvailable }">
+            <i class="fa" :class="tokenAvailable ? 'fa-check-circle' : 'fa-lock'"></i>
+            {{ tokenAvailable ? 'Logged in' : 'Login required to create' }}
+          </div>
         </div>
-  
-		<div id="app">
-		{{ info }}
-		
-		<div>
-			<button v-on:click="testpost">Test</button>
-		</div>	 
-		
-		</div>
-		
-		<div id="vueformapp">
-		
-		<div>
-			<label class="label" for="username">username</label>
-			<input type="text" name="username" id="username" v-model="username">
+
+        <div class="builder-grid">
+          <main class="builder-main">
+            <section class="panel tournament-basics">
+              <div class="panel-title-row">
+                <div>
+                  <h2>1. Tournament basics</h2>
+                  <p>Name the tournament and choose how many players start.</p>
+                </div>
+              </div>
+
+              <div class="form-grid two-col">
+                <label class="field">
+                  <span>Tournament name</span>
+                  <input type="text" v-model.trim="formdata.tournamentname" @input="recalculate" placeholder="Friday Pool Tournament">
+                </label>
+
+                <label class="field">
+                  <span>Starting players</span>
+                  <input type="number" min="2" step="1" v-model.number="formdata.tournamentplayers" @change="onTournamentPlayersChange">
+                </label>
+              </div>
+
+              <div class="preset-area">
+                <span class="small-label">Quick setup</span>
+                <div class="preset-buttons">
+                  <button type="button" class="preset-btn" :class="{ active: activePreset === 'groups' }" @click="applyPreset('groups')">
+                    <i class="fa fa-th"></i> Groups → knockout
+                  </button>
+                  <button type="button" class="preset-btn" :class="{ active: activePreset === 'knockout' }" @click="applyPreset('knockout')">
+                    <i class="fa fa-code-fork"></i> Single elimination
+                  </button>
+                  <button type="button" class="preset-btn" :class="{ active: activePreset === 'custom' }" @click="applyPreset('custom')">
+                    <i class="fa fa-sliders"></i> Custom
+                  </button>
+                </div>
+                <p v-if="uiMessage" class="inline-message">{{ uiMessage }}</p>
+              </div>
+            </section>
+
+            <section class="stages-section">
+              <div class="section-heading">
+                <div>
+                  <h2>2. Stages</h2>
+                  <p>Choose the format for each stage and where each finishing position goes next.</p>
+                </div>
+                <button type="button" class="secondary-btn" @click="addrunde">
+                  <i class="fa fa-plus"></i> Add stage
+                </button>
+              </div>
+
+              <article class="stage-card" v-for="(runde, index) in formdata.rundearray" :key="runde._key || index">
+                <div class="stage-number">{{ index + 1 }}</div>
+
+                <div class="stage-card-header">
+                  <div>
+                    <div class="stage-kicker">Stage {{ index + 1 }}</div>
+                    <input class="stage-name-input" type="text" v-model.trim="runde.navn" @input="recalculate" :placeholder="'Stage ' + (index + 1)">
+                  </div>
+                  <div class="stage-actions">
+                    <span class="player-count"><strong>{{ Number(runde.NbPlayers) || 0 }}</strong> players</span>
+                    <button type="button" class="icon-btn danger" @click="removerunde(index)" :disabled="formdata.rundearray.length === 1" title="Remove stage">
+                      <i class="fa fa-trash"></i>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="stage-content">
+                  <div class="format-choice">
+                    <span class="small-label">Stage type</span>
+                    <div class="choice-row">
+                      <label class="choice-card" :class="{ selected: runde.selected === 'pool' }">
+                        <input type="radio" value="pool" v-model="runde.selected" @change="onStageTypeChange(index)">
+                        <span><strong>Pool / group</strong><small>Players are split into groups.</small></span>
+                      </label>
+                      <label class="choice-card" :class="{ selected: runde.selected === 'knockout' }">
+                        <input type="radio" value="knockout" v-model="runde.selected" @change="onStageTypeChange(index)">
+                        <span><strong>Knockout</strong><small>Players are paired; winner and loser can be routed.</small></span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <template v-if="runde.selected === 'pool'">
+                    <div class="form-grid three-col">
+                      <label class="field">
+                        <span>Players per group</span>
+                        <input type="number" min="2" step="1" v-model.number="runde.puljesize" @change="onPoolSizeChange(index)">
+                      </label>
+
+                      <label class="field">
+                        <span>Played as</span>
+                        <select v-model="runde.playstyle" @change="onPlayStyleChange(index)">
+                          <option value="roundrobin">Round robin</option>
+                          <option value="swiss">Swiss</option>
+                          <option value="beerpot">Beer pot</option>
+                        </select>
+                      </label>
+
+                      <label class="field" v-if="runde.playstyle !== 'beerpot'">
+                        <span>Best of</span>
+                        <input type="number" min="1" step="1" v-model.number="runde.BestOf" @change="recalculate">
+                      </label>
+                    </div>
+
+                    <div class="group-summary" v-if="runde.puljesize > 0">
+                      <span>{{ groupSummary(runde) }}</span>
+                    </div>
+
+                    <div class="routing-block">
+                      <div class="routing-heading">
+                        <div>
+                          <strong>Advancement</strong>
+                          <small>Choose where each finishing position in every group goes.</small>
+                        </div>
+                      </div>
+
+                      <div class="route-row" v-for="n in Number(runde.puljesize) || 0" :key="'route-' + index + '-' + n">
+                        <div class="route-label">{{ placeLabel(n) }}</div>
+                        <i class="fa fa-long-arrow-right route-arrow"></i>
+                        <select v-model.number="runde.valsArray[n - 1]" @change="recalculate">
+                          <option :value="-1">Eliminated</option>
+                          <option :value="0">Tournament winner</option>
+                          <option v-for="(runde2, index2) in formdata.rundearray" v-if="index2 > index" :key="index2" :value="index2">
+                            {{ runde2.navn || ('Stage ' + (index2 + 1)) }}
+                          </option>
+                        </select>
+                      </div>
+                    </div>
+                  </template>
+
+                  <template v-else-if="runde.selected === 'knockout'">
+                    <div class="form-grid two-col compact-grid">
+                      <label class="field">
+                        <span>Pairing</span>
+                        <input type="text" value="2 players per match" disabled>
+                      </label>
+                      <label class="field">
+                        <span>Best of</span>
+                        <input type="number" min="1" step="1" v-model.number="runde.BestOf" @change="recalculate">
+                      </label>
+                    </div>
+
+                    <div class="routing-block">
+                      <div class="routing-heading">
+                        <div>
+                          <strong>Match result routing</strong>
+                          <small>Choose where winners and losers go.</small>
+                        </div>
+                      </div>
+
+                      <div class="route-row" v-for="n in 2" :key="'ko-route-' + index + '-' + n">
+                        <div class="route-label">{{ n === 1 ? 'Winner' : 'Loser' }}</div>
+                        <i class="fa fa-long-arrow-right route-arrow"></i>
+                        <select v-model.number="runde.valsArray[n - 1]" @change="recalculate">
+                          <option :value="-1">Eliminated</option>
+                          <option :value="0">Tournament winner</option>
+                          <option v-for="(runde2, index2) in formdata.rundearray" v-if="index2 > index" :key="index2" :value="index2">
+                            {{ runde2.navn || ('Stage ' + (index2 + 1)) }}
+                          </option>
+                        </select>
+                      </div>
+                    </div>
+                  </template>
+
+                  <div v-else class="select-format-empty">
+                    Choose Pool / group or Knockout for this stage.
+                  </div>
+                </div>
+              </article>
+
+              <button type="button" class="add-stage-card" @click="addrunde">
+                <i class="fa fa-plus-circle"></i>
+                <span>Add another stage</span>
+              </button>
+            </section>
+          </main>
+
+          <aside class="builder-side">
+            <section class="panel sticky-panel">
+              <h2>Tournament flow</h2>
+              <div class="flow-start">
+                <strong>{{ Number(formdata.tournamentplayers) || 0 }}</strong>
+                <span>starting players</span>
+              </div>
+
+              <div class="flow-list">
+                <div class="flow-item" v-for="(runde, index) in formdata.rundearray" :key="'flow-' + index">
+                  <div class="flow-line" v-if="index > 0"><i class="fa fa-long-arrow-down"></i></div>
+                  <div class="flow-card">
+                    <span class="flow-index">{{ index + 1 }}</span>
+                    <div>
+                      <strong>{{ runde.navn || ('Stage ' + (index + 1)) }}</strong>
+                      <small>{{ stageSummary(runde) }}</small>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="validation-box" :class="{ valid: isValid }">
+                <div class="validation-title">
+                  <i class="fa" :class="isValid ? 'fa-check-circle' : 'fa-exclamation-triangle'"></i>
+                  {{ isValid ? 'Tournament structure is valid' : 'Needs attention' }}
+                </div>
+                <ul v-if="formdata.errors.length">
+                  <li v-for="(error, i) in formdata.errors" :key="i">{{ error.description }}</li>
+                </ul>
+              </div>
+
+              <div class="builder-actions">
+                <button type="button" class="primary-btn" @click="apipostturnament" :disabled="!isValid || creating">
+                  <i class="fa" :class="creating ? 'fa-spinner fa-spin' : 'fa-trophy'"></i>
+                  {{ creating ? 'Creating…' : 'Create tournament' }}
+                </button>
+                <div class="action-row">
+                  <button type="button" class="secondary-btn" @click="getdatapost"><i class="fa fa-save"></i> Save draft</button>
+                  <button type="button" class="secondary-btn" @click="loaddatapost"><i class="fa fa-folder-open"></i> Load draft</button>
+                </div>
+              </div>
+
+              <div class="api-message success" v-if="createdTournamentId">
+                Tournament created with ID <strong>{{ createdTournamentId }}</strong>.
+                <a href="matches.html">Open matches</a>
+              </div>
+              <div class="api-message error" v-if="apiError">{{ apiError }}</div>
+
+              <details class="technical-details">
+                <summary>Technical JSON</summary>
+                <pre><code>{{ formdata }}</code></pre>
+              </details>
+            </section>
+          </aside>
         </div>
-		
-		<div>
-			<label class="label" for="password">password</label>
-			<input type="text" name="password" id="password" v-model="password">
-        </div>
-		
-		<div id="foo"></div>
-		
-		<div>
-			<button v-on:click="apipost">Post</button>
-			<button v-on:click="dynamic">Dynamic</button>
-		</div>	
-		
-		<div class="debug">
-			<pre><code>{{ $data }}</code></pre>
-		</div>
-		
-		</div>
-		
-	</div>
-	
+      </div>
+
+      <div id="vuematch" class="simple-page">
+        <h2>Last tournament</h2>
+        <p>Tournament ID: {{ TurnamentId }}</p>
+        <p><a href="matches.html">Open match tree</a></p>
+      </div>
+
+      <div id="app" class="simple-page">
+        <h2>API test</h2>
+        <pre>{{ info }}</pre>
+        <button class="secondary-btn" @click="testpost">Test API</button>
+      </div>
+
+      <div id="vueformapp" class="simple-page login-panel">
+        <h2>Login</h2>
+        <label class="field">
+          <span>Username</span>
+          <input type="text" v-model="username" autocomplete="username">
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input type="password" v-model="password" autocomplete="current-password">
+        </label>
+        <button class="primary-btn" @click="apipost">Login</button>
+        <p class="api-message success" v-if="message">{{ message }}</p>
+      </div>
+    </div>
+
     <script src="index.js"></script>
   </body>
 </html>
