@@ -10,6 +10,7 @@
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
 
     <link rel="stylesheet" type="text/css" href="example.css">
+    <link rel="stylesheet" type="text/css" href="match-results.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
   </head>
 
@@ -31,8 +32,8 @@
     <div id="vuematch">
       <div class="matchesHeader">
         <div>
-          <div class="matchesTitle">Matches (tree)</div>
-          <div class="matchesSub">Click a node to expand/collapse • Uses ParentMatchId</div>
+          <div class="matchesTitle">Matches</div>
+          <div class="matchesSub">Click a match to view its rules and register the result.</div>
         </div>
         <div class="matchesStats">
           <span class="pill">Nodes: {{ nodes.length }}</span>
@@ -42,14 +43,149 @@
         </div>
       </div>
 
-      <div class="treeWrap" v-if="roots.length">
-        <tree-node
-          v-for="r in roots"
-          :key="r.matchId"
-          :node="r"
-          :open.sync="open"
-          :query="searchText"
-        ></tree-node>
+      <div class="matchWorkspace" v-if="roots.length">
+        <div class="matchTreeColumn">
+          <div class="treeWrap">
+            <tree-node
+              v-for="r in roots"
+              :key="r.matchId"
+              :node="r"
+              :open.sync="open"
+              :query="searchText"
+              :selected-match-id="selectedMatchId"
+              @select-match="selectMatch"
+            ></tree-node>
+          </div>
+        </div>
+
+        <aside class="matchResultPanel">
+          <div v-if="!selectedMatchId" class="resultEmpty">
+            <i class="fa fa-hand-pointer-o"></i>
+            <strong>Select a match</strong>
+            <span>Click a match in the tree to see players, rules and result controls.</span>
+          </div>
+
+          <div v-else-if="loadingDetails" class="resultEmpty">
+            <i class="fa fa-circle-o-notch fa-spin"></i>
+            <strong>Loading match</strong>
+          </div>
+
+          <div v-else-if="matchDetails">
+            <div class="resultPanelHeader">
+              <div>
+                <div class="resultEyebrow">MATCH #{{ matchDetails.matchId }}</div>
+                <h2>{{ matchDetails.matchName }}</h2>
+              </div>
+              <span class="resultTypePill" :class="{ individual: matchDetails.individualMatch }">
+                {{ matchDetails.individualMatch ? 'Playable match' : 'Grouping node' }}
+              </span>
+            </div>
+
+            <section class="resultSection">
+              <div class="resultSectionTitle">Match rules</div>
+
+              <div v-if="matchDetails.matchRules" class="ruleGrid">
+                <div class="ruleItem">
+                  <span>Play style</span>
+                  <strong>{{ matchDetails.matchRules.playStyle || 'Not set' }}</strong>
+                </div>
+                <div class="ruleItem">
+                  <span>Play from</span>
+                  <strong>{{ displayValue(matchDetails.matchRules.playFrom) }}</strong>
+                </div>
+                <div class="ruleItem">
+                  <span>Play to</span>
+                  <strong>{{ displayValue(matchDetails.matchRules.playTo) }}</strong>
+                </div>
+                <div class="ruleItem" v-if="matchDetails.matchRules.description">
+                  <span>Description</span>
+                  <strong>{{ matchDetails.matchRules.description }}</strong>
+                </div>
+              </div>
+
+              <div v-else class="resultNote">
+                No MatchRules are attached to this node.
+              </div>
+            </section>
+
+            <section class="resultSection" v-if="matchDetails.individualMatch">
+              <div class="resultSectionTitle">Result</div>
+
+              <div v-if="matchDetails.seats.length === 0" class="resultNote">
+                This match has no seats yet.
+              </div>
+
+              <div v-for="seat in matchDetails.seats"
+                   :key="seat.seatId"
+                   class="playerResultRow"
+                   :class="resultRowClass(seat)">
+                <div class="playerIdentity">
+                  <div class="playerName">{{ seat.playerName || 'Waiting for player' }}</div>
+                  <div class="playerMeta">Seat #{{ seat.seatId }}</div>
+                </div>
+
+                <div class="playerResultControls" v-if="seat.playerId !== null">
+                  <label class="scoreField">
+                    <span>Points</span>
+                    <input type="number" v-model.number="seat.resultPoints" placeholder="-">
+                  </label>
+
+                  <div class="winnerLoserButtons" v-if="activeSeats.length === 2">
+                    <button type="button"
+                            class="resultChoice winnerChoice"
+                            :class="{ active: seat.resultMatchPlace === 1 }"
+                            @click="setWinner(seat)">
+                      <i class="fa fa-trophy"></i> Winner
+                    </button>
+                    <button type="button"
+                            class="resultChoice loserChoice"
+                            :class="{ active: seat.resultMatchPlace === 2 }"
+                            @click="setLoser(seat)">
+                      Loser
+                    </button>
+                  </div>
+
+                  <label class="placeField" v-else>
+                    <span>Place</span>
+                    <select v-model.number="seat.resultMatchPlace">
+                      <option :value="null">Choose</option>
+                      <option v-for="place in activeSeats.length" :key="place" :value="place">
+                        {{ place }}
+                      </option>
+                    </select>
+                  </label>
+                </div>
+
+                <div v-else class="waitingBadge">No player assigned</div>
+              </div>
+
+              <div v-if="resultError" class="resultMessage error">{{ resultError }}</div>
+              <div v-if="resultMessage" class="resultMessage success">{{ resultMessage }}</div>
+
+              <div class="resultActions">
+                <button type="button" class="miniBtn" @click="clearResult" :disabled="savingResult || activeSeats.length === 0">
+                  Clear result
+                </button>
+                <button type="button" class="saveResultBtn" @click="saveResult" :disabled="savingResult || activeSeats.length < 2">
+                  <i class="fa" :class="savingResult ? 'fa-circle-o-notch fa-spin' : 'fa-save'"></i>
+                  {{ savingResult ? 'Saving…' : 'Save result' }}
+                </button>
+              </div>
+            </section>
+
+            <section class="resultSection" v-else>
+              <div class="resultNote">
+                This is a tournament, round or pool container. Select one of its child matches to enter a winner and loser.
+              </div>
+            </section>
+          </div>
+
+          <div v-else class="resultEmpty">
+            <i class="fa fa-exclamation-triangle"></i>
+            <strong>Could not load match</strong>
+            <span>{{ resultError || 'Try selecting the match again.' }}</span>
+          </div>
+        </aside>
       </div>
 
       <div v-else class="emptyState">
