@@ -33,7 +33,7 @@
       <div class="matchesHeader">
         <div>
           <div class="matchesTitle">Matches</div>
-          <div class="matchesSub">Click a match to view its rules and register the result.</div>
+          <div class="matchesSub">Click a pool to assign where it is played, or click a match to view rules and register the result.</div>
         </div>
         <div class="matchesStats">
           <span class="pill">Nodes: {{ nodes.length }}</span>
@@ -42,6 +42,50 @@
           <button class="miniBtn" @click="collapseAll">Collapse all</button>
         </div>
       </div>
+
+      <details class="venueManager" v-if="currentTournamentId">
+        <summary>
+          <span><i class="fa fa-map-marker"></i> Tournament venues</span>
+          <span class="venueCount">{{ venues.length }}</span>
+        </summary>
+
+        <div class="venueManagerBody">
+          <div v-if="venueLoading" class="resultNote">Loading venues…</div>
+
+          <template v-else-if="venueAdminAllowed">
+            <form class="venueCreateForm" @submit.prevent="createVenue">
+              <label>
+                <span>Venue name</span>
+                <input type="text" maxlength="255" v-model.trim="newVenueName" placeholder="e.g. Table room A" required>
+              </label>
+              <label>
+                <span>Description (optional)</span>
+                <input type="text" maxlength="255" v-model.trim="newVenueDescription" placeholder="e.g. Upstairs, 4 tables">
+              </label>
+              <button type="submit" class="saveResultBtn" :disabled="savingVenue || !newVenueName.trim()">
+                <i class="fa fa-plus"></i> {{ savingVenue ? 'Saving…' : 'Create venue' }}
+              </button>
+            </form>
+
+            <div class="venueList" v-if="venues.length">
+              <div class="venueListItem" v-for="venue in venues" :key="venue.facilityId">
+                <div>
+                  <strong>{{ venue.name }}</strong>
+                  <span v-if="venue.description">{{ venue.description }}</span>
+                </div>
+                <button type="button" class="venueDeleteBtn" @click="deleteVenue(venue)" :disabled="savingVenue" title="Delete venue">
+                  <i class="fa fa-trash"></i>
+                </button>
+              </div>
+            </div>
+            <div v-else class="resultNote">No venues created yet.</div>
+          </template>
+
+          <div v-else-if="venueError" class="resultNote">{{ venueError }}</div>
+          <div v-if="venueMessage" class="resultMessage success">{{ venueMessage }}</div>
+          <div v-if="venueAdminAllowed && venueError" class="resultMessage error">{{ venueError }}</div>
+        </div>
+      </details>
 
       <div class="matchWorkspace" v-if="roots.length">
         <div class="matchTreeColumn">
@@ -80,6 +124,43 @@
                 {{ matchDetails.individualMatch ? 'Playable match' : 'Grouping node' }}
               </span>
             </div>
+
+            <section class="resultSection">
+              <div class="resultSectionTitle">Venue</div>
+
+              <div v-if="selectedIsPool && venueAdminAllowed" class="poolVenueEditor">
+                <label>
+                  <span>Play this pool at</span>
+                  <select v-model="selectedVenueId">
+                    <option :value="null">Not assigned</option>
+                    <option v-for="venue in venues" :key="venue.facilityId" :value="venue.facilityId">
+                      {{ venue.name }}
+                    </option>
+                  </select>
+                </label>
+                <button type="button" class="saveResultBtn" @click="savePoolVenue" :disabled="savingVenue">
+                  <i class="fa fa-map-marker"></i> {{ savingVenue ? 'Saving…' : 'Save venue' }}
+                </button>
+              </div>
+
+              <div v-else-if="matchDetails.venue" class="venueAssignedCard">
+                <i class="fa fa-map-marker"></i>
+                <div>
+                  <strong>{{ selectedVenueLabel }}</strong>
+                  <span v-if="matchDetails.venue.description">{{ matchDetails.venue.description }}</span>
+                  <span v-if="matchDetails.individualMatch && matchDetails.venue.assignedOnMatchId !== matchDetails.matchId">Inherited from this match's pool.</span>
+                </div>
+              </div>
+
+              <div v-else class="resultNote">
+                <span v-if="selectedIsPool">No venue has been assigned to this pool.</span>
+                <span v-else-if="matchDetails.individualMatch">This match's pool has no venue assigned.</span>
+                <span v-else>Venues are assigned on pool nodes.</span>
+              </div>
+
+              <div v-if="selectedIsPool && venueMessage" class="resultMessage success">{{ venueMessage }}</div>
+              <div v-if="selectedIsPool && venueError" class="resultMessage error">{{ venueError }}</div>
+            </section>
 
             <section class="resultSection">
               <div class="resultSectionTitle">Match rules</div>

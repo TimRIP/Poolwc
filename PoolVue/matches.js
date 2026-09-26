@@ -105,6 +105,17 @@ const matchesApp = new Vue({
     open: new Set(),
     rows: [],
     selectedMatchId: null,
+    selectedNode: null,
+    currentTournamentId: null,
+    venues: [],
+    venueAdminAllowed: false,
+    venueLoading: false,
+    venueError: '',
+    venueMessage: '',
+    newVenueName: '',
+    newVenueDescription: '',
+    selectedVenueId: null,
+    savingVenue: false,
     matchDetails: null,
     loadingDetails: false,
     savingResult: false,
@@ -181,6 +192,15 @@ const matchesApp = new Vue({
       return this.matchDetails.seats.filter(s => s.playerId !== null && s.playerId !== undefined);
     },
 
+    selectedIsPool() {
+      return !!(this.selectedNode && Number(this.selectedNode.level) === 2 && this.matchDetails && !this.matchDetails.individualMatch);
+    },
+
+    selectedVenueLabel() {
+      if (!this.matchDetails || !this.matchDetails.venue) return 'Not assigned';
+      return this.matchDetails.venue.name || ('Venue #' + this.matchDetails.venue.facilityId);
+    },
+
     scoreDirectionText() {
       if (!this.matchDetails || !this.matchDetails.matchRules) return '';
       const from = Number(this.matchDetails.matchRules.playFrom);
@@ -239,8 +259,11 @@ const matchesApp = new Vue({
 
     async selectMatch(node) {
       if (!node || !node.matchId) return;
+      this.selectedNode = node;
       this.selectedMatchId = node.matchId;
       this.lastAdvancement = null;
+      this.venueError = '';
+      this.venueMessage = '';
       await this.loadMatchDetails(node.matchId);
     },
 
@@ -253,6 +276,7 @@ const matchesApp = new Vue({
         matchName: details.matchName || '(no name)',
         individualMatch: !!details.individualMatch,
         matchRules: details.matchRules || null,
+        venue: details.venue || null,
         seats: seats.map(s => ({
           seatId: s.seatId,
           playerId: s.playerId === undefined ? null : s.playerId,
@@ -275,6 +299,7 @@ const matchesApp = new Vue({
           { headers: this.authHeaders() }
         );
         this.matchDetails = this.normalizeMatchDetails(res.data);
+        this.selectedVenueId = this.matchDetails.venue ? Number(this.matchDetails.venue.facilityId) : null;
       } catch (e) {
         console.error(e);
         if (e.response && e.response.status === 401) {
@@ -286,6 +311,143 @@ const matchesApp = new Vue({
         }
       } finally {
         this.loadingDetails = false;
+      }
+    },
+
+    async loadVenues(tournamentId) {
+      const tid = Number(tournamentId);
+      if (!Number.isFinite(tid) || tid <= 0) return;
+
+      this.venueLoading = true;
+      this.venueError = '';
+      this.venueMessage = '';
+
+      try {
+        const res = await axios.get(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(tid) + '/venues',
+          { headers: this.authHeaders() }
+        );
+        this.venues = res.data && Array.isArray(res.data.venues) ? res.data.venues : [];
+        this.venueAdminAllowed = true;
+      } catch (e) {
+        console.error(e);
+        this.venues = [];
+        if (e.response && e.response.status === 403) {
+          this.venueAdminAllowed = false;
+          this.venueError = 'Only the tournament administrator can create and assign venues.';
+        } else if (e.response && e.response.status === 401) {
+          this.venueAdminAllowed = false;
+          this.venueError = 'You are not logged in, or your login has expired.';
+        } else {
+          this.venueAdminAllowed = false;
+          this.venueError = (e.response && e.response.data && e.response.data.message)
+            ? e.response.data.message
+            : 'Could not load tournament venues.';
+        }
+      } finally {
+        this.venueLoading = false;
+      }
+    },
+
+    async createVenue() {
+      const name = (this.newVenueName || '').trim();
+      if (!name || !this.currentTournamentId) return;
+
+      this.savingVenue = true;
+      this.venueError = '';
+      this.venueMessage = '';
+
+      try {
+        const res = await axios.post(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(this.currentTournamentId) + '/venues',
+          {
+            name: name,
+            description: (this.newVenueDescription || '').trim() || null
+          },
+          {
+            headers: Object.assign(
+              { 'Content-Type': 'application/json; charset=utf-8' },
+              this.authHeaders()
+            )
+          }
+        );
+
+        this.newVenueName = '';
+        this.newVenueDescription = '';
+        await this.loadVenues(this.currentTournamentId);
+        this.venueMessage = 'Venue created.';
+
+        if (res.data && res.data.venue && this.selectedIsPool && this.selectedVenueId == null) {
+          this.selectedVenueId = Number(res.data.venue.facilityId);
+        }
+      } catch (e) {
+        console.error(e);
+        this.venueError = (e.response && e.response.data && e.response.data.message)
+          ? e.response.data.message
+          : 'Could not create venue.';
+      } finally {
+        this.savingVenue = false;
+      }
+    },
+
+    async deleteVenue(venue) {
+      if (!venue || !venue.facilityId || !this.currentTournamentId) return;
+      if (!confirm('Delete venue "' + (venue.name || venue.facilityId) + '"?')) return;
+
+      this.savingVenue = true;
+      this.venueError = '';
+      this.venueMessage = '';
+
+      try {
+        await axios.delete(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(this.currentTournamentId) + '/venues/' + encodeURIComponent(venue.facilityId),
+          { headers: this.authHeaders() }
+        );
+        await this.loadVenues(this.currentTournamentId);
+        if (Number(this.selectedVenueId) === Number(venue.facilityId)) this.selectedVenueId = null;
+        this.venueMessage = 'Venue deleted.';
+      } catch (e) {
+        console.error(e);
+        this.venueError = (e.response && e.response.data && e.response.data.message)
+          ? e.response.data.message
+          : 'Could not delete venue.';
+      } finally {
+        this.savingVenue = false;
+      }
+    },
+
+    async savePoolVenue() {
+      if (!this.currentTournamentId || !this.matchDetails || !this.selectedIsPool) return;
+
+      this.savingVenue = true;
+      this.venueError = '';
+      this.venueMessage = '';
+
+      const facilityId = this.selectedVenueId === '' || this.selectedVenueId === null || this.selectedVenueId === undefined
+        ? null
+        : Number(this.selectedVenueId);
+
+      try {
+        const res = await axios.put(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(this.currentTournamentId) + '/pool/' + encodeURIComponent(this.matchDetails.matchId) + '/venue',
+          { facilityId: facilityId },
+          {
+            headers: Object.assign(
+              { 'Content-Type': 'application/json; charset=utf-8' },
+              this.authHeaders()
+            )
+          }
+        );
+
+        await this.loadMatchDetails(this.matchDetails.matchId);
+        this.venueMessage = res.data && res.data.message ? res.data.message : 'Venue assignment saved.';
+      } catch (e) {
+        console.error(e);
+        this.venueError = (e.response && e.response.data && e.response.data.message)
+          ? e.response.data.message
+          : 'Could not save the venue assignment.';
+      } finally {
+        this.savingVenue = false;
       }
     },
 
@@ -536,8 +698,12 @@ const matchesApp = new Vue({
         }
 
         this.rows = matches;
+        this.currentTournamentId = tid;
+        await this.loadVenues(tid);
         if (!preserveSelection) {
           this.selectedMatchId = null;
+          this.selectedNode = null;
+          this.selectedVenueId = null;
           this.matchDetails = null;
           this.resultError = '';
           this.resultMessage = '';

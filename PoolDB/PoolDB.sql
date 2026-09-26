@@ -645,3 +645,41 @@ BEGIN
     ORDER BY PM.[level], PM.ParentMatchId, PM.MatchId;
 END
 GO
+/*
+Adds ownership to Facility so tournament administrators can create their own
+venues and assign each pool to one of them.
+
+This is a migration for an existing database. It does NOT drop any tables.
+*/
+
+IF COL_LENGTH('dbo.Facility', 'AdminId') IS NULL
+BEGIN
+    ALTER TABLE dbo.Facility
+    ADD AdminId INT NULL;
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = 'FK_Facility_AdminId'
+)
+BEGIN
+    ALTER TABLE dbo.Facility
+    ADD CONSTRAINT FK_Facility_AdminId
+        FOREIGN KEY (AdminId)
+        REFERENCES dbo.RegisteredUsers(RegisteredUserID);
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.indexes
+    WHERE name = 'IX_Facility_AdminId'
+      AND object_id = OBJECT_ID('dbo.Facility')
+)
+BEGIN
+    CREATE INDEX IX_Facility_AdminId
+        ON dbo.Facility(AdminId);
+END
+GO

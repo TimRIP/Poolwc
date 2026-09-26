@@ -19,6 +19,15 @@ namespace DrukDatabaseLayer
         public string Description { get; set; }
     }
 
+
+    public class MatchVenueDetails
+    {
+        public int FacilityId { get; set; }
+        public string Name { get; set; }
+        public string Description { get; set; }
+        public int AssignedOnMatchId { get; set; }
+    }
+
     public class MatchSeatDetails
     {
         public int SeatId { get; set; }
@@ -34,6 +43,7 @@ namespace DrukDatabaseLayer
         public string MatchName { get; set; }
         public bool IndividualMatch { get; set; }
         public MatchRuleDetails MatchRules { get; set; }
+        public MatchVenueDetails Venue { get; set; }
         public List<MatchSeatDetails> Seats { get; set; } = new List<MatchSeatDetails>();
     }
 
@@ -119,14 +129,30 @@ SELECT
     MR.PlayFrom,
     MR.PlayTo,
     MR.Description AS MatchRuleDescription,
+    F.Id AS FacilityId,
+    F.Name AS VenueName,
+    F.Description AS VenueDescription,
+    CASE
+        WHEN M.ScheduleId IS NOT NULL THEN M.Id
+        WHEN M.IndividualMatch = 1 AND PM.ScheduleId IS NOT NULL THEN PM.Id
+        ELSE NULL
+    END AS VenueAssignedOnMatchId,
     S.Id AS SeatId,
     S.PlayerId,
     P.Name AS PlayerName,
     S.ResultMatchPlace,
     S.ResultPoints
 FROM [Match] M
+LEFT JOIN [Match] PM ON M.ParentMatchId = PM.Id
 LEFT JOIN MatchRules MR ON M.MatchRulesId = MR.Id
 LEFT JOIN PlayStyle PS ON MR.PlayStyleId = PS.Id
+LEFT JOIN Schedule SCH
+    ON SCH.Id = CASE
+        WHEN M.ScheduleId IS NOT NULL THEN M.ScheduleId
+        WHEN M.IndividualMatch = 1 THEN PM.ScheduleId
+        ELSE NULL
+    END
+LEFT JOIN Facility F ON SCH.FacilityId = F.Id
 LEFT JOIN Seat S ON S.MatchId = M.Id
 LEFT JOIN Player P ON S.PlayerId = P.Id
 WHERE M.Id = @MatchId
@@ -163,6 +189,17 @@ ORDER BY S.Id;";
                                     PlayFrom = ToNullableInt(reader["PlayFrom"]),
                                     PlayTo = ToNullableInt(reader["PlayTo"]),
                                     Description = ToNullableString(reader["MatchRuleDescription"])
+                                };
+                            }
+
+                            if (reader["FacilityId"] != DBNull.Value)
+                            {
+                                details.Venue = new MatchVenueDetails
+                                {
+                                    FacilityId = Convert.ToInt32(reader["FacilityId"]),
+                                    Name = ToNullableString(reader["VenueName"]),
+                                    Description = ToNullableString(reader["VenueDescription"]),
+                                    AssignedOnMatchId = Convert.ToInt32(reader["VenueAssignedOnMatchId"])
                                 };
                             }
                         }

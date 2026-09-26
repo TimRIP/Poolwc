@@ -306,3 +306,158 @@
   margin-top: 10px;
   font-weight: 800;
 }
+
+/* Tournament venue management */
+.venueManager {
+  margin: 0 0 18px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 14px;
+  background: #182231;
+  color: #f3f6fb;
+  overflow: hidden;
+}
+
+.venueManager summary {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 850;
+  list-style: none;
+}
+
+.venueManager summary::-webkit-details-marker { display: none; }
+.venueManager summary i { margin-right: 7px; color: #9fc1ff; }
+.venueCount {
+  min-width: 27px;
+  height: 27px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(159,193,255,.10);
+  color: #cfe0ff;
+  font-size: 12px;
+}
+
+.venueManagerBody {
+  padding: 14px;
+  border-top: 1px solid rgba(255,255,255,.10);
+}
+
+.venueCreateForm {
+  display: grid;
+  grid-template-columns: minmax(180px, .8fr) minmax(220px, 1.2fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.venueCreateForm label,
+.poolVenueEditor label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.venueCreateForm label > span,
+.poolVenueEditor label > span {
+  color: #aeb9ca;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.venueCreateForm input,
+.poolVenueEditor select {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 9px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: #0d1724;
+  color: #fff;
+  padding: 8px 10px;
+}
+
+.venueList {
+  margin-top: 12px;
+  display: grid;
+  gap: 7px;
+}
+
+.venueListItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 10px;
+  background: #111b29;
+}
+
+.venueListItem > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.venueListItem strong { color: #fff; overflow-wrap: anywhere; }
+.venueListItem span { color: #8e9caf; font-size: 11px; overflow-wrap: anywhere; }
+
+.venueDeleteBtn {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,123,123,.22);
+  background: rgba(255,123,123,.08);
+  color: #ffd0d0;
+}
+
+.venueDeleteBtn:disabled { opacity: .45; cursor: not-allowed; }
+
+.poolVenueEditor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: end;
+}
+
+.venueAssignedCard {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 11px 12px;
+  border: 1px solid rgba(159,193,255,.22);
+  border-radius: 10px;
+  background: rgba(119,168,255,.06);
+}
+
+.venueAssignedCard > i {
+  color: #9fc1ff;
+  margin-top: 2px;
+}
+
+.venueAssignedCard > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.venueAssignedCard strong { color: #fff; overflow-wrap: anywhere; }
+.venueAssignedCard span { color: #aeb9ca; font-size: 11px; line-height: 1.35; }
+
+@media (max-width: 720px) {
+  .venueCreateForm { grid-template-columns: 1fr; }
+  .venueCreateForm .saveResultBtn { width: 100%; }
+}
+
+@media (max-width: 520px) {
+  .poolVenueEditor { grid-template-columns: 1fr; }
+  .poolVenueEditor .saveResultBtn { width: 100%; }
+}
