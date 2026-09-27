@@ -46,10 +46,23 @@ Vue.component('tree-node', {
       if (plain) return String(plain[1]).padStart(2, '0') + ':' + plain[2];
       return '';
     },
+    formatScheduleDate(value) {
+      if (!value) return '';
+      const raw = String(value);
+      const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (!match) return '';
+      // Old schedule entries used 2000-01-01 as a time-only placeholder.
+      // Do not show that legacy placeholder as a real tournament date.
+      if (match[1] === '2000' && match[2] === '01' && match[3] === '01') return '';
+      return match[3] + '/' + match[2] + '/' + match[1];
+    },
     scheduleRange(schedule) {
       if (!schedule) return '';
+      const date = this.formatScheduleDate(schedule.fromTime);
       const from = this.formatScheduleTime(schedule.fromTime);
-      return from ? 'Starts ' + from : '';
+      if (date && from) return date + ' · Starts ' + from;
+      if (from) return 'Starts ' + from;
+      return '';
     }
   },
   computed: {
@@ -157,6 +170,7 @@ const matchesApp = new Vue({
     newVenueName: '',
     newVenueDescription: '',
     selectedVenueId: null,
+    selectedScheduleDate: '',
     selectedScheduleFrom: '',
     savingVenue: false,
     matchDetails: null,
@@ -355,7 +369,9 @@ const matchesApp = new Vue({
         );
         this.matchDetails = this.normalizeMatchDetails(res.data);
         this.selectedVenueId = this.matchDetails.venue ? Number(this.matchDetails.venue.facilityId) : null;
-        this.selectedScheduleFrom = this.toTimeInput(this.matchDetails.schedule ? this.matchDetails.schedule.fromTime : null);
+        const scheduledFrom = this.matchDetails.schedule ? this.matchDetails.schedule.fromTime : null;
+        this.selectedScheduleDate = this.toDateInput(scheduledFrom) || this.todayDateInput();
+        this.selectedScheduleFrom = this.toTimeInput(scheduledFrom);
       } catch (e) {
         console.error(e);
         if (e.response && e.response.status === 401) {
@@ -370,6 +386,24 @@ const matchesApp = new Vue({
       }
     },
 
+    todayDateInput() {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      return year + '-' + month + '-' + day;
+    },
+
+    toDateInput(value) {
+      if (!value) return '';
+      const raw = String(value);
+      const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (!match) return '';
+      // Legacy time-only schedules used this fixed placeholder date.
+      if (match[1] === '2000' && match[2] === '01' && match[3] === '01') return '';
+      return match[1] + '-' + match[2] + '-' + match[3];
+    },
+
     toTimeInput(value) {
       if (!value) return '';
       const raw = String(value);
@@ -380,25 +414,33 @@ const matchesApp = new Vue({
       return '';
     },
 
+    formatDateDisplay(value) {
+      const date = this.toDateInput(value);
+      if (!date) return '';
+      const parts = date.split('-');
+      return parts[2] + '/' + parts[1] + '/' + parts[0];
+    },
+
     formatTimeDisplay(value) {
       const time = this.toTimeInput(value);
       return time || 'Not set';
     },
 
     scheduleDisplay(schedule) {
-      if (!schedule) return 'Time not set';
-      const from = schedule.fromTime ? this.formatTimeDisplay(schedule.fromTime) : '';
-      return from ? 'Starts ' + from : 'Time not set';
+      if (!schedule || !schedule.fromTime) return 'Date/time not set';
+      const date = this.formatDateDisplay(schedule.fromTime);
+      const from = this.formatTimeDisplay(schedule.fromTime);
+      if (date && from) return date + ' · Starts ' + from;
+      return from ? 'Starts ' + from : 'Date/time not set';
     },
 
-    scheduleTimeForApi(value) {
-      const time = (value || '').trim();
-      if (!time) return null;
-      const match = time.match(/^(\d{2}):(\d{2})$/);
-      if (!match) return null;
-      // Schedule currently uses SQL DATETIME columns. The date is deliberately
-      // fixed because the application schedules pools by time-of-day only.
-      return '2000-01-01T' + match[1] + ':' + match[2] + ':00';
+    scheduleDateTimeForApi(dateValue, timeValue) {
+      const date = (dateValue || '').trim();
+      const time = (timeValue || '').trim();
+      if (!date || !time) return null;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+      if (!/^\d{2}:\d{2}$/.test(time)) return null;
+      return date + 'T' + time + ':00';
     },
 
     timeToMinutes(value) {
@@ -540,6 +582,7 @@ const matchesApp = new Vue({
       const facilityId = this.selectedVenueId === '' || this.selectedVenueId === null || this.selectedVenueId === undefined
         ? null
         : Number(this.selectedVenueId);
+      const dateInput = (this.selectedScheduleDate || '').trim() || null;
       const fromInput = (this.selectedScheduleFrom || '').trim() || null;
       const fromMinutes = fromInput ? this.timeToMinutes(fromInput) : null;
 
@@ -549,7 +592,18 @@ const matchesApp = new Vue({
         return;
       }
 
-      const fromTime = this.scheduleTimeForApi(fromInput);
+      if (fromInput && !dateInput) {
+        this.venueError = 'Choose a date for the pool.';
+        this.savingVenue = false;
+        return;
+      }
+
+      const fromTime = fromInput ? this.scheduleDateTimeForApi(dateInput, fromInput) : null;
+      if (fromInput && !fromTime) {
+        this.venueError = 'Enter a valid date and start time.';
+        this.savingVenue = false;
+        return;
+      }
 
       try {
         const poolMatchId = this.matchDetails.matchId;
@@ -834,6 +888,7 @@ const matchesApp = new Vue({
           this.selectedMatchId = null;
           this.selectedNode = null;
           this.selectedVenueId = null;
+          this.selectedScheduleDate = this.todayDateInput();
           this.selectedScheduleFrom = '';
           this.matchDetails = null;
           this.resultError = '';

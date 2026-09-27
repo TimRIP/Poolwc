@@ -140,10 +140,14 @@
                 </label>
 
                 <label>
+                  <span>Date</span>
+                  <input type="date" v-model="selectedScheduleDate">
+                </label>
+
+                <label>
                   <span>Starts</span>
                   <input type="time" v-model="selectedScheduleFrom" step="60">
                 </label>
-
 
                 <button type="button" class="saveResultBtn scheduleSaveBtn" @click="savePoolSchedule" :disabled="savingVenue">
                   <i class="fa fa-calendar"></i> {{ savingVenue ? 'Saving…' : 'Save schedule' }}

@@ -308,10 +308,9 @@ WHERE Id = @FacilityId
         {
             EnsureTournamentAdmin(tournamentId, userId);
 
-            // A pool schedule has only a start time. Schedule uses DATETIME in the
-            // existing database, so normalize the incoming time to a safe fixed day.
-            // ToTime is deliberately kept NULL for compatibility with the existing table.
-            fromTime = NormalizeScheduleTime(fromTime);
+            // A pool schedule has a date and start time. The existing Schedule.FromTime
+            // DATETIME column stores both values. ToTime is deliberately kept NULL.
+            fromTime = NormalizeScheduleDateTime(fromTime);
 
             using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
             {
@@ -354,15 +353,23 @@ WHERE Id = @FacilityId
             }
         }
 
-        private static DateTime? NormalizeScheduleTime(DateTime? value)
+        private static DateTime? NormalizeScheduleDateTime(DateTime? value)
         {
             if (!value.HasValue)
             {
                 return null;
             }
 
-            DateTime baseDate = new DateTime(2000, 1, 1);
-            return baseDate.Add(value.Value.TimeOfDay);
+            // SQL Server DATETIME starts at 1753-01-01. Browser date inputs produce
+            // normal modern dates, but guard the API against invalid/ancient values.
+            DateTime minimumSqlDate = new DateTime(1753, 1, 1);
+            DateTime normalized = DateTime.SpecifyKind(value.Value, DateTimeKind.Unspecified);
+            if (normalized < minimumSqlDate)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Schedule date must be 1753-01-01 or later.");
+            }
+
+            return normalized;
         }
 
         private void EnsureTournamentAdmin(int tournamentId, int userId)

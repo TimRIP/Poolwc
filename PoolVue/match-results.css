@@ -504,9 +504,16 @@
 
 .poolScheduleEditor {
   display: grid;
-  grid-template-columns: minmax(180px, 1.4fr) minmax(175px, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 9px;
   align-items: end;
+  min-width: 0;
+}
+
+/* The result sidebar is intentionally narrow, even on a wide desktop.
+   Keep venue on its own row and let Date + Starts share the next row. */
+.poolScheduleEditor .scheduleVenueField {
+  grid-column: 1 / -1;
 }
 
 .poolScheduleEditor label {
@@ -536,13 +543,16 @@
 
 .poolScheduleEditor .scheduleSaveBtn {
   grid-column: 1 / -1;
-  justify-self: end;
+  justify-self: stretch;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 520px) {
   .poolScheduleEditor { grid-template-columns: 1fr; }
+  .poolScheduleEditor .scheduleVenueField,
   .poolScheduleEditor .scheduleSaveBtn {
     grid-column: auto;
-    width: 100%;
   }
 }
