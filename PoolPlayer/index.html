@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pool Tournament Player</title>
+  <link rel="stylesheet" href="player.css">
+</head>
+<body>
+  <main class="appShell">
+    <header class="appHeader">
+      <div>
+        <div class="eyebrow">PLAYER APP</div>
+        <h1>Pool Tournament</h1>
+        <p class="muted">Create an account, sign in and register for a tournament.</p>
+      </div>
+      <button id="logoutButton" class="button secondary hidden" type="button">Sign out</button>
+    </header>
+
+    <section class="panel apiPanel">
+      <div class="sectionTitle">API connection</div>
+      <div class="apiRow">
+        <label class="field grow">
+          <span>API address</span>
+          <input id="apiBase" type="url" value="http://localhost:5000" autocomplete="url">
+        </label>
+        <button id="saveApiButton" class="button secondary" type="button">Save</button>
+      </div>
+      <p class="hint">On another device, use the address of the computer running the API, for example http://192.168.1.20:5000.</p>
+    </section>
+
+    <div id="message" class="message hidden" role="status" aria-live="polite"></div>
+
+    <section id="authPanel" class="authGrid">
+      <form id="loginForm" class="panel">
+        <div class="sectionTitle">Sign in</div>
+        <label class="field">
+          <span>Username</span>
+          <input id="loginUsername" type="text" required autocomplete="username">
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input id="loginPassword" type="password" required autocomplete="current-password">
+        </label>
+        <button class="button primary full" type="submit">Sign in</button>
+      </form>
+
+      <form id="registerForm" class="panel">
+        <div class="sectionTitle">Create account</div>
+        <label class="field">
+          <span>Name</span>
+          <input id="registerName" type="text" maxlength="50" required autocomplete="name">
+        </label>
+        <label class="field">
+          <span>Email <small>(optional)</small></span>
+          <input id="registerEmail" type="email" maxlength="100" autocomplete="email">
+        </label>
+        <label class="field">
+          <span>Username</span>
+          <input id="registerUsername" type="text" minlength="3" maxlength="30" required autocomplete="username">
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input id="registerPassword" type="password" minlength="8" maxlength="50" required autocomplete="new-password">
+        </label>
+        <button class="button primary full" type="submit">Create account</button>
+      </form>
+    </section>
+
+    <section id="dashboard" class="hidden">
+      <div class="panel profilePanel">
+        <div>
+          <div class="eyebrow">SIGNED IN AS</div>
+          <h2 id="profileName">Player</h2>
+          <div id="profileUsername" class="muted"></div>
+        </div>
+        <button id="refreshButton" class="button secondary" type="button">Refresh</button>
+      </div>
+
+      <section class="tournamentsSection">
+        <div class="sectionHeadingRow">
+          <div>
+            <div class="eyebrow">TOURNAMENTS</div>
+            <h2>Choose a tournament</h2>
+          </div>
+        </div>
+        <div id="tournamentList" class="tournamentList"></div>
+        <div id="emptyTournaments" class="panel emptyState hidden">No tournaments are available yet.</div>
+      </section>
+    </section>
+  </main>
+
+  <script src="player.js"></script>
+</body>
+</html>

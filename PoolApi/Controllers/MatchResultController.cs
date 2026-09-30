@@ -41,7 +41,7 @@ namespace TournamentBackend.Controllers
         [HttpPost("result")]
         public IActionResult SaveResult([FromBody] MatchResultRequest model)
         {
-            if (!TryGetUserId(out _))
+            if (!TryGetUserId(out int userId))
             {
                 return Unauthorized();
             }
@@ -67,6 +67,11 @@ namespace TournamentBackend.Controllers
             }
 
             MatchResultBackoffice backoffice = new MatchResultBackoffice();
+            if (!backoffice.IsTournamentAdminForMatch(model.MatchId, userId))
+            {
+                return StatusCode(403, new { message = "Only the tournament administrator can save match results." });
+            }
+
             MatchDetails details = backoffice.GetMatchDetails(model.MatchId);
 
             if (details == null)
@@ -126,12 +131,17 @@ namespace TournamentBackend.Controllers
         [HttpDelete("{matchId:int}/result")]
         public IActionResult ClearResult(int matchId)
         {
-            if (!TryGetUserId(out _))
+            if (!TryGetUserId(out int userId))
             {
                 return Unauthorized();
             }
 
             MatchResultBackoffice backoffice = new MatchResultBackoffice();
+            if (!backoffice.IsTournamentAdminForMatch(matchId, userId))
+            {
+                return StatusCode(403, new { message = "Only the tournament administrator can clear match results." });
+            }
+
             MatchDetails details = backoffice.GetMatchDetails(matchId);
 
             if (details == null)

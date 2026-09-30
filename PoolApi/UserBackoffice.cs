@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration;
 using Newtonsoft.Json;
 using System;
 using System.Collections;
@@ -479,13 +479,25 @@ namespace DrukDatabaseLayer
         {
             int userid = -1;
 
-            string newToken = token.Remove(0, 7);
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return -1;
+            }
+
+            string newToken = token.Trim();
+            if (newToken.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            {
+                newToken = newToken.Substring(7).Trim();
+            }
+
+            if (string.IsNullOrWhiteSpace(newToken))
+            {
+                return -1;
+            }
 
             using (SqlConnection conn = new SqlConnection(Configuration["connectionstring"]))
             using (SqlCommand cmd = new SqlCommand("SP_GetUserFromToken", conn))
             {
-
-
                 SqlParameter parm = new SqlParameter("@token", SqlDbType.VarChar);
                 parm.Value = newToken;
                 parm.Direction = ParameterDirection.Input;
@@ -496,18 +508,14 @@ namespace DrukDatabaseLayer
                     Direction = ParameterDirection.Output
                 };
 
-
                 cmd.CommandType = CommandType.StoredProcedure;
                 cmd.Parameters.Add(outputIdParam);
 
                 conn.Open();
-
                 cmd.ExecuteNonQuery();
-
                 userid = outputIdParam.Value as int? ?? -1;
-
-                conn.Close();
             }
+
             return userid;
         }
 

@@ -125,6 +125,49 @@ namespace DrukDatabaseLayer
             _configuration = builder.Build();
         }
 
+        public bool IsTournamentAdminForMatch(int matchId, int userId)
+        {
+            const string sql = @"
+;WITH TournamentTree AS
+(
+    SELECT
+        T.Id AS TournamentId,
+        T.MatchId AS RootMatchId,
+        T.Admin,
+        M.Id AS MatchId,
+        CAST('|'+ CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX)) AS [Path]
+    FROM Tournament T
+    INNER JOIN [Match] M ON M.Id = T.MatchId
+    WHERE T.Admin = @UserId
+
+    UNION ALL
+
+    SELECT
+        TT.TournamentId,
+        TT.RootMatchId,
+        TT.Admin,
+        M.Id,
+        CAST(TT.[Path] + CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX))
+    FROM TournamentTree TT
+    INNER JOIN [Match] M ON M.ParentMatchId = TT.MatchId
+    WHERE M.Id <> TT.RootMatchId
+      AND CHARINDEX('|' + CAST(M.Id AS VARCHAR(20)) + '|', TT.[Path]) = 0
+)
+SELECT COUNT(1)
+FROM TournamentTree
+WHERE MatchId = @MatchId
+OPTION (MAXRECURSION 1000);";
+
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.Add("@MatchId", SqlDbType.Int).Value = matchId;
+                cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                conn.Open();
+                return Convert.ToInt32(cmd.ExecuteScalar()) > 0;
+            }
+        }
+
         public MatchDetails GetMatchDetails(int matchId)
         {
             const string sql = @"

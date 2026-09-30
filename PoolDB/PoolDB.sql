@@ -683,3 +683,73 @@ BEGIN
         ON dbo.Facility(AdminId);
 END
 GO
+
+/*
+Player registration migration
+2026-09-30
+
+Safe migration for an EXISTING pooldb database.
+It does not drop the database or existing tournament data.
+
+Run this file once against pooldb before using the player app.
+*/
+
+USE pooldb;
+GO
+
+IF OBJECT_ID('dbo.TournamentRegistration', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.TournamentRegistration
+    (
+        Id INT IDENTITY(1,1) NOT NULL
+            CONSTRAINT PK_TournamentRegistration PRIMARY KEY,
+        TournamentId INT NOT NULL,
+        RegisteredUserId INT NOT NULL,
+        PlayerId INT NULL,
+        OriginalPlayerName NVARCHAR(255) NULL,
+        Status NVARCHAR(20) NOT NULL
+            CONSTRAINT DF_TournamentRegistration_Status DEFAULT ('registered'),
+        RegisteredAt DATETIME NOT NULL
+            CONSTRAINT DF_TournamentRegistration_RegisteredAt DEFAULT (GETUTCDATE()),
+        UpdatedAt DATETIME NOT NULL
+            CONSTRAINT DF_TournamentRegistration_UpdatedAt DEFAULT (GETUTCDATE()),
+
+        CONSTRAINT FK_TournamentRegistration_Tournament
+            FOREIGN KEY (TournamentId) REFERENCES dbo.Tournament(Id),
+        CONSTRAINT FK_TournamentRegistration_User
+            FOREIGN KEY (RegisteredUserId) REFERENCES dbo.RegisteredUsers(RegisteredUserID),
+        CONSTRAINT FK_TournamentRegistration_Player
+            FOREIGN KEY (PlayerId) REFERENCES dbo.Player(Id),
+        CONSTRAINT UQ_TournamentRegistration_Tournament_User
+            UNIQUE (TournamentId, RegisteredUserId),
+        CONSTRAINT CK_TournamentRegistration_Status
+            CHECK (Status IN ('registered', 'cancelled'))
+    );
+END
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE name = 'IX_TournamentRegistration_PlayerId'
+      AND object_id = OBJECT_ID('dbo.TournamentRegistration')
+)
+BEGIN
+    CREATE INDEX IX_TournamentRegistration_PlayerId
+        ON dbo.TournamentRegistration(PlayerId);
+END
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE name = 'IX_TournamentRegistration_Tournament_Status'
+      AND object_id = OBJECT_ID('dbo.TournamentRegistration')
+)
+BEGIN
+    CREATE INDEX IX_TournamentRegistration_Tournament_Status
+        ON dbo.TournamentRegistration(TournamentId, Status);
+END
+GO

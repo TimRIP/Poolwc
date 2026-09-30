@@ -1,0 +1,154 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b1220;
+  --panel: #121d2d;
+  --panel2: #182538;
+  --border: #314158;
+  --text: #f3f7fb;
+  --muted: #9fb0c5;
+  --accent: #5d8df5;
+  --accent2: #76a1ff;
+  --good: #2f9d72;
+  --bad: #b65360;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button, input { font: inherit; }
+
+.appShell {
+  width: min(980px, calc(100% - 28px));
+  margin: 0 auto;
+  padding: 28px 0 60px;
+}
+
+.appHeader,
+.profilePanel,
+.sectionHeadingRow,
+.apiRow,
+.tournamentTop,
+.tournamentBottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.appHeader { margin-bottom: 22px; }
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 6px; font-size: clamp(28px, 5vw, 42px); }
+h2 { margin-bottom: 4px; }
+
+.eyebrow {
+  color: var(--accent2);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .11em;
+}
+
+.muted, .hint { color: var(--muted); }
+.hint { margin: 10px 0 0; font-size: 13px; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px;
+}
+
+.apiPanel { margin-bottom: 18px; }
+.sectionTitle { font-weight: 800; margin-bottom: 14px; }
+.authGrid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 18px; }
+
+.field { display: grid; gap: 6px; margin-bottom: 13px; min-width: 0; }
+.field span { color: var(--muted); font-size: 13px; font-weight: 700; }
+.field small { font-weight: 500; }
+.grow { flex: 1 1 auto; margin-bottom: 0; }
+
+input {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: #0e1725;
+  color: var(--text);
+  padding: 10px 12px;
+  outline: none;
+}
+input:focus { border-color: var(--accent2); box-shadow: 0 0 0 3px rgba(93,141,245,.18); }
+
+.button {
+  min-height: 44px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  padding: 10px 15px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.button:disabled { opacity: .45; cursor: not-allowed; }
+.button.primary { background: var(--accent); color: white; }
+.button.secondary { background: var(--panel2); border-color: var(--border); color: var(--text); }
+.button.danger { background: transparent; border-color: var(--bad); color: #ffb9c2; }
+.full { width: 100%; }
+
+.message {
+  margin: 0 0 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--panel2);
+}
+.message.good { border-color: var(--good); }
+.message.bad { border-color: var(--bad); }
+.hidden { display: none !important; }
+
+.profilePanel { margin-bottom: 24px; }
+.tournamentsSection { margin-top: 16px; }
+.sectionHeadingRow { margin-bottom: 12px; }
+.tournamentList { display: grid; gap: 12px; }
+
+.tournamentCard {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 17px;
+}
+.tournamentCard.joined { border-color: var(--good); }
+.tournamentName { font-size: 19px; font-weight: 850; margin-bottom: 4px; }
+.tournamentMeta { color: var(--muted); font-size: 14px; }
+.tournamentBottom { margin-top: 15px; align-items: flex-end; }
+.registrationBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: rgba(47,157,114,.16);
+  border: 1px solid var(--good);
+  font-size: 13px;
+  font-weight: 800;
+}
+.slotInfo { color: var(--muted); font-size: 13px; line-height: 1.45; }
+.emptyState { color: var(--muted); text-align: center; }
+
+@media (max-width: 700px) {
+  .appShell { width: min(100% - 20px, 980px); padding-top: 18px; }
+  .authGrid { grid-template-columns: 1fr; }
+  .appHeader, .profilePanel { align-items: flex-start; }
+  .apiRow { align-items: flex-end; }
+  .tournamentTop, .tournamentBottom { align-items: flex-start; flex-direction: column; }
+  .tournamentBottom .button { width: 100%; }
+}
+
+@media (max-width: 480px) {
+  .appHeader, .profilePanel, .apiRow { flex-direction: column; align-items: stretch; }
+  .appHeader .button, .profilePanel .button, .apiRow .button { width: 100%; }
+}
