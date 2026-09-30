@@ -84,8 +84,25 @@
             <h2>Choose a tournament</h2>
           </div>
         </div>
+
+        <form id="privateTournamentForm" class="panel privateSearchPanel">
+          <div>
+            <div class="sectionTitle compactTitle">Private tournament</div>
+            <p class="hint privateHint">Private tournaments are hidden from the list. Enter the join code from the tournament administrator.</p>
+          </div>
+          <div class="privateSearchRow">
+            <label class="field grow privateCodeField">
+              <span>Join code</span>
+              <input id="privateTournamentCode" type="text" maxlength="20" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="e.g. 7F3A91BC20">
+            </label>
+            <button class="button secondary" type="submit">Find tournament</button>
+          </div>
+          <div id="privateTournamentResult" class="privateTournamentResult hidden"></div>
+        </form>
+
+        <div class="listLabel">Public tournaments and tournaments you joined</div>
         <div id="tournamentList" class="tournamentList"></div>
-        <div id="emptyTournaments" class="panel emptyState hidden">No tournaments are available yet.</div>
+        <div id="emptyTournaments" class="panel emptyState hidden">No public tournaments are available yet. You can still join a private tournament with its code.</div>
       </section>
     </section>
   </main>

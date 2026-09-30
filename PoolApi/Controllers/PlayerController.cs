@@ -116,8 +116,39 @@ namespace TournamentBackend.Controllers
             }
         }
 
+        [HttpGet("tournaments/find")]
+        public IActionResult FindPrivateTournament([FromQuery] string code)
+        {
+            if (!TryGetUserId(out int userId))
+            {
+                return Unauthorized();
+            }
+
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                return BadRequest(new { message = "Enter a private tournament join code." });
+            }
+
+            try
+            {
+                PlayerRegistrationBackoffice backoffice = new PlayerRegistrationBackoffice();
+                PlayerTournamentInfo tournament = backoffice.FindTournamentByJoinCode(userId, code);
+                if (tournament == null)
+                {
+                    return NotFound(new { message = "No private tournament was found with that join code." });
+                }
+
+                return Ok(new { tournament = tournament });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                return StatusCode(500, new { message = "The private tournament could not be found." });
+            }
+        }
+
         [HttpPost("tournaments/{tournamentId:int}/register")]
-        public IActionResult RegisterForTournament(int tournamentId)
+        public IActionResult RegisterForTournament(int tournamentId, [FromQuery] string code = null)
         {
             if (!TryGetUserId(out int userId))
             {
@@ -127,7 +158,7 @@ namespace TournamentBackend.Controllers
             try
             {
                 PlayerRegistrationBackoffice backoffice = new PlayerRegistrationBackoffice();
-                TournamentRegistrationResult registration = backoffice.RegisterForTournament(tournamentId, userId);
+                TournamentRegistrationResult registration = backoffice.RegisterForTournament(tournamentId, userId, code);
 
                 return Ok(new
                 {

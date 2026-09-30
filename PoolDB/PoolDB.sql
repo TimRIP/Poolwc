@@ -753,3 +753,37 @@ BEGIN
         ON dbo.TournamentRegistration(TournamentId, Status);
 END
 GO
+
+/*
+Adds public/private tournament visibility and an administrator-generated join code.
+Existing tournaments remain public. This migration does not delete any data.
+*/
+
+IF COL_LENGTH('dbo.Tournament', 'IsPrivate') IS NULL
+BEGIN
+    ALTER TABLE dbo.Tournament
+    ADD IsPrivate bit NOT NULL
+        CONSTRAINT DF_Tournament_IsPrivate DEFAULT (0) WITH VALUES;
+END
+GO
+
+IF COL_LENGTH('dbo.Tournament', 'JoinCode') IS NULL
+BEGIN
+    ALTER TABLE dbo.Tournament
+    ADD JoinCode nvarchar(20) NULL;
+END
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE name = 'UX_Tournament_JoinCode'
+      AND object_id = OBJECT_ID('dbo.Tournament')
+)
+BEGIN
+    CREATE UNIQUE INDEX UX_Tournament_JoinCode
+        ON dbo.Tournament(JoinCode)
+        WHERE JoinCode IS NOT NULL;
+END
+GO

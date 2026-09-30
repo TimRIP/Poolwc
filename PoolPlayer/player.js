@@ -22,6 +22,9 @@
     profileName: document.getElementById('profileName'),
     profileUsername: document.getElementById('profileUsername'),
     refreshButton: document.getElementById('refreshButton'),
+    privateTournamentForm: document.getElementById('privateTournamentForm'),
+    privateTournamentCode: document.getElementById('privateTournamentCode'),
+    privateTournamentResult: document.getElementById('privateTournamentResult'),
     tournamentList: document.getElementById('tournamentList'),
     emptyTournaments: document.getElementById('emptyTournaments')
   };
@@ -29,6 +32,8 @@
   let token = localStorage.getItem(TOKEN_KEY) || '';
   let profile = null;
   let tournaments = [];
+  let foundPrivateTournament = null;
+  let foundPrivateCode = '';
 
   function normalizedBase() {
     return (els.apiBase.value || 'http://localhost:5000').trim().replace(/\/+$/, '');
@@ -108,69 +113,126 @@
     els.profileUsername.textContent = profile && profile.username ? '@' + profile.username : '';
   }
 
+  function buildTournamentCard(tournament, joinCode) {
+    const card = document.createElement('article');
+    card.className = 'tournamentCard' + (tournament.isRegistered ? ' joined' : '');
+
+    const top = document.createElement('div');
+    top.className = 'tournamentTop';
+
+    const titleWrap = document.createElement('div');
+    const title = document.createElement('div');
+    title.className = 'tournamentName';
+    title.textContent = tournament.name || ('Tournament #' + tournament.tournamentId);
+    const meta = document.createElement('div');
+    meta.className = 'tournamentMeta';
+    meta.textContent = tournament.registeredPlayers + ' / ' + tournament.capacity + ' player places filled';
+    titleWrap.append(title, meta);
+    top.append(titleWrap);
+
+    const badgeRow = document.createElement('div');
+    badgeRow.className = 'badgeRow';
+
+    if (tournament.isPrivate) {
+      const privateBadge = document.createElement('div');
+      privateBadge.className = 'privateBadge';
+      privateBadge.textContent = 'Private';
+      badgeRow.append(privateBadge);
+    }
+
+    if (tournament.isRegistered) {
+      const badge = document.createElement('div');
+      badge.className = 'registrationBadge';
+      badge.textContent = 'Registered';
+      badgeRow.append(badge);
+    }
+
+    if (badgeRow.childNodes.length) top.append(badgeRow);
+
+    const bottom = document.createElement('div');
+    bottom.className = 'tournamentBottom';
+
+    const info = document.createElement('div');
+    info.className = 'slotInfo';
+    if (tournament.isRegistered) {
+      info.textContent = 'You are entered as ' + (tournament.playerName || 'player') + ' (player #' + tournament.playerId + ').';
+    } else if (tournament.availableSlots > 0) {
+      info.textContent = tournament.availableSlots + ' place' + (tournament.availableSlots === 1 ? '' : 's') + ' available.';
+    } else {
+      info.textContent = 'Tournament is full.';
+    }
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = tournament.isRegistered ? 'button danger' : 'button primary';
+    button.textContent = tournament.isRegistered ? 'Cancel registration' : 'Register';
+    button.disabled = !tournament.isRegistered && tournament.availableSlots <= 0;
+    button.addEventListener('click', function () {
+      if (tournament.isRegistered) cancelRegistration(tournament.tournamentId);
+      else registerForTournament(tournament.tournamentId, joinCode || '');
+    });
+
+    bottom.append(info, button);
+    card.append(top, bottom);
+    return card;
+  }
+
   function renderTournaments() {
     els.tournamentList.replaceChildren();
     els.emptyTournaments.classList.toggle('hidden', tournaments.length !== 0);
 
     tournaments.forEach(function (tournament) {
-      const card = document.createElement('article');
-      card.className = 'tournamentCard' + (tournament.isRegistered ? ' joined' : '');
-
-      const top = document.createElement('div');
-      top.className = 'tournamentTop';
-
-      const titleWrap = document.createElement('div');
-      const title = document.createElement('div');
-      title.className = 'tournamentName';
-      title.textContent = tournament.name || ('Tournament #' + tournament.tournamentId);
-      const meta = document.createElement('div');
-      meta.className = 'tournamentMeta';
-      meta.textContent = tournament.registeredPlayers + ' / ' + tournament.capacity + ' player places filled';
-      titleWrap.append(title, meta);
-
-      if (tournament.isRegistered) {
-        const badge = document.createElement('div');
-        badge.className = 'registrationBadge';
-        badge.textContent = 'Registered';
-        top.append(titleWrap, badge);
-      } else {
-        top.append(titleWrap);
-      }
-
-      const bottom = document.createElement('div');
-      bottom.className = 'tournamentBottom';
-
-      const info = document.createElement('div');
-      info.className = 'slotInfo';
-      if (tournament.isRegistered) {
-        info.textContent = 'You are entered as ' + (tournament.playerName || 'player') + ' (player #' + tournament.playerId + ').';
-      } else if (tournament.availableSlots > 0) {
-        info.textContent = tournament.availableSlots + ' place' + (tournament.availableSlots === 1 ? '' : 's') + ' available.';
-      } else {
-        info.textContent = 'Tournament is full.';
-      }
-
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = tournament.isRegistered ? 'button danger' : 'button primary';
-      button.textContent = tournament.isRegistered ? 'Cancel registration' : 'Register';
-      button.disabled = !tournament.isRegistered && tournament.availableSlots <= 0;
-      button.addEventListener('click', function () {
-        if (tournament.isRegistered) cancelRegistration(tournament.tournamentId);
-        else registerForTournament(tournament.tournamentId);
-      });
-
-      bottom.append(info, button);
-      card.append(top, bottom);
-      els.tournamentList.append(card);
+      els.tournamentList.append(buildTournamentCard(tournament, ''));
     });
   }
 
-  async function registerForTournament(tournamentId) {
+  function clearPrivateSearchResult() {
+    foundPrivateTournament = null;
+    foundPrivateCode = '';
+    els.privateTournamentResult.replaceChildren();
+    els.privateTournamentResult.classList.add('hidden');
+  }
+
+  function renderPrivateTournament() {
+    els.privateTournamentResult.replaceChildren();
+    if (!foundPrivateTournament) {
+      els.privateTournamentResult.classList.add('hidden');
+      return;
+    }
+
+    els.privateTournamentResult.append(buildTournamentCard(foundPrivateTournament, foundPrivateCode));
+    els.privateTournamentResult.classList.remove('hidden');
+  }
+
+  async function findPrivateTournament(code) {
+    const normalizedCode = (code || '').trim().toUpperCase().replace(/[\s-]+/g, '');
+    if (!normalizedCode) {
+      clearPrivateSearchResult();
+      showMessage('Enter the private tournament join code.', 'bad');
+      return;
+    }
+
+    showMessage('Looking for private tournament...', '');
+    try {
+      const result = await api('/api/player/tournaments/find?code=' + encodeURIComponent(normalizedCode));
+      foundPrivateTournament = result && result.tournament ? result.tournament : null;
+      foundPrivateCode = normalizedCode;
+      renderPrivateTournament();
+      showMessage(foundPrivateTournament ? 'Private tournament found.' : 'Tournament not found.', foundPrivateTournament ? 'good' : 'bad');
+    } catch (error) {
+      clearPrivateSearchResult();
+      showMessage(error.message, 'bad');
+    }
+  }
+
+  async function registerForTournament(tournamentId, joinCode) {
     showMessage('Registering...', '');
     try {
-      const result = await api('/api/player/tournaments/' + tournamentId + '/register', { method: 'POST' });
+      const suffix = joinCode ? '?code=' + encodeURIComponent(joinCode) : '';
+      const result = await api('/api/player/tournaments/' + tournamentId + '/register' + suffix, { method: 'POST' });
       showMessage(result.message || 'You are registered.', 'good');
+      clearPrivateSearchResult();
+      els.privateTournamentCode.value = '';
       await loadDashboard();
     } catch (error) {
       showMessage(error.message, 'bad');
@@ -184,6 +246,8 @@
     try {
       const result = await api('/api/player/tournaments/' + tournamentId + '/register', { method: 'DELETE' });
       showMessage(result.message || 'Registration cancelled.', 'good');
+      clearPrivateSearchResult();
+      els.privateTournamentCode.value = '';
       await loadDashboard();
     } catch (error) {
       showMessage(error.message, 'bad');
@@ -194,6 +258,8 @@
     token = '';
     profile = null;
     tournaments = [];
+    clearPrivateSearchResult();
+    if (els.privateTournamentCode) els.privateTournamentCode.value = '';
     localStorage.removeItem(TOKEN_KEY);
     setSignedInUi(false);
     els.tournamentList.replaceChildren();
@@ -242,6 +308,17 @@
     } catch (error) {
       showMessage(error.message, 'bad');
     }
+  });
+
+  els.privateTournamentForm.addEventListener('submit', function (event) {
+    event.preventDefault();
+    findPrivateTournament(els.privateTournamentCode.value);
+  });
+
+  els.privateTournamentCode.addEventListener('input', function () {
+    const start = this.selectionStart;
+    this.value = this.value.toUpperCase();
+    if (typeof start === 'number') this.setSelectionRange(start, start);
   });
 
   els.logoutButton.addEventListener('click', function () { signOut(true); });

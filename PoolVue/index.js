@@ -87,11 +87,13 @@ var dash = new Vue({
     apiError: '',
     creating: false,
     createdTournamentId: localStorage.getItem('lastTournamentId') || '',
+    createdJoinCode: localStorage.getItem('lastTournamentJoinCode') || '',
     nextKey: 2,
     formdata: {
       errors: [],
       tournamentname: 'New tournament',
       tournamentplayers: 8,
+      privateTournament: false,
       rundearray: [
         {
           _key: 1,
@@ -694,6 +696,9 @@ var dash = new Vue({
       }
 
       this.formdata = saved;
+      if (this.formdata.privateTournament === undefined) {
+        this.$set(this.formdata, 'privateTournament', false);
+      }
       this.activePreset = 'custom';
       this.uiMessage = 'Saved draft loaded.';
 
@@ -719,6 +724,7 @@ var dash = new Vue({
     apipostturnament: function () {
       this.apiError = '';
       this.createdTournamentId = '';
+      this.createdJoinCode = '';
       this.authToken = localStorage.getItem('token') || '';
       this.recalculate();
 
@@ -748,7 +754,13 @@ var dash = new Vue({
           : response.data.Tournament;
 
         this.createdTournamentId = id;
+        this.createdJoinCode = response.data.joinCode || response.data.JoinCode || '';
         localStorage.setItem('lastTournamentId', String(id));
+        if (this.createdJoinCode) {
+          localStorage.setItem('lastTournamentJoinCode', this.createdJoinCode);
+        } else {
+          localStorage.removeItem('lastTournamentJoinCode');
+        }
         match.TurnamentId = id;
       }.bind(this))
       .catch(function (error) {

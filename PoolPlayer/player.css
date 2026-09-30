@@ -152,3 +152,60 @@ input:focus { border-color: var(--accent2); box-shadow: 0 0 0 3px rgba(93,141,24
   .appHeader, .profilePanel, .apiRow { flex-direction: column; align-items: stretch; }
   .appHeader .button, .profilePanel .button, .apiRow .button { width: 100%; }
 }
+
+/* Private tournament lookup */
+.privateSearchPanel {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.compactTitle { margin-bottom: 4px; }
+.privateHint { margin-top: 0; }
+.privateSearchRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.privateCodeField { margin-bottom: 0; }
+#privateTournamentCode {
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  font-weight: 800;
+}
+.privateTournamentResult {
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.privateTournamentResult .tournamentCard { background: var(--panel2); }
+.listLabel {
+  margin: 2px 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.badgeRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  justify-content: flex-end;
+}
+.privateBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: rgba(118,161,255,.11);
+  border: 1px solid var(--accent2);
+  color: #dce7ff;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+@media (max-width: 700px) {
+  .privateSearchRow { align-items: stretch; flex-direction: column; }
+  .privateSearchRow .button { width: 100%; }
+  .badgeRow { justify-content: flex-start; }
+}

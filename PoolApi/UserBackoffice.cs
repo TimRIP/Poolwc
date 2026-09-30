@@ -392,6 +392,52 @@ namespace DrukDatabaseLayer
             return TournamentID;
         }
 
+        public string ConfigureTournamentPrivacy(int tournamentId, int adminId, bool isPrivate)
+        {
+            const string sql = @"
+UPDATE Tournament
+SET IsPrivate = @IsPrivate,
+    JoinCode = @JoinCode
+WHERE Id = @TournamentId
+  AND [Admin] = @AdminId;
+
+SELECT @@ROWCOUNT;";
+
+            for (int attempt = 0; attempt < 10; attempt++)
+            {
+                string joinCode = isPrivate
+                    ? Guid.NewGuid().ToString("N").Substring(0, 10).ToUpperInvariant()
+                    : null;
+
+                using (SqlConnection conn = new SqlConnection(Configuration["connectionstring"]))
+                using (SqlCommand cmd = new SqlCommand(sql, conn))
+                {
+                    cmd.Parameters.Add("@IsPrivate", SqlDbType.Bit).Value = isPrivate;
+                    cmd.Parameters.Add("@JoinCode", SqlDbType.NVarChar, 20).Value = (object)joinCode ?? DBNull.Value;
+                    cmd.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
+                    cmd.Parameters.Add("@AdminId", SqlDbType.Int).Value = adminId;
+
+                    conn.Open();
+                    try
+                    {
+                        int changed = Convert.ToInt32(cmd.ExecuteScalar());
+                        if (changed != 1)
+                        {
+                            throw new InvalidOperationException("Tournament access settings could not be saved.");
+                        }
+
+                        return joinCode;
+                    }
+                    catch (SqlException ex) when (isPrivate && (ex.Number == 2601 || ex.Number == 2627))
+                    {
+                        // Extremely unlikely join-code collision. Generate another code.
+                    }
+                }
+            }
+
+            throw new InvalidOperationException("A unique private tournament join code could not be generated.");
+        }
+
         public int SP_SetSeatAutoPlace(int SeatId, int AutoSelectMatchId, int AutoSelectlPlace)
         {
             int rtn = -1;

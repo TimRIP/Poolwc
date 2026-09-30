@@ -58,6 +58,20 @@
                 </label>
               </div>
 
+              <div class="access-area">
+                <span class="small-label">Player registration</span>
+                <div class="choice-row access-choice-row">
+                  <label class="choice-card" :class="{ selected: !formdata.privateTournament }">
+                    <input type="radio" :value="false" v-model="formdata.privateTournament">
+                    <span><strong>Public tournament</strong><small>Players can see it in the app and register normally.</small></span>
+                  </label>
+                  <label class="choice-card" :class="{ selected: formdata.privateTournament }">
+                    <input type="radio" :value="true" v-model="formdata.privateTournament">
+                    <span><strong>Private tournament</strong><small>Hidden from the public list. A join code is generated when you create it.</small></span>
+                  </label>
+                </div>
+              </div>
+
               <div class="preset-area">
                 <span class="small-label">Quick setup</span>
                 <div class="preset-buttons">
@@ -266,8 +280,12 @@
               </div>
 
               <div class="api-message success" v-if="createdTournamentId">
-                Tournament created with ID <strong>{{ createdTournamentId }}</strong>.
-                <a href="matches.html">Open matches</a>
+                <div>Tournament created with ID <strong>{{ createdTournamentId }}</strong>. <a href="matches.html">Open matches</a></div>
+                <div class="join-code-result" v-if="createdJoinCode">
+                  <span>Private join code</span>
+                  <code>{{ createdJoinCode }}</code>
+                  <small>Share this code with the players you want to invite.</small>
+                </div>
               </div>
               <div class="api-message error" v-if="apiError">{{ apiError }}</div>
 

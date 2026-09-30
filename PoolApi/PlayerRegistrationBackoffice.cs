@@ -21,6 +21,7 @@ namespace DrukDatabaseLayer
         public int TournamentId { get; set; }
         public string Name { get; set; }
         public string Description { get; set; }
+        public bool IsPrivate { get; set; }
         public int Capacity { get; set; }
         public int RegisteredPlayers { get; set; }
         public int AvailableSlots { get; set; }
@@ -194,6 +195,7 @@ SELECT
     T.Id AS TournamentId,
     RM.Name AS TournamentName,
     T.Description,
+    ISNULL(T.IsPrivate, 0) AS IsPrivate,
     ISNULL(SC.Capacity, 0) AS Capacity,
     ISNULL(SC.Capacity, 0) - ISNULL(SC.AvailableSlots, 0) AS RegisteredPlayers,
     ISNULL(SC.AvailableSlots, 0) AS AvailableSlots,
@@ -208,6 +210,8 @@ LEFT JOIN TournamentRegistration TR
     ON TR.TournamentId = T.Id
    AND TR.RegisteredUserId = @UserId
 LEFT JOIN Player RP ON RP.Id = TR.PlayerId
+WHERE ISNULL(T.IsPrivate, 0) = 0
+   OR (TR.Id IS NOT NULL AND TR.Status = 'registered')
 ORDER BY T.Id DESC
 OPTION (MAXRECURSION 1000);";
 
@@ -228,6 +232,7 @@ OPTION (MAXRECURSION 1000);";
                             TournamentId = Convert.ToInt32(reader["TournamentId"]),
                             Name = Convert.ToString(reader["TournamentName"]),
                             Description = reader["Description"] == DBNull.Value ? null : Convert.ToString(reader["Description"]),
+                            IsPrivate = Convert.ToBoolean(reader["IsPrivate"]),
                             Capacity = Convert.ToInt32(reader["Capacity"]),
                             RegisteredPlayers = Convert.ToInt32(reader["RegisteredPlayers"]),
                             AvailableSlots = Convert.ToInt32(reader["AvailableSlots"]),
@@ -243,7 +248,117 @@ OPTION (MAXRECURSION 1000);";
             return tournaments;
         }
 
-        public TournamentRegistrationResult RegisterForTournament(int tournamentId, int userId)
+        public PlayerTournamentInfo FindTournamentByJoinCode(int userId, string joinCode)
+        {
+            joinCode = NormalizeJoinCode(joinCode);
+            if (string.IsNullOrWhiteSpace(joinCode))
+            {
+                return null;
+            }
+
+            const string sql = @"
+;WITH TournamentTree AS
+(
+    SELECT
+        T.Id AS TournamentId,
+        T.MatchId AS RootMatchId,
+        M.Id AS MatchId,
+        CAST('|' + CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX)) AS [Path]
+    FROM Tournament T
+    INNER JOIN [Match] M ON M.Id = T.MatchId
+    WHERE ISNULL(T.IsPrivate, 0) = 1
+      AND UPPER(T.JoinCode) = @JoinCode
+
+    UNION ALL
+
+    SELECT
+        TT.TournamentId,
+        TT.RootMatchId,
+        M.Id,
+        CAST(TT.[Path] + CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX))
+    FROM TournamentTree TT
+    INNER JOIN [Match] M ON M.ParentMatchId = TT.MatchId
+    WHERE M.Id <> TT.RootMatchId
+      AND CHARINDEX('|' + CAST(M.Id AS VARCHAR(20)) + '|', TT.[Path]) = 0
+),
+SlotPlayers AS
+(
+    SELECT
+        TT.TournamentId,
+        P.Id AS PlayerId,
+        P.RegisteredUserID,
+        P.Name,
+        MAX(CASE WHEN S.ResultMatchPlace IS NOT NULL OR S.ResultPoints IS NOT NULL THEN 1 ELSE 0 END) AS HasResult
+    FROM TournamentTree TT
+    INNER JOIN Seat S ON S.MatchId = TT.MatchId
+    INNER JOIN Player P ON P.Id = S.PlayerId
+    GROUP BY TT.TournamentId, P.Id, P.RegisteredUserID, P.Name
+),
+SlotCounts AS
+(
+    SELECT
+        TournamentId,
+        COUNT(*) AS Capacity,
+        SUM(CASE WHEN RegisteredUserID IS NULL AND Name LIKE 'Player:%' AND HasResult = 0 THEN 1 ELSE 0 END) AS AvailableSlots
+    FROM SlotPlayers
+    GROUP BY TournamentId
+)
+SELECT TOP 1
+    T.Id AS TournamentId,
+    RM.Name AS TournamentName,
+    T.Description,
+    ISNULL(T.IsPrivate, 0) AS IsPrivate,
+    ISNULL(SC.Capacity, 0) AS Capacity,
+    ISNULL(SC.Capacity, 0) - ISNULL(SC.AvailableSlots, 0) AS RegisteredPlayers,
+    ISNULL(SC.AvailableSlots, 0) AS AvailableSlots,
+    CASE WHEN ISNULL(SC.AvailableSlots, 0) <= 0 THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS IsFull,
+    CASE WHEN TR.Id IS NOT NULL AND TR.Status = 'registered' THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS IsRegistered,
+    CASE WHEN TR.Status = 'registered' THEN TR.PlayerId ELSE NULL END AS PlayerId,
+    CASE WHEN TR.Status = 'registered' THEN RP.Name ELSE NULL END AS PlayerName
+FROM Tournament T
+INNER JOIN [Match] RM ON RM.Id = T.MatchId
+LEFT JOIN SlotCounts SC ON SC.TournamentId = T.Id
+LEFT JOIN TournamentRegistration TR
+    ON TR.TournamentId = T.Id
+   AND TR.RegisteredUserId = @UserId
+LEFT JOIN Player RP ON RP.Id = TR.PlayerId
+WHERE ISNULL(T.IsPrivate, 0) = 1
+  AND UPPER(T.JoinCode) = @JoinCode
+OPTION (MAXRECURSION 1000);";
+
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                cmd.Parameters.Add("@JoinCode", SqlDbType.NVarChar, 20).Value = joinCode;
+                conn.Open();
+
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    if (!reader.Read())
+                    {
+                        return null;
+                    }
+
+                    return new PlayerTournamentInfo
+                    {
+                        TournamentId = Convert.ToInt32(reader["TournamentId"]),
+                        Name = Convert.ToString(reader["TournamentName"]),
+                        Description = reader["Description"] == DBNull.Value ? null : Convert.ToString(reader["Description"]),
+                        IsPrivate = Convert.ToBoolean(reader["IsPrivate"]),
+                        Capacity = Convert.ToInt32(reader["Capacity"]),
+                        RegisteredPlayers = Convert.ToInt32(reader["RegisteredPlayers"]),
+                        AvailableSlots = Convert.ToInt32(reader["AvailableSlots"]),
+                        IsFull = Convert.ToBoolean(reader["IsFull"]),
+                        IsRegistered = Convert.ToBoolean(reader["IsRegistered"]),
+                        PlayerId = reader["PlayerId"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["PlayerId"]),
+                        PlayerName = reader["PlayerName"] == DBNull.Value ? null : Convert.ToString(reader["PlayerName"])
+                    };
+                }
+            }
+        }
+
+        public TournamentRegistrationResult RegisterForTournament(int tournamentId, int userId, string joinCode = null)
         {
             using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
             {
@@ -265,6 +380,8 @@ OPTION (MAXRECURSION 1000);";
                             transaction.Commit();
                             return existing;
                         }
+
+                        ValidateTournamentAccess(conn, transaction, tournamentId, joinCode);
 
                         string displayName = GetDisplayName(conn, transaction, userId);
                         if (displayName == null)
@@ -455,6 +572,61 @@ WHERE TournamentId = @TournamentId
                     {
                         transaction.Rollback();
                         throw;
+                    }
+                }
+            }
+        }
+
+        private static string NormalizeJoinCode(string joinCode)
+        {
+            if (string.IsNullOrWhiteSpace(joinCode))
+            {
+                return null;
+            }
+
+            return joinCode.Trim()
+                .Replace("-", string.Empty)
+                .Replace(" ", string.Empty)
+                .ToUpperInvariant();
+        }
+
+        private static void ValidateTournamentAccess(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int tournamentId,
+            string joinCode)
+        {
+            const string sql = @"
+SELECT ISNULL(IsPrivate, 0) AS IsPrivate, JoinCode
+FROM Tournament WITH (UPDLOCK, HOLDLOCK)
+WHERE Id = @TournamentId;";
+
+            using (SqlCommand cmd = new SqlCommand(sql, conn, transaction))
+            {
+                cmd.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
+
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    if (!reader.Read())
+                    {
+                        throw new InvalidOperationException("Tournament not found.");
+                    }
+
+                    bool isPrivate = Convert.ToBoolean(reader["IsPrivate"]);
+                    string expectedCode = reader["JoinCode"] == DBNull.Value
+                        ? null
+                        : Convert.ToString(reader["JoinCode"]);
+
+                    if (!isPrivate)
+                    {
+                        return;
+                    }
+
+                    string suppliedCode = NormalizeJoinCode(joinCode);
+                    if (string.IsNullOrWhiteSpace(suppliedCode) ||
+                        !string.Equals(suppliedCode, NormalizeJoinCode(expectedCode), StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidOperationException("A valid join code is required for this private tournament.");
                     }
                 }
             }

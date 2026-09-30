@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.IdentityModel.Tokens.Jwt;
@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Primitives;
 using Microsoft.IdentityModel.Tokens;
 using DrukDatabaseLayer;
+using Newtonsoft.Json.Linq;
 
 namespace TournamentBackend.Controllers
 {
@@ -95,12 +96,34 @@ namespace TournamentBackend.Controllers
                 return Unauthorized();
             }
 
+            bool isPrivate = false;
+            try
+            {
+                JObject tournamentJson = JObject.Parse(model);
+                isPrivate = tournamentJson.Value<bool?>("privateTournament") ?? false;
+            }
+            catch
+            {
+                return BadRequest(new { message = "The tournament definition is not valid JSON." });
+            }
+
             Helper hel = new Helper();
             int tournamentMatchId = hel.CreateTournamentFromString(model);
 
             int tournamentId = ubo.SP_CreateTournament(tournamentMatchId, UserId, true, "This is my first tournament", "test", model);
+            if (tournamentId <= 0)
+            {
+                return StatusCode(500, new { message = "The tournament could not be created." });
+            }
 
-            return Ok(new { Tournament = tournamentId });
+            string joinCode = ubo.ConfigureTournamentPrivacy(tournamentId, UserId, isPrivate);
+
+            return Ok(new
+            {
+                Tournament = tournamentId,
+                isPrivate = isPrivate,
+                joinCode = joinCode
+            });
         }
 
     }

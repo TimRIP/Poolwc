@@ -450,3 +450,33 @@ input:disabled { color: #aeb9ca; background: rgba(255,255,255,.04); }
   font-size: 10px;
   font-weight: 600;
 }
+
+/* Private tournament access */
+.access-area {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.access-choice-row { margin-top: 9px; }
+.join-code-result {
+  display: grid;
+  gap: 5px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255,255,255,.16);
+}
+.join-code-result > span,
+.join-code-result > small { color: #d5e2f5; }
+.join-code-result code {
+  width: fit-content;
+  max-width: 100%;
+  padding: 8px 11px;
+  border: 1px solid rgba(255,255,255,.20);
+  border-radius: 8px;
+  background: #0c1521;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: .10em;
+  overflow-wrap: anywhere;
+}
