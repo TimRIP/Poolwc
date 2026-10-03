@@ -21,6 +21,7 @@
     registerPassword: document.getElementById('registerPassword'),
     profileName: document.getElementById('profileName'),
     profileUsername: document.getElementById('profileUsername'),
+    profileMmr: document.getElementById('profileMmr'),
     refreshButton: document.getElementById('refreshButton'),
     privateTournamentForm: document.getElementById('privateTournamentForm'),
     privateTournamentCode: document.getElementById('privateTournamentCode'),
@@ -114,6 +115,8 @@
   function renderProfile() {
     els.profileName.textContent = profile && profile.name ? profile.name : 'Player';
     els.profileUsername.textContent = profile && profile.username ? '@' + profile.username : '';
+    const mmr = profile && Number.isFinite(Number(profile.mmr)) ? Number(profile.mmr) : 1000;
+    els.profileMmr.textContent = 'MMR ' + mmr;
   }
 
   async function loadPoolAssignments() {

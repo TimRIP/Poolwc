@@ -1022,17 +1022,33 @@ const matchesApp = new Vue({
         const advanced = res.data && res.data.advancement && Array.isArray(res.data.advancement.advancedPlayers)
           ? res.data.advancement.advancedPlayers
           : [];
+        const mmrChanges = res.data && res.data.advancement && Array.isArray(res.data.advancement.mmrChanges)
+          ? res.data.advancement.mmrChanges
+          : [];
+        const mmrMessage = res.data && res.data.advancement && res.data.advancement.mmrMessage
+          ? res.data.advancement.mmrMessage
+          : '';
 
+        const parts = [message];
         if (advanced.length) {
           const moved = advanced.map(x =>
             (x.playerName || ('Player #' + x.playerId)) +
             ' (place ' + x.place + ') → ' +
             (x.destinationMatchName || ('match #' + x.destinationMatchId))
           );
-          this.resultMessage = message + ' ' + moved.join('; ');
-        } else {
-          this.resultMessage = message;
+          parts.push(moved.join('; '));
         }
+        if (mmrChanges.length) {
+          const rating = mmrChanges.map(x => {
+            const delta = Number(x.delta || 0);
+            return (x.playerName || ('Player #' + x.playerId)) +
+              ' ' + (delta >= 0 ? '+' : '') + delta + ' MMR (' + x.before + ' → ' + x.after + ')';
+          });
+          parts.push('MMR: ' + rating.join('; '));
+        } else if (mmrMessage) {
+          parts.push(mmrMessage);
+        }
+        this.resultMessage = parts.join(' ');
       } catch (e) {
         console.error(e);
         if (e.response && e.response.status === 401) {

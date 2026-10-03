@@ -847,3 +847,87 @@ WHERE T.[name] = 'test'
   AND M.[Name] IS NOT NULL
   AND LTRIM(RTRIM(M.[Name])) <> '';
 GO
+
+/*
+  Global player MMR.
+  - New/existing registered users start at 1000.
+  - A completed 1v1 match gives +20 MMR to the winner and -20 MMR to the loser.
+  - MatchMmrChange makes result edits/clears reversible, so saving twice does not award twice.
+*/
+
+IF COL_LENGTH('dbo.RegisteredUsers', 'Mmr') IS NULL
+BEGIN
+    ALTER TABLE dbo.RegisteredUsers
+    ADD Mmr int NOT NULL
+        CONSTRAINT DF_RegisteredUsers_Mmr DEFAULT (1000) WITH VALUES;
+END;
+GO
+
+IF OBJECT_ID('dbo.MatchMmrChange', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.MatchMmrChange
+    (
+        Id int IDENTITY(1,1) NOT NULL
+            CONSTRAINT PK_MatchMmrChange PRIMARY KEY,
+        MatchId int NOT NULL,
+        RegisteredUserId int NOT NULL,
+        PlayerId int NOT NULL,
+        Delta int NOT NULL,
+        MmrBefore int NOT NULL,
+        MmrAfter int NOT NULL,
+        CreatedAt datetime2(0) NOT NULL
+            CONSTRAINT DF_MatchMmrChange_CreatedAt DEFAULT (SYSDATETIME()),
+
+        CONSTRAINT FK_MatchMmrChange_Match
+            FOREIGN KEY (MatchId) REFERENCES dbo.[Match](Id),
+        CONSTRAINT FK_MatchMmrChange_RegisteredUser
+            FOREIGN KEY (RegisteredUserId) REFERENCES dbo.RegisteredUsers(RegisteredUserID),
+        CONSTRAINT FK_MatchMmrChange_Player
+            FOREIGN KEY (PlayerId) REFERENCES dbo.Player(Id),
+        CONSTRAINT UQ_MatchMmrChange_Match_User
+            UNIQUE (MatchId, RegisteredUserId)
+    );
+END;
+GO
+
+/*
+  Global player MMR.
+  - New/existing registered users start at 1000.
+  - Completed 1v1 matches use Elo-style MMR (K=32); the change depends on both players' ratings.
+  - MatchMmrChange makes result edits/clears reversible, so saving twice does not award twice.
+*/
+
+IF COL_LENGTH('dbo.RegisteredUsers', 'Mmr') IS NULL
+BEGIN
+    ALTER TABLE dbo.RegisteredUsers
+    ADD Mmr int NOT NULL
+        CONSTRAINT DF_RegisteredUsers_Mmr DEFAULT (1000) WITH VALUES;
+END;
+GO
+
+IF OBJECT_ID('dbo.MatchMmrChange', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.MatchMmrChange
+    (
+        Id int IDENTITY(1,1) NOT NULL
+            CONSTRAINT PK_MatchMmrChange PRIMARY KEY,
+        MatchId int NOT NULL,
+        RegisteredUserId int NOT NULL,
+        PlayerId int NOT NULL,
+        Delta int NOT NULL,
+        MmrBefore int NOT NULL,
+        MmrAfter int NOT NULL,
+        CreatedAt datetime2(0) NOT NULL
+            CONSTRAINT DF_MatchMmrChange_CreatedAt DEFAULT (SYSDATETIME()),
+
+        CONSTRAINT FK_MatchMmrChange_Match
+            FOREIGN KEY (MatchId) REFERENCES dbo.[Match](Id),
+        CONSTRAINT FK_MatchMmrChange_RegisteredUser
+            FOREIGN KEY (RegisteredUserId) REFERENCES dbo.RegisteredUsers(RegisteredUserID),
+        CONSTRAINT FK_MatchMmrChange_Player
+            FOREIGN KEY (PlayerId) REFERENCES dbo.Player(Id),
+        CONSTRAINT UQ_MatchMmrChange_Match_User
+            UNIQUE (MatchId, RegisteredUserId)
+    );
+END;
+GO

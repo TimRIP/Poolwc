@@ -272,3 +272,15 @@ input:focus { border-color: var(--accent2); box-shadow: 0 0 0 3px rgba(93,141,24
 @media (max-width: 620px) {
   .playerPoolItem { grid-template-columns: 1fr; gap: 8px; }
 }
+
+
+.profileMmr {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-weight: 800;
+  letter-spacing: .04em;
+}

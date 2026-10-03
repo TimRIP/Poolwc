@@ -43,6 +43,7 @@ namespace DrukDatabaseLayer
         public string PlayerName { get; set; }
         public int? ResultMatchPlace { get; set; }
         public int? ResultPoints { get; set; }
+        public int? Mmr { get; set; }
     }
 
     public class MatchDetails
@@ -63,6 +64,16 @@ namespace DrukDatabaseLayer
         public int? ResultPoints { get; set; }
     }
 
+    public class MmrChangeDetails
+    {
+        public int RegisteredUserId { get; set; }
+        public int PlayerId { get; set; }
+        public string PlayerName { get; set; }
+        public int Before { get; set; }
+        public int Delta { get; set; }
+        public int After { get; set; }
+    }
+
     public class AdvancedPlayerDetails
     {
         public int PlayerId { get; set; }
@@ -81,6 +92,8 @@ namespace DrukDatabaseLayer
         public bool PlacementResolved { get; set; }
         public string Message { get; set; }
         public List<AdvancedPlayerDetails> AdvancedPlayers { get; set; } = new List<AdvancedPlayerDetails>();
+        public List<MmrChangeDetails> MmrChanges { get; set; } = new List<MmrChangeDetails>();
+        public string MmrMessage { get; set; }
     }
 
     internal class StageSeatScore
@@ -242,7 +255,8 @@ SELECT
     S.PlayerId,
     P.Name AS PlayerName,
     S.ResultMatchPlace,
-    S.ResultPoints
+    S.ResultPoints,
+    RU.Mmr AS PlayerMmr
 FROM [Match] M
 LEFT JOIN [Match] PM ON M.ParentMatchId = PM.Id
 LEFT JOIN MatchRules MR ON M.MatchRulesId = MR.Id
@@ -256,6 +270,16 @@ LEFT JOIN Schedule SCH
 LEFT JOIN Facility F ON SCH.FacilityId = F.Id
 LEFT JOIN Seat S ON S.MatchId = M.Id
 LEFT JOIN Player P ON S.PlayerId = P.Id
+OUTER APPLY
+(
+    SELECT TOP 1 TR.RegisteredUserId
+    FROM TournamentRegistration TR
+    WHERE TR.PlayerId = P.Id
+      AND TR.Status = 'registered'
+    ORDER BY TR.UpdatedAt DESC, TR.RegisteredAt DESC
+) PLAYERREG
+LEFT JOIN RegisteredUsers RU
+    ON RU.RegisteredUserID = COALESCE(P.RegisteredUserID, PLAYERREG.RegisteredUserId)
 WHERE M.Id = @MatchId
 ORDER BY S.Id;";
 
@@ -324,7 +348,8 @@ ORDER BY S.Id;";
                                 PlayerId = ToNullableInt(reader["PlayerId"]),
                                 PlayerName = ToNullableString(reader["PlayerName"]),
                                 ResultMatchPlace = ToNullableInt(reader["ResultMatchPlace"]),
-                                ResultPoints = ToNullableInt(reader["ResultPoints"])
+                                ResultPoints = ToNullableInt(reader["ResultPoints"]),
+                                Mmr = ToNullableInt(reader["PlayerMmr"])
                             });
                         }
                     }
@@ -348,8 +373,16 @@ ORDER BY S.Id;";
                 {
                     try
                     {
+                        // Re-saving a match must never award MMR twice. Undo any previous
+                        // MMR change for this match before applying the new result.
+                        UndoMmrForMatch(conn, transaction, matchId);
                         SaveMatchResults(conn, transaction, matchId, results);
+                        string mmrMessage;
+                        List<MmrChangeDetails> mmrChanges = ApplyMmrForMatch(conn, transaction, matchId, out mmrMessage);
+
                         StageAdvanceResult advancement = RecalculateParentStage(conn, transaction, matchId);
+                        advancement.MmrChanges = mmrChanges;
+                        advancement.MmrMessage = mmrMessage;
                         transaction.Commit();
                         return advancement;
                     }
@@ -372,6 +405,7 @@ ORDER BY S.Id;";
                     try
                     {
                         int? stageMatchId = GetParentStageMatchId(conn, transaction, matchId);
+                        UndoMmrForMatch(conn, transaction, matchId);
 
                         using (SqlCommand cmd = new SqlCommand(@"
 UPDATE Seat
@@ -447,6 +481,270 @@ WHERE Id = @SeatId
                         throw new InvalidOperationException("A seat does not belong to the selected match.");
                     }
                 }
+            }
+        }
+
+        private static List<MmrChangeDetails> ApplyMmrForMatch(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int matchId,
+            out string mmrMessage)
+        {
+            const int kFactor = 32;
+            const double ratingScale = 400.0;
+
+            List<(int PlayerId, int? UserId, string PlayerName, int Place, int? Mmr)> players =
+                new List<(int PlayerId, int? UserId, string PlayerName, int Place, int? Mmr)>();
+
+            // Prefer Player.RegisteredUserID, but also fall back to the active
+            // TournamentRegistration. This makes MMR work for older tournaments
+            // where the registration exists but the Player row was not linked correctly.
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT
+    P.Id AS PlayerId,
+    COALESCE(P.RegisteredUserID, REG.RegisteredUserId) AS RegisteredUserID,
+    P.Name AS PlayerName,
+    S.ResultMatchPlace,
+    RU.Mmr
+FROM Seat S
+INNER JOIN Player P ON P.Id = S.PlayerId
+OUTER APPLY
+(
+    SELECT TOP 1 TR.RegisteredUserId
+    FROM TournamentRegistration TR
+    WHERE TR.PlayerId = P.Id
+      AND TR.Status = 'registered'
+    ORDER BY TR.UpdatedAt DESC, TR.RegisteredAt DESC
+) REG
+LEFT JOIN RegisteredUsers RU
+    ON RU.RegisteredUserID = COALESCE(P.RegisteredUserID, REG.RegisteredUserId)
+WHERE S.MatchId = @MatchId
+  AND S.PlayerId IS NOT NULL
+  AND S.ResultMatchPlace IS NOT NULL
+ORDER BY S.Id;", conn, transaction))
+            {
+                cmd.Parameters.Add("@MatchId", SqlDbType.Int).Value = matchId;
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        players.Add((
+                            Convert.ToInt32(reader["PlayerId"]),
+                            reader["RegisteredUserID"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["RegisteredUserID"]),
+                            Convert.ToString(reader["PlayerName"]),
+                            Convert.ToInt32(reader["ResultMatchPlace"]),
+                            reader["Mmr"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["Mmr"])));
+                    }
+                }
+            }
+
+            if (players.Count != 2)
+            {
+                mmrMessage = "MMR was not changed because MMR is only calculated for 1v1 matches.";
+                return new List<MmrChangeDetails>();
+            }
+
+            if (players.Any(x => !x.UserId.HasValue))
+            {
+                mmrMessage = "MMR was not changed because both players must be registered users.";
+                return new List<MmrChangeDetails>();
+            }
+
+            if (players.Select(x => x.UserId.Value).Distinct().Count() != 2)
+            {
+                mmrMessage = "MMR was not changed because a player cannot play an MMR match against the same user account.";
+                return new List<MmrChangeDetails>();
+            }
+
+            if (players.Any(x => !x.Mmr.HasValue))
+            {
+                mmrMessage = "MMR was not changed because one or both registered users do not have an MMR value.";
+                return new List<MmrChangeDetails>();
+            }
+
+            var winner = players.SingleOrDefault(x => x.Place == 1);
+            if (!winner.UserId.HasValue)
+            {
+                mmrMessage = "MMR was not changed because the match does not have exactly one winner.";
+                return new List<MmrChangeDetails>();
+            }
+
+            var loser = players.Single(x => x.UserId.Value != winner.UserId.Value);
+
+            // Elo-style MMR. A win over a stronger opponent is worth more; a win
+            // over a weaker opponent is worth less. K=32 gives:
+            // 1000 vs 1000  -> about +/-16
+            // 1000 beats 1200 -> about +24/-24
+            // 1200 beats 1000 -> about +8/-8
+            double expectedWinner = 1.0 /
+                (1.0 + Math.Pow(10.0, (loser.Mmr.Value - winner.Mmr.Value) / ratingScale));
+
+            int ratingChange = (int)Math.Round(
+                kFactor * (1.0 - expectedWinner),
+                MidpointRounding.AwayFromZero);
+
+            // A completed win/loss should always move the rating at least one point.
+            ratingChange = Math.Max(1, ratingChange);
+
+            List<MmrChangeDetails> changes = new List<MmrChangeDetails>();
+            changes.Add(ApplyMmrDelta(
+                conn, transaction, matchId, winner.PlayerId, winner.UserId.Value,
+                winner.PlayerName, ratingChange));
+            changes.Add(ApplyMmrDelta(
+                conn, transaction, matchId, loser.PlayerId, loser.UserId.Value,
+                loser.PlayerName, -ratingChange));
+
+            mmrMessage = "MMR updated using Elo (K=32). The rating change is based on the two players' MMR before the match.";
+            return changes;
+        }
+
+        private static MmrChangeDetails ApplyMmrDelta(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int matchId,
+            int playerId,
+            int userId,
+            string playerName,
+            int requestedDelta)
+        {
+            int before;
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT Mmr
+FROM RegisteredUsers WITH (UPDLOCK, HOLDLOCK)
+WHERE RegisteredUserID = @UserId;", conn, transaction))
+            {
+                cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                object value = cmd.ExecuteScalar();
+                if (value == null || value == DBNull.Value)
+                {
+                    throw new InvalidOperationException("A registered player could not be found while updating MMR.");
+                }
+                before = Convert.ToInt32(value);
+            }
+
+            int after = before + requestedDelta;
+            int actualDelta = after - before;
+
+            using (SqlCommand cmd = new SqlCommand(@"
+UPDATE RegisteredUsers
+SET Mmr = @After
+WHERE RegisteredUserID = @UserId;
+
+INSERT INTO MatchMmrChange
+(
+    MatchId,
+    RegisteredUserId,
+    PlayerId,
+    Delta,
+    MmrBefore,
+    MmrAfter,
+    CreatedAt
+)
+VALUES
+(
+    @MatchId,
+    @UserId,
+    @PlayerId,
+    @Delta,
+    @Before,
+    @After,
+    SYSDATETIME()
+);", conn, transaction))
+            {
+                cmd.Parameters.Add("@MatchId", SqlDbType.Int).Value = matchId;
+                cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                cmd.Parameters.Add("@PlayerId", SqlDbType.Int).Value = playerId;
+                cmd.Parameters.Add("@Delta", SqlDbType.Int).Value = actualDelta;
+                cmd.Parameters.Add("@Before", SqlDbType.Int).Value = before;
+                cmd.Parameters.Add("@After", SqlDbType.Int).Value = after;
+                cmd.ExecuteNonQuery();
+            }
+
+            return new MmrChangeDetails
+            {
+                RegisteredUserId = userId,
+                PlayerId = playerId,
+                PlayerName = playerName,
+                Before = before,
+                Delta = actualDelta,
+                After = after
+            };
+        }
+
+        private static void UndoMmrForMatch(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int matchId)
+        {
+            List<(int UserId, int Delta)> changes = new List<(int UserId, int Delta)>();
+
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT RegisteredUserId, Delta
+FROM MatchMmrChange WITH (UPDLOCK, HOLDLOCK)
+WHERE MatchId = @MatchId;", conn, transaction))
+            {
+                cmd.Parameters.Add("@MatchId", SqlDbType.Int).Value = matchId;
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        changes.Add((
+                            Convert.ToInt32(reader["RegisteredUserId"]),
+                            Convert.ToInt32(reader["Delta"])));
+                    }
+                }
+            }
+
+            foreach (var change in changes)
+            {
+                using (SqlCommand cmd = new SqlCommand(@"
+UPDATE RegisteredUsers
+SET Mmr = Mmr - @Delta
+WHERE RegisteredUserID = @UserId;", conn, transaction))
+                {
+                    cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = change.UserId;
+                    cmd.Parameters.Add("@Delta", SqlDbType.Int).Value = change.Delta;
+                    cmd.ExecuteNonQuery();
+                }
+            }
+
+            if (changes.Count > 0)
+            {
+                using (SqlCommand cmd = new SqlCommand(@"
+DELETE FROM MatchMmrChange
+WHERE MatchId = @MatchId;", conn, transaction))
+                {
+                    cmd.Parameters.Add("@MatchId", SqlDbType.Int).Value = matchId;
+                    cmd.ExecuteNonQuery();
+                }
+            }
+        }
+
+        private static void UndoMmrForStageChildMatches(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int stageMatchId)
+        {
+            List<int> matchIds = new List<int>();
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT Id
+FROM [Match]
+WHERE ParentMatchId = @StageMatchId
+  AND IndividualMatch = 1;", conn, transaction))
+            {
+                cmd.Parameters.Add("@StageMatchId", SqlDbType.Int).Value = stageMatchId;
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        matchIds.Add(Convert.ToInt32(reader["Id"]));
+                    }
+                }
+            }
+
+            foreach (int childMatchId in matchIds)
+            {
+                UndoMmrForMatch(conn, transaction, childMatchId);
             }
         }
 
@@ -821,6 +1119,8 @@ WHERE MatchId = @StageMatchId;", conn, transaction))
 
             if (clearChildMatchResults)
             {
+                UndoMmrForStageChildMatches(conn, transaction, stageMatchId);
+
                 using (SqlCommand cmd = new SqlCommand(@"
 UPDATE S
 SET S.ResultMatchPlace = NULL,

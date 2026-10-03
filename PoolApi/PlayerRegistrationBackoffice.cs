@@ -14,6 +14,7 @@ namespace DrukDatabaseLayer
         public string Username { get; set; }
         public string Name { get; set; }
         public string Email { get; set; }
+        public int Mmr { get; set; }
     }
 
     public class PlayerTournamentInfo
@@ -122,7 +123,7 @@ SELECT CAST(SCOPE_IDENTITY() AS INT);";
         public PlayerUserProfile GetUserProfile(int userId)
         {
             const string sql = @"
-SELECT RegisteredUserID, UserName, RegisteredName, RegisteredEMail
+SELECT RegisteredUserID, UserName, RegisteredName, RegisteredEMail, ISNULL(Mmr, 1000) AS Mmr
 FROM RegisteredUsers
 WHERE RegisteredUserID = @UserId;";
 
@@ -151,7 +152,8 @@ WHERE RegisteredUserID = @UserId;";
                         Name = displayName,
                         Email = reader["RegisteredEMail"] == DBNull.Value
                             ? null
-                            : Convert.ToString(reader["RegisteredEMail"])
+                            : Convert.ToString(reader["RegisteredEMail"]),
+                        Mmr = Convert.ToInt32(reader["Mmr"])
                     };
                 }
             }
