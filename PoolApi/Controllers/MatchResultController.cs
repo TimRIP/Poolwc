@@ -67,9 +67,9 @@ namespace TournamentBackend.Controllers
             }
 
             MatchResultBackoffice backoffice = new MatchResultBackoffice();
-            if (!backoffice.IsTournamentAdminForMatch(model.MatchId, userId))
+            if (!backoffice.CanEditMatchResults(model.MatchId, userId))
             {
-                return StatusCode(403, new { message = "Only the tournament administrator can save match results." });
+                return StatusCode(403, new { message = "You do not have permission to edit match results for this tournament." });
             }
 
             MatchDetails details = backoffice.GetMatchDetails(model.MatchId);
@@ -137,9 +137,9 @@ namespace TournamentBackend.Controllers
             }
 
             MatchResultBackoffice backoffice = new MatchResultBackoffice();
-            if (!backoffice.IsTournamentAdminForMatch(matchId, userId))
+            if (!backoffice.CanEditMatchResults(matchId, userId))
             {
-                return StatusCode(403, new { message = "Only the tournament administrator can clear match results." });
+                return StatusCode(403, new { message = "You do not have permission to edit match results for this tournament." });
             }
 
             MatchDetails details = backoffice.GetMatchDetails(matchId);

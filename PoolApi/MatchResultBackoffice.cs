@@ -168,6 +168,52 @@ OPTION (MAXRECURSION 1000);";
             }
         }
 
+        public bool CanEditMatchResults(int matchId, int userId)
+        {
+            const string sql = @"
+;WITH TournamentTree AS
+(
+    SELECT
+        T.Id AS TournamentId,
+        T.MatchId AS RootMatchId,
+        M.Id AS MatchId,
+        CAST('|'+ CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX)) AS [Path]
+    FROM Tournament T
+    INNER JOIN [Match] M ON M.Id = T.MatchId
+
+    UNION ALL
+
+    SELECT
+        TT.TournamentId,
+        TT.RootMatchId,
+        M.Id,
+        CAST(TT.[Path] + CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX))
+    FROM TournamentTree TT
+    INNER JOIN [Match] M ON M.ParentMatchId = TT.MatchId
+    WHERE M.Id <> TT.RootMatchId
+      AND CHARINDEX('|' + CAST(M.Id AS VARCHAR(20)) + '|', TT.[Path]) = 0
+)
+SELECT COUNT(1)
+FROM TournamentTree TT
+INNER JOIN Tournament T ON T.Id = TT.TournamentId
+LEFT JOIN TournamentMatchEditor E
+    ON E.TournamentId = T.Id
+   AND E.RegisteredUserId = @UserId
+WHERE TT.MatchId = @MatchId
+  AND (T.Admin = @UserId OR E.RegisteredUserId IS NOT NULL)
+OPTION (MAXRECURSION 1000);";
+
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.Add("@MatchId", SqlDbType.Int).Value = matchId;
+                cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                conn.Open();
+                return Convert.ToInt32(cmd.ExecuteScalar()) > 0;
+            }
+        }
+
+
         public MatchDetails GetMatchDetails(int matchId)
         {
             const string sql = @"

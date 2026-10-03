@@ -556,3 +556,30 @@
     grid-column: auto;
   }
 }
+
+/* Match editor permissions */
+.editorManager .editorCreateForm {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.editorManager .editorCreateForm label {
+  min-width: 0;
+}
+
+.editorPermissionNote {
+  margin-top: 10px;
+}
+
+.resultChoice:disabled,
+.playerResultControls input:disabled,
+.playerResultControls select:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 720px) {
+  .editorManager .editorCreateForm {
+    grid-template-columns: 1fr;
+  }
+}

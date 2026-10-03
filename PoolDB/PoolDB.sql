@@ -787,3 +787,44 @@ BEGIN
         WHERE JoinCode IS NOT NULL;
 END
 GO
+
+
+IF OBJECT_ID('dbo.TournamentMatchEditor', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.TournamentMatchEditor
+    (
+        TournamentId INT NOT NULL,
+        RegisteredUserId INT NOT NULL,
+        AddedByUserId INT NOT NULL,
+        CreatedAt DATETIME NOT NULL
+            CONSTRAINT DF_TournamentMatchEditor_CreatedAt DEFAULT (GETUTCDATE()),
+
+        CONSTRAINT PK_TournamentMatchEditor
+            PRIMARY KEY (TournamentId, RegisteredUserId),
+
+        CONSTRAINT FK_TournamentMatchEditor_Tournament
+            FOREIGN KEY (TournamentId)
+            REFERENCES dbo.Tournament(Id)
+            ON DELETE CASCADE,
+
+        CONSTRAINT FK_TournamentMatchEditor_User
+            FOREIGN KEY (RegisteredUserId)
+            REFERENCES dbo.RegisteredUsers(RegisteredUserID),
+
+        CONSTRAINT FK_TournamentMatchEditor_AddedBy
+            FOREIGN KEY (AddedByUserId)
+            REFERENCES dbo.RegisteredUsers(RegisteredUserID)
+    );
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = 'IX_TournamentMatchEditor_RegisteredUserId'
+      AND object_id = OBJECT_ID('dbo.TournamentMatchEditor')
+)
+BEGIN
+    CREATE INDEX IX_TournamentMatchEditor_RegisteredUserId
+        ON dbo.TournamentMatchEditor(RegisteredUserId, TournamentId);
+END
+GO

@@ -87,6 +87,55 @@
         </div>
       </details>
 
+      <details class="venueManager editorManager" v-if="currentTournamentId">
+        <summary>
+          <span><i class="fa fa-pencil-square-o"></i> Match editors</span>
+          <span class="venueCount">{{ editors.length }}</span>
+        </summary>
+
+        <div class="venueManagerBody">
+          <div v-if="editAccessLoading || editorsLoading" class="resultNote">Loading match-editor access…</div>
+
+          <template v-else-if="isTournamentAdmin">
+            <form class="venueCreateForm editorCreateForm" @submit.prevent="addMatchEditor">
+              <label>
+                <span>Registered username</span>
+                <input type="text" maxlength="30" v-model.trim="newEditorUsername" placeholder="e.g. peter" required>
+              </label>
+              <button type="submit" class="saveResultBtn" :disabled="savingEditor || !newEditorUsername.trim()">
+                <i class="fa fa-user-plus"></i> {{ savingEditor ? 'Adding…' : 'Add match editor' }}
+              </button>
+            </form>
+
+            <div class="resultNote editorPermissionNote">
+              Match editors can enter, change and clear match results. Only you, the tournament administrator, can manage editors, venues and schedules.
+            </div>
+
+            <div class="venueList" v-if="editors.length">
+              <div class="venueListItem" v-for="editor in editors" :key="editor.userId">
+                <div>
+                  <strong>{{ editor.userName }}</strong>
+                  <span v-if="editor.registeredName">{{ editor.registeredName }}</span>
+                  <span v-if="editor.registeredEmail">{{ editor.registeredEmail }}</span>
+                </div>
+                <button type="button" class="venueDeleteBtn" @click="removeMatchEditor(editor)" :disabled="savingEditor" title="Remove match editor">
+                  <i class="fa fa-trash"></i>
+                </button>
+              </div>
+            </div>
+            <div v-else class="resultNote">No additional match editors yet.</div>
+          </template>
+
+          <div v-else-if="matchEditAllowed" class="resultMessage success">
+            <i class="fa fa-check-circle"></i> You have permission to edit match results for this tournament.
+          </div>
+          <div v-else class="resultNote">You have view-only access to match results.</div>
+
+          <div v-if="editorMessage" class="resultMessage success">{{ editorMessage }}</div>
+          <div v-if="editorError" class="resultMessage error">{{ editorError }}</div>
+        </div>
+      </details>
+
       <div class="matchWorkspace" v-if="roots.length">
         <div class="matchTreeColumn">
           <div class="treeWrap">
@@ -212,6 +261,13 @@
                 This match has no seats yet.
               </div>
 
+              <div v-if="!editAccessLoading && !matchEditAllowed" class="resultNote">
+                You can view this result, but only the tournament administrator or an assigned match editor can change it.
+              </div>
+              <div v-else-if="!isTournamentAdmin && matchEditAllowed" class="resultNote editorPermissionNote">
+                You are an assigned match editor for this tournament.
+              </div>
+
               <div v-for="seat in matchDetails.seats"
                    :key="seat.seatId"
                    class="playerResultRow"
@@ -226,7 +282,7 @@
                     <span>Final score</span>
                     <input type="number"
                            v-model.number="seat.resultPoints"
-                           :disabled="activeSeats.length === 2 && seat.resultMatchPlace === 1 && hasPlayTo"
+                           :disabled="!matchEditAllowed || (activeSeats.length === 2 && seat.resultMatchPlace === 1 && hasPlayTo)"
                            placeholder="-">
                   </label>
 
@@ -234,12 +290,14 @@
                     <button type="button"
                             class="resultChoice winnerChoice"
                             :class="{ active: seat.resultMatchPlace === 1 }"
+                            :disabled="!matchEditAllowed"
                             @click="setWinner(seat)">
                       <i class="fa fa-trophy"></i> Winner
                     </button>
                     <button type="button"
                             class="resultChoice loserChoice"
                             :class="{ active: seat.resultMatchPlace === 2 }"
+                            :disabled="!matchEditAllowed"
                             @click="setLoser(seat)">
                       Loser
                     </button>
@@ -247,7 +305,7 @@
 
                   <label class="placeField" v-else>
                     <span>Place</span>
-                    <select v-model.number="seat.resultMatchPlace">
+                    <select v-model.number="seat.resultMatchPlace" :disabled="!matchEditAllowed">
                       <option :value="null">Choose</option>
                       <option v-for="place in activeSeats.length" :key="place" :value="place">
                         {{ place }}
@@ -283,10 +341,10 @@
               </div>
 
               <div class="resultActions">
-                <button type="button" class="miniBtn" @click="clearResult" :disabled="savingResult || activeSeats.length === 0">
+                <button type="button" class="miniBtn" @click="clearResult" :disabled="!matchEditAllowed || savingResult || activeSeats.length === 0">
                   Clear result
                 </button>
-                <button type="button" class="saveResultBtn" @click="saveResult" :disabled="savingResult || activeSeats.length < 2">
+                <button type="button" class="saveResultBtn" @click="saveResult" :disabled="!matchEditAllowed || savingResult || activeSeats.length < 2">
                   <i class="fa" :class="savingResult ? 'fa-circle-o-notch fa-spin' : 'fa-save'"></i>
                   {{ savingResult ? 'Saving…' : 'Save result' }}
                 </button>

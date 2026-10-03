@@ -167,6 +167,16 @@ const matchesApp = new Vue({
     venueLoading: false,
     venueError: '',
     venueMessage: '',
+    editAccessLoading: false,
+    matchEditAllowed: false,
+    isTournamentAdmin: false,
+    isTournamentMatchEditor: false,
+    editors: [],
+    editorsLoading: false,
+    editorError: '',
+    editorMessage: '',
+    newEditorUsername: '',
+    savingEditor: false,
     newVenueName: '',
     newVenueDescription: '',
     selectedVenueId: null,
@@ -449,6 +459,124 @@ const matchesApp = new Vue({
       return Number(match[1]) * 60 + Number(match[2]);
     },
 
+    async loadMatchEditAccess(tournamentId) {
+      const tid = Number(tournamentId);
+      if (!Number.isFinite(tid) || tid <= 0) return;
+
+      this.editAccessLoading = true;
+      this.matchEditAllowed = false;
+      this.isTournamentAdmin = false;
+      this.isTournamentMatchEditor = false;
+      this.editorError = '';
+      this.editorMessage = '';
+
+      try {
+        const res = await axios.get(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(tid) + '/match-editors/access',
+          { headers: this.authHeaders() }
+        );
+        const access = res.data && res.data.access ? res.data.access : {};
+        this.isTournamentAdmin = !!access.isAdmin;
+        this.isTournamentMatchEditor = !!access.isMatchEditor;
+        this.matchEditAllowed = !!access.canEditMatches;
+
+        if (this.isTournamentAdmin) {
+          await this.loadMatchEditors(tid);
+        } else {
+          this.editors = [];
+        }
+      } catch (e) {
+        console.error(e);
+        this.matchEditAllowed = false;
+        this.isTournamentAdmin = false;
+        this.isTournamentMatchEditor = false;
+        this.editors = [];
+        this.editorError = (e.response && e.response.data && e.response.data.message)
+          ? e.response.data.message
+          : 'Could not load match-editor permissions.';
+      } finally {
+        this.editAccessLoading = false;
+      }
+    },
+
+    async loadMatchEditors(tournamentId) {
+      const tid = Number(tournamentId);
+      if (!Number.isFinite(tid) || tid <= 0 || !this.isTournamentAdmin) return;
+
+      this.editorsLoading = true;
+      this.editorError = '';
+      try {
+        const res = await axios.get(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(tid) + '/match-editors',
+          { headers: this.authHeaders() }
+        );
+        this.editors = res.data && Array.isArray(res.data.editors) ? res.data.editors : [];
+      } catch (e) {
+        console.error(e);
+        this.editors = [];
+        this.editorError = (e.response && e.response.data && e.response.data.message)
+          ? e.response.data.message
+          : 'Could not load match editors.';
+      } finally {
+        this.editorsLoading = false;
+      }
+    },
+
+    async addMatchEditor() {
+      const username = (this.newEditorUsername || '').trim();
+      if (!username || !this.currentTournamentId || !this.isTournamentAdmin) return;
+
+      this.savingEditor = true;
+      this.editorError = '';
+      this.editorMessage = '';
+      try {
+        const res = await axios.post(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(this.currentTournamentId) + '/match-editors',
+          { userName: username },
+          {
+            headers: Object.assign(
+              { 'Content-Type': 'application/json; charset=utf-8' },
+              this.authHeaders()
+            )
+          }
+        );
+        this.newEditorUsername = '';
+        await this.loadMatchEditors(this.currentTournamentId);
+        this.editorMessage = (res.data && res.data.message) ? res.data.message : 'Match editor added.';
+      } catch (e) {
+        console.error(e);
+        this.editorError = (e.response && e.response.data && e.response.data.message)
+          ? e.response.data.message
+          : 'Could not add the match editor.';
+      } finally {
+        this.savingEditor = false;
+      }
+    },
+
+    async removeMatchEditor(editor) {
+      if (!editor || !editor.userId || !this.currentTournamentId || !this.isTournamentAdmin) return;
+      if (!confirm('Remove match-edit access for "' + (editor.userName || editor.userId) + '"?')) return;
+
+      this.savingEditor = true;
+      this.editorError = '';
+      this.editorMessage = '';
+      try {
+        await axios.delete(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(this.currentTournamentId) + '/match-editors/' + encodeURIComponent(editor.userId),
+          { headers: this.authHeaders() }
+        );
+        await this.loadMatchEditors(this.currentTournamentId);
+        this.editorMessage = 'Match editor removed.';
+      } catch (e) {
+        console.error(e);
+        this.editorError = (e.response && e.response.data && e.response.data.message)
+          ? e.response.data.message
+          : 'Could not remove the match editor.';
+      } finally {
+        this.savingEditor = false;
+      }
+    },
+
     async loadPoolSchedules(tournamentId) {
       const tid = Number(tournamentId);
       if (!Number.isFinite(tid) || tid <= 0) return;
@@ -635,7 +763,7 @@ const matchesApp = new Vue({
     },
 
     setWinner(seat) {
-      if (!seat || this.activeSeats.length !== 2) return;
+      if (!this.matchEditAllowed || !seat || this.activeSeats.length !== 2) return;
       const playTo = this.matchDetails && this.matchDetails.matchRules
         ? Number(this.matchDetails.matchRules.playTo)
         : NaN;
@@ -652,7 +780,7 @@ const matchesApp = new Vue({
     },
 
     setLoser(seat) {
-      if (!seat || this.activeSeats.length !== 2) return;
+      if (!this.matchEditAllowed || !seat || this.activeSeats.length !== 2) return;
       const playTo = this.matchDetails && this.matchDetails.matchRules
         ? Number(this.matchDetails.matchRules.playTo)
         : NaN;
@@ -669,7 +797,7 @@ const matchesApp = new Vue({
     },
 
     async clearResult() {
-      if (!this.matchDetails || !this.matchDetails.matchId) return;
+      if (!this.matchEditAllowed || !this.matchDetails || !this.matchDetails.matchId) return;
 
       this.savingResult = true;
       this.resultError = '';
@@ -777,6 +905,12 @@ const matchesApp = new Vue({
     },
 
     async saveResult() {
+      if (!this.matchEditAllowed) {
+        this.resultError = 'You do not have permission to edit match results for this tournament.';
+        this.resultMessage = '';
+        return;
+      }
+
       const validation = this.validateResult();
       if (validation) {
         this.resultError = validation;
@@ -882,6 +1016,7 @@ const matchesApp = new Vue({
 
         this.rows = matches;
         this.currentTournamentId = tid;
+        await this.loadMatchEditAccess(tid);
         await this.loadPoolSchedules(tid);
         await this.loadVenues(tid);
         if (!preserveSelection) {
