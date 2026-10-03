@@ -828,3 +828,22 @@ BEGIN
         ON dbo.TournamentMatchEditor(RegisteredUserId, TournamentId);
 END
 GO
+
+IF COL_LENGTH('dbo.Tournament', 'CreatedAt') IS NULL
+BEGIN
+    ALTER TABLE dbo.Tournament
+    ADD CreatedAt datetime2(0) NOT NULL
+        CONSTRAINT DF_Tournament_CreatedAt DEFAULT (SYSDATETIME()) WITH VALUES;
+END
+GO
+
+/* Older API versions stored the literal name 'test' in Tournament.name.
+   The root Match already contains the real tournament name, so repair those rows. */
+UPDATE T
+SET T.[name] = M.[Name]
+FROM dbo.Tournament T
+INNER JOIN dbo.[Match] M ON M.Id = T.MatchId
+WHERE T.[name] = 'test'
+  AND M.[Name] IS NOT NULL
+  AND LTRIM(RTRIM(M.[Name])) <> '';
+GO

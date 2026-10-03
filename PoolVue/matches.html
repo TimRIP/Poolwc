@@ -15,21 +15,34 @@
   </head>
 
   <body>
+    <div id="vuematch">
     <div class="topbar">
       <a href="index.htm"><i class="fa fa-arrow-left"></i> Back</a>
 
-      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <label for="tournamentId" style="color:#e7ecff;">TournamentId:</label>
-        <input id="tournamentId" type="number" min="0" style="padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.04); color:#e7ecff; width:140px;">
-        <button class="miniBtn" id="loadBtn">Load matches</button>
+      <div class="matchesTopControls">
+        <label for="tournamentSelect">Tournament:</label>
+        <select id="tournamentSelect"
+                class="tournamentPicker"
+                v-model="selectedTournamentId"
+                @change="loadSelectedTournament"
+                :disabled="tournamentsLoading">
+          <option value="" disabled>{{ tournamentsLoading ? 'Loading tournaments…' : 'Select tournament' }}</option>
+          <option v-for="t in tournaments" :key="t.tournamentId" :value="String(t.tournamentId)">
+            {{ t.name }} — {{ formatTournamentDateTime(t.createdAt) }}
+          </option>
+        </select>
+        <button class="miniBtn" type="button" @click="loadTournamentOptions(true)" :disabled="tournamentsLoading">
+          <i class="fa" :class="tournamentsLoading ? 'fa-circle-o-notch fa-spin' : 'fa-refresh'"></i>
+          Refresh
+        </button>
 
-        <label for="f-search" style="color:#e7ecff;">Search:</label>
-        <input type="text" id="f-search" name="f-search"
-          style="padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.04); color:#e7ecff; width:220px;">
+        <label for="f-search">Search:</label>
+        <input type="text" id="f-search" name="f-search" v-model="searchText" @input="onSearchInput">
+
+        <span class="tournamentPickerError" v-if="tournamentListError">{{ tournamentListError }}</span>
       </div>
     </div>
 
-    <div id="vuematch">
       <div class="matchesHeader">
         <div>
           <div class="matchesTitle">Matches</div>
@@ -367,7 +380,7 @@
       </div>
 
       <div v-else class="emptyState">
-        No matches loaded yet. Enter a TournamentId and click “Load matches”.
+        No matches loaded yet. Select a tournament above.
       </div>
     </div>
 

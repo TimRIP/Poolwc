@@ -97,10 +97,16 @@ namespace TournamentBackend.Controllers
             }
 
             bool isPrivate = false;
+            string tournamentName = "Tournament";
             try
             {
                 JObject tournamentJson = JObject.Parse(model);
                 isPrivate = tournamentJson.Value<bool?>("privateTournament") ?? false;
+                string suppliedName = tournamentJson.Value<string>("tournamentname");
+                if (!string.IsNullOrWhiteSpace(suppliedName))
+                {
+                    tournamentName = suppliedName.Trim();
+                }
             }
             catch
             {
@@ -110,7 +116,7 @@ namespace TournamentBackend.Controllers
             Helper hel = new Helper();
             int tournamentMatchId = hel.CreateTournamentFromString(model);
 
-            int tournamentId = ubo.SP_CreateTournament(tournamentMatchId, UserId, true, "This is my first tournament", "test", model);
+            int tournamentId = ubo.SP_CreateTournament(tournamentMatchId, UserId, true, "This is my first tournament", tournamentName, model);
             if (tournamentId <= 0)
             {
                 return StatusCode(500, new { message = "The tournament could not be created." });
@@ -133,6 +139,31 @@ namespace TournamentBackend.Controllers
     [Route("api/matches")]
     public class MatchesController : ControllerBase
     {
+        [HttpGet("tournaments")]
+        public IActionResult GetTournaments()
+        {
+            UserBackoffice ubo = new UserBackoffice();
+            StringValues values;
+            this.Request.Headers.TryGetValue("Authorization", out values);
+
+            int userId = ubo.SP_GetUserFromToken(values.ToString());
+            if (userId == -1)
+            {
+                return Unauthorized();
+            }
+
+            try
+            {
+                TournamentEditorBackoffice backoffice = new TournamentEditorBackoffice();
+                return Ok(new { tournaments = backoffice.GetTournamentsForMatchPicker(userId) });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                return StatusCode(500, new { message = "The tournament list could not be loaded." });
+            }
+        }
+
         [HttpPost]
         public IActionResult Post([FromBody] int tournamentId)
         {

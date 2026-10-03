@@ -583,3 +583,62 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Tournament picker on the matches page */
+.matchesTopControls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.matchesTopControls label {
+  color: #e7ecff;
+}
+
+.matchesTopControls input,
+.tournamentPicker {
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.04);
+  color: #e7ecff;
+  min-height: 38px;
+}
+
+.matchesTopControls input {
+  width: 220px;
+}
+
+.tournamentPicker {
+  width: min(460px, 52vw);
+  min-width: 260px;
+}
+
+.tournamentPicker option {
+  color: #111;
+  background: #fff;
+}
+
+.tournamentPickerError {
+  color: #ffb4b4;
+  font-size: 13px;
+}
+
+@media (max-width: 720px) {
+  .matchesTopControls {
+    width: 100%;
+  }
+
+  .matchesTopControls label {
+    width: 100%;
+  }
+
+  .tournamentPicker,
+  .matchesTopControls input {
+    width: 100%;
+    min-width: 0;
+  }
+}

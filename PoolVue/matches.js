@@ -161,6 +161,10 @@ const matchesApp = new Vue({
     selectedMatchId: null,
     selectedNode: null,
     currentTournamentId: null,
+    tournaments: [],
+    tournamentsLoading: false,
+    tournamentListError: '',
+    selectedTournamentId: '',
     venues: [],
     poolSchedules: {},
     venueAdminAllowed: false,
@@ -326,13 +330,70 @@ const matchesApp = new Vue({
       return value === null || value === undefined ? 'Not set' : value;
     },
 
-    hookSearchBox() {
-      const el = document.getElementById('f-search');
-      if (!el) return;
-      el.addEventListener('input', (e) => {
-        this.searchText = e.target.value || '';
-        if (this.searchText.trim()) this.expandAll();
-      });
+    onSearchInput() {
+      if ((this.searchText || '').trim()) this.expandAll();
+    },
+
+    formatTournamentDateTime(value) {
+      if (!value) return 'date/time unknown';
+      const raw = String(value);
+      const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+      if (match) {
+        return match[3] + '/' + match[2] + '/' + match[1] + ' ' + match[4] + ':' + match[5];
+      }
+      return raw;
+    },
+
+    async loadTournamentOptions(reloadCurrent) {
+      this.tournamentsLoading = true;
+      this.tournamentListError = '';
+
+      try {
+        const res = await axios.get(
+          'http://localhost:5000/api/matches/tournaments',
+          { headers: this.authHeaders() }
+        );
+
+        this.tournaments = res.data && Array.isArray(res.data.tournaments)
+          ? res.data.tournaments
+          : [];
+
+        const last = localStorage.getItem('lastTournamentId');
+        const current = this.currentTournamentId ? String(this.currentTournamentId) : '';
+        const hasId = (id) => !!id && this.tournaments.some(t => String(t.tournamentId) === String(id));
+
+        if (hasId(current)) {
+          this.selectedTournamentId = current;
+        } else if (hasId(last)) {
+          this.selectedTournamentId = String(last);
+        } else if (this.tournaments.length === 1) {
+          this.selectedTournamentId = String(this.tournaments[0].tournamentId);
+        } else {
+          this.selectedTournamentId = '';
+        }
+
+        if (this.selectedTournamentId && (!this.currentTournamentId || reloadCurrent)) {
+          await this.loadMatches(this.selectedTournamentId, !!this.currentTournamentId);
+        }
+      } catch (e) {
+        console.error(e);
+        this.tournaments = [];
+        this.selectedTournamentId = '';
+        if (e.response && e.response.status === 401) {
+          this.tournamentListError = 'Unauthorized. Please log in again.';
+        } else if (e.response && e.response.data && e.response.data.message) {
+          this.tournamentListError = e.response.data.message;
+        } else {
+          this.tournamentListError = 'Could not load tournaments.';
+        }
+      } finally {
+        this.tournamentsLoading = false;
+      }
+    },
+
+    async loadSelectedTournament() {
+      if (!this.selectedTournamentId) return;
+      await this.loadMatches(this.selectedTournamentId, false);
     },
 
     async selectMatch(node) {
@@ -1016,6 +1077,7 @@ const matchesApp = new Vue({
 
         this.rows = matches;
         this.currentTournamentId = tid;
+        this.selectedTournamentId = String(tid);
         await this.loadMatchEditAccess(tid);
         await this.loadPoolSchedules(tid);
         await this.loadVenues(tid);
@@ -1044,21 +1106,6 @@ const matchesApp = new Vue({
   },
 
   mounted() {
-    this.hookSearchBox();
-
-    const tidEl = document.getElementById('tournamentId');
-    const btn = document.getElementById('loadBtn');
-    const last = localStorage.getItem('lastTournamentId');
-
-    if (tidEl && last) tidEl.value = last;
-
-    const load = () => this.loadMatches(tidEl ? tidEl.value : 0);
-
-    if (btn) btn.addEventListener('click', load);
-    if (tidEl) tidEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') load();
-    });
-
-    if (last) this.loadMatches(last);
+    this.loadTournamentOptions(false);
   }
 });

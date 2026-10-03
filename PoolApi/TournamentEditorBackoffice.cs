@@ -25,6 +25,15 @@ namespace DrukDatabaseLayer
         public DateTime CreatedAt { get; set; }
     }
 
+    public class TournamentMatchPickerItem
+    {
+        public int TournamentId { get; set; }
+        public string Name { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public bool IsAdmin { get; set; }
+        public bool IsMatchEditor { get; set; }
+    }
+
     public class TournamentEditorBackoffice
     {
         private readonly IConfigurationRoot _configuration;
@@ -36,6 +45,51 @@ namespace DrukDatabaseLayer
                 .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
 
             _configuration = builder.Build();
+        }
+
+        public List<TournamentMatchPickerItem> GetTournamentsForMatchPicker(int userId)
+        {
+            const string sql = @"
+SELECT
+    T.Id AS TournamentId,
+    COALESCE(NULLIF(LTRIM(RTRIM(RM.[Name])), ''), NULLIF(LTRIM(RTRIM(T.[name])), ''), 'Tournament #' + CONVERT(varchar(20), T.Id)) AS TournamentName,
+    T.CreatedAt,
+    CASE WHEN T.Admin = @UserId THEN 1 ELSE 0 END AS IsAdmin,
+    CASE WHEN E.RegisteredUserId IS NULL THEN 0 ELSE 1 END AS IsMatchEditor
+FROM Tournament T
+INNER JOIN [Match] RM ON RM.Id = T.MatchId
+LEFT JOIN TournamentMatchEditor E
+    ON E.TournamentId = T.Id
+   AND E.RegisteredUserId = @UserId
+WHERE T.Admin = @UserId
+   OR E.RegisteredUserId IS NOT NULL
+ORDER BY T.CreatedAt DESC, T.Id DESC;";
+
+            List<TournamentMatchPickerItem> tournaments = new List<TournamentMatchPickerItem>();
+
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                conn.Open();
+
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        tournaments.Add(new TournamentMatchPickerItem
+                        {
+                            TournamentId = Convert.ToInt32(reader["TournamentId"]),
+                            Name = Convert.ToString(reader["TournamentName"]),
+                            CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
+                            IsAdmin = Convert.ToBoolean(reader["IsAdmin"]),
+                            IsMatchEditor = Convert.ToBoolean(reader["IsMatchEditor"])
+                        });
+                    }
+                }
+            }
+
+            return tournaments;
         }
 
         public bool IsTournamentAdmin(int tournamentId, int userId)
