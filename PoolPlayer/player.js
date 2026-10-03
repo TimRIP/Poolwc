@@ -34,6 +34,8 @@
   let tournaments = [];
   let foundPrivateTournament = null;
   let foundPrivateCode = '';
+  let poolAssignmentsByTournament = {};
+  let poolAssignmentErrorsByTournament = {};
 
   function normalizedBase() {
     return (els.apiBase.value || 'http://localhost:5000').trim().replace(/\/+$/, '');
@@ -94,6 +96,7 @@
 
       profile = results[0];
       tournaments = (results[1] && results[1].tournaments) || [];
+      await loadPoolAssignments();
       setSignedInUi(true);
       renderProfile();
       renderTournaments();
@@ -111,6 +114,108 @@
   function renderProfile() {
     els.profileName.textContent = profile && profile.name ? profile.name : 'Player';
     els.profileUsername.textContent = profile && profile.username ? '@' + profile.username : '';
+  }
+
+  async function loadPoolAssignments() {
+    poolAssignmentsByTournament = {};
+    poolAssignmentErrorsByTournament = {};
+    const joined = tournaments.filter(function (tournament) { return tournament.isRegistered; });
+
+    await Promise.all(joined.map(async function (tournament) {
+      try {
+        const result = await api('/api/player/tournaments/' + tournament.tournamentId + '/pools');
+        poolAssignmentsByTournament[tournament.tournamentId] = (result && result.pools) || [];
+      } catch (error) {
+        poolAssignmentsByTournament[tournament.tournamentId] = [];
+        poolAssignmentErrorsByTournament[tournament.tournamentId] = error && error.message ? error.message : 'Could not load pool assignments.';
+        console.warn('Could not load pool assignments for tournament ' + tournament.tournamentId, error);
+      }
+    }));
+  }
+
+  function parseScheduleDate(value) {
+    if (!value) return null;
+    const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+    if (!match) return null;
+    return {
+      year: match[1],
+      month: match[2],
+      day: match[3],
+      hour: match[4],
+      minute: match[5]
+    };
+  }
+
+  function formatSchedule(value) {
+    const parts = parseScheduleDate(value);
+    if (!parts) return 'Time not set yet';
+    return parts.day + '/' + parts.month + '/' + parts.year + ' · ' + parts.hour + ':' + parts.minute;
+  }
+
+  function buildPlayerPools(tournamentId) {
+    const wrap = document.createElement('section');
+    wrap.className = 'playerPools';
+
+    const heading = document.createElement('div');
+    heading.className = 'playerPoolsHeading';
+    heading.textContent = 'Your pools';
+    wrap.append(heading);
+
+    const pools = poolAssignmentsByTournament[tournamentId] || [];
+    const loadError = poolAssignmentErrorsByTournament[tournamentId];
+    if (loadError) {
+      const empty = document.createElement('div');
+      empty.className = 'poolScheduleEmpty';
+      empty.textContent = 'Could not load your pool: ' + loadError;
+      wrap.append(empty);
+      return wrap;
+    }
+
+    if (!pools.length) {
+      const empty = document.createElement('div');
+      empty.className = 'poolScheduleEmpty';
+      empty.textContent = 'Your pool has not been assigned yet. Refresh after the tournament administrator updates the draw.';
+      wrap.append(empty);
+      return wrap;
+    }
+
+    const list = document.createElement('div');
+    list.className = 'playerPoolList';
+
+    pools.forEach(function (pool) {
+      const item = document.createElement('div');
+      item.className = 'playerPoolItem';
+
+      const names = document.createElement('div');
+      names.className = 'playerPoolNames';
+
+      const stage = document.createElement('div');
+      stage.className = 'playerPoolStage';
+      stage.textContent = pool.stageName || 'Tournament stage';
+
+      const poolName = document.createElement('div');
+      poolName.className = 'playerPoolName';
+      poolName.textContent = pool.poolName || ('Pool #' + pool.poolMatchId);
+      names.append(stage, poolName);
+
+      const details = document.createElement('div');
+      details.className = 'playerPoolDetails';
+
+      const venue = document.createElement('div');
+      venue.className = 'poolDetailLine';
+      venue.textContent = 'Venue: ' + (pool.venueName || 'Not set yet');
+
+      const schedule = document.createElement('div');
+      schedule.className = 'poolDetailLine';
+      schedule.textContent = 'Starts: ' + formatSchedule(pool.fromTime);
+
+      details.append(venue, schedule);
+      item.append(names, details);
+      list.append(item);
+    });
+
+    wrap.append(list);
+    return wrap;
   }
 
   function buildTournamentCard(tournament, joinCode) {
@@ -174,6 +279,11 @@
 
     bottom.append(info, button);
     card.append(top, bottom);
+
+    if (tournament.isRegistered) {
+      card.append(buildPlayerPools(tournament.tournamentId));
+    }
+
     return card;
   }
 
@@ -258,6 +368,7 @@
     token = '';
     profile = null;
     tournaments = [];
+    poolAssignmentsByTournament = {};
     clearPrivateSearchResult();
     if (els.privateTournamentCode) els.privateTournamentCode.value = '';
     localStorage.removeItem(TOKEN_KEY);

@@ -40,6 +40,19 @@ namespace DrukDatabaseLayer
         public bool AlreadyRegistered { get; set; }
     }
 
+    public class PlayerPoolAssignment
+    {
+        public int PoolMatchId { get; set; }
+        public string PoolName { get; set; }
+        public int? StageMatchId { get; set; }
+        public string StageName { get; set; }
+        public int? ScheduleId { get; set; }
+        public DateTime? FromTime { get; set; }
+        public int? FacilityId { get; set; }
+        public string VenueName { get; set; }
+        public string VenueDescription { get; set; }
+    }
+
     public class PlayerRegistrationBackoffice
     {
         private readonly IConfigurationRoot _configuration;
@@ -487,6 +500,170 @@ END;";
                     }
                 }
             }
+        }
+
+        public List<PlayerPoolAssignment> GetPoolAssignmentsForUser(int tournamentId, int userId)
+        {
+            const string sql = @"
+DECLARE @RootMatchId INT;
+DECLARE @PlayerId INT;
+
+SELECT @RootMatchId = T.MatchId
+FROM Tournament T
+WHERE T.Id = @TournamentId;
+
+SELECT @PlayerId = TR.PlayerId
+FROM TournamentRegistration TR
+WHERE TR.TournamentId = @TournamentId
+  AND TR.RegisteredUserId = @UserId
+  AND TR.Status = 'registered';
+
+IF @RootMatchId IS NULL
+BEGIN
+    THROW 51010, 'Tournament not found.', 1;
+END;
+
+IF @PlayerId IS NULL
+BEGIN
+    THROW 51011, 'You are not registered for this tournament.', 1;
+END;
+
+;WITH TournamentTree AS
+(
+    SELECT
+        M.Id AS MatchId,
+        M.ParentMatchId,
+        M.Name,
+        M.IndividualMatch,
+        M.ScheduleId,
+        CAST('|' + CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX)) AS [Path]
+    FROM [Match] M
+    WHERE M.Id = @RootMatchId
+
+    UNION ALL
+
+    SELECT
+        M.Id,
+        M.ParentMatchId,
+        M.Name,
+        M.IndividualMatch,
+        M.ScheduleId,
+        CAST(TT.[Path] + CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX))
+    FROM TournamentTree TT
+    INNER JOIN [Match] M ON M.ParentMatchId = TT.MatchId
+    WHERE M.Id <> @RootMatchId
+      AND CHARINDEX('|' + CAST(M.Id AS VARCHAR(20)) + '|', TT.[Path]) = 0
+),
+PoolAssignments AS
+(
+    SELECT DISTINCT
+        Pool.MatchId AS PoolMatchId,
+        Pool.Name AS PoolName,
+        Stage.Id AS StageMatchId,
+        Stage.Name AS StageName,
+        SCH.Id AS ScheduleId,
+        SCH.FromTime,
+        F.Id AS FacilityId,
+        F.Name AS VenueName,
+        F.Description AS VenueDescription
+    FROM TournamentTree Pool
+    LEFT JOIN [Match] Stage ON Stage.Id = Pool.ParentMatchId
+    LEFT JOIN Schedule SCH ON SCH.Id = Pool.ScheduleId
+    LEFT JOIN Facility F ON F.Id = SCH.FacilityId
+    WHERE Pool.IndividualMatch = 0
+      AND EXISTS
+      (
+          SELECT 1
+          FROM [Match] ChildMatch
+          WHERE ChildMatch.ParentMatchId = Pool.MatchId
+            AND ChildMatch.IndividualMatch = 1
+      )
+      AND
+      (
+          -- Normal case: the player is assigned directly to a seat on the pool node.
+          EXISTS
+          (
+              SELECT 1
+              FROM Seat PoolSeat
+              WHERE PoolSeat.MatchId = Pool.MatchId
+                AND PoolSeat.PlayerId = @PlayerId
+          )
+          OR
+          -- Older/generated trees can carry the player on the playable child seat.
+          -- Venue/schedule is deliberately not part of membership, so the pool is
+          -- returned even when ScheduleId is NULL.
+          EXISTS
+          (
+              SELECT 1
+              FROM [Match] ChildMatch
+              INNER JOIN Seat ChildSeat ON ChildSeat.MatchId = ChildMatch.Id
+              LEFT JOIN Seat ParentPoolSeat ON ParentPoolSeat.Id = ChildSeat.ParentSeatId
+              WHERE ChildMatch.ParentMatchId = Pool.MatchId
+                AND ChildMatch.IndividualMatch = 1
+                AND
+                (
+                    ChildSeat.PlayerId = @PlayerId
+                    OR ParentPoolSeat.PlayerId = @PlayerId
+                )
+          )
+      )
+)
+SELECT
+    PoolMatchId,
+    PoolName,
+    StageMatchId,
+    StageName,
+    ScheduleId,
+    FromTime,
+    FacilityId,
+    VenueName,
+    VenueDescription
+FROM PoolAssignments
+ORDER BY
+    CASE WHEN FromTime IS NULL THEN 1 ELSE 0 END,
+    FromTime,
+    StageName,
+    PoolName,
+    PoolMatchId
+OPTION (MAXRECURSION 1000);";
+
+            var assignments = new List<PlayerPoolAssignment>();
+
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
+                cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                conn.Open();
+
+                try
+                {
+                    using (SqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            assignments.Add(new PlayerPoolAssignment
+                            {
+                                PoolMatchId = Convert.ToInt32(reader["PoolMatchId"]),
+                                PoolName = reader["PoolName"] == DBNull.Value ? null : Convert.ToString(reader["PoolName"]),
+                                StageMatchId = reader["StageMatchId"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["StageMatchId"]),
+                                StageName = reader["StageName"] == DBNull.Value ? null : Convert.ToString(reader["StageName"]),
+                                ScheduleId = reader["ScheduleId"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["ScheduleId"]),
+                                FromTime = reader["FromTime"] == DBNull.Value ? (DateTime?)null : Convert.ToDateTime(reader["FromTime"]),
+                                FacilityId = reader["FacilityId"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["FacilityId"]),
+                                VenueName = reader["VenueName"] == DBNull.Value ? null : Convert.ToString(reader["VenueName"]),
+                                VenueDescription = reader["VenueDescription"] == DBNull.Value ? null : Convert.ToString(reader["VenueDescription"])
+                            });
+                        }
+                    }
+                }
+                catch (SqlException ex) when (ex.Number == 51010 || ex.Number == 51011)
+                {
+                    throw new InvalidOperationException(ex.Message);
+                }
+            }
+
+            return assignments;
         }
 
         public void CancelTournamentRegistration(int tournamentId, int userId)

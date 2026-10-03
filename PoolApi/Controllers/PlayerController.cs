@@ -116,6 +116,34 @@ namespace TournamentBackend.Controllers
             }
         }
 
+        [HttpGet("tournaments/{tournamentId:int}/pools")]
+        public IActionResult TournamentPools(int tournamentId)
+        {
+            if (!TryGetUserId(out int userId))
+            {
+                return Unauthorized();
+            }
+
+            try
+            {
+                PlayerRegistrationBackoffice backoffice = new PlayerRegistrationBackoffice();
+                return Ok(new
+                {
+                    tournamentId = tournamentId,
+                    pools = backoffice.GetPoolAssignmentsForUser(tournamentId, userId)
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                return StatusCode(500, new { message = "Your pool schedule could not be loaded." });
+            }
+        }
+
         [HttpGet("tournaments/find")]
         public IActionResult FindPrivateTournament([FromQuery] string code)
         {
