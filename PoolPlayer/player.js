@@ -214,6 +214,72 @@
 
       details.append(venue, schedule);
       item.append(names, details);
+
+      const matches = Array.isArray(pool.matches) ? pool.matches : [];
+      const matchSection = document.createElement('div');
+      matchSection.className = 'playerPoolMatches';
+
+      const matchHeading = document.createElement('div');
+      matchHeading.className = 'playerPoolMatchesHeading';
+      const playedCount = matches.filter(function (match) { return match.isPlayed; }).length;
+      const pendingCount = matches.length - playedCount;
+      matchHeading.textContent = 'Your matches' + (matches.length ? ' · ' + playedCount + ' played · ' + pendingCount + ' pending' : '');
+      matchSection.append(matchHeading);
+
+      if (!matches.length) {
+        const noMatches = document.createElement('div');
+        noMatches.className = 'poolMatchesEmpty';
+        noMatches.textContent = 'No matches have been assigned to you in this pool yet.';
+        matchSection.append(noMatches);
+      } else {
+        const matchList = document.createElement('div');
+        matchList.className = 'playerMatchList';
+
+        matches.forEach(function (match) {
+          const row = document.createElement('div');
+          row.className = 'playerMatchRow ' + (match.isPlayed ? 'played' : 'pending');
+
+          const matchText = document.createElement('div');
+          matchText.className = 'playerMatchText';
+
+          const matchName = document.createElement('div');
+          matchName.className = 'playerMatchName';
+          matchName.textContent = match.matchName || ('Match #' + match.matchId);
+
+          const opponent = document.createElement('div');
+          opponent.className = 'playerMatchOpponent';
+          const opponents = Array.isArray(match.opponents) ? match.opponents.filter(Boolean) : [];
+          opponent.textContent = opponents.length ? 'vs ' + opponents.join(', ') : 'Opponent not assigned yet';
+
+          matchText.append(matchName, opponent);
+
+          const statusWrap = document.createElement('div');
+          statusWrap.className = 'playerMatchStatusWrap';
+
+          const badge = document.createElement('span');
+          badge.className = 'playerMatchStatus ' + (match.isPlayed ? 'played' : 'pending');
+          badge.textContent = match.isPlayed ? 'Played' : 'Pending';
+          statusWrap.append(badge);
+
+          if (match.isPlayed && match.result) {
+            const result = document.createElement('span');
+            result.className = 'playerMatchResult ' + (match.result === 'won' ? 'won' : match.result === 'lost' ? 'lost' : 'placed');
+            result.textContent = match.result === 'won'
+              ? 'Won'
+              : match.result === 'lost'
+                ? 'Lost'
+                : match.result;
+            statusWrap.append(result);
+          }
+
+          row.append(matchText, statusWrap);
+          matchList.append(row);
+        });
+
+        matchSection.append(matchList);
+      }
+
+      item.append(matchSection);
       list.append(item);
     });
 

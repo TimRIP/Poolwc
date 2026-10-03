@@ -480,3 +480,73 @@ input:disabled { color: #aeb9ca; background: rgba(255,255,255,.04); }
   letter-spacing: .10em;
   overflow-wrap: anywhere;
 }
+
+/* ===== MMR ruler board ===== */
+.ruler-board-page { max-width: 900px; }
+.ruler-board-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+.ruler-board-header h2 { margin: 2px 0 4px; }
+.ruler-board-header p { margin: 0; color: var(--muted); }
+.ruler-board-header .secondary-btn { flex: 0 0 auto; }
+.leaderboard-table-wrap {
+  margin-top: 18px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255,255,255,.025);
+}
+.leaderboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 420px;
+}
+.leaderboard-table th,
+.leaderboard-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.leaderboard-table th {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  background: rgba(255,255,255,.025);
+}
+.leaderboard-table tbody tr:last-child td { border-bottom: 0; }
+.rank-col, .rank-cell { width: 90px; }
+.mmr-col, .mmr-cell { width: 110px; text-align: right !important; }
+.rank-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  padding: 6px 9px;
+  border: 1px solid rgba(255,255,255,.20);
+  border-radius: 999px;
+  background: rgba(255,255,255,.05);
+  font-weight: 900;
+}
+.rank-badge.rank-first { border-color: rgba(255,209,102,.55); background: rgba(255,209,102,.10); }
+.rank-badge.rank-second { border-color: rgba(194,211,235,.48); background: rgba(194,211,235,.08); }
+.rank-badge.rank-third { border-color: rgba(205,139,89,.55); background: rgba(205,139,89,.09); }
+.leaderboard-player-name { font-weight: 850; color: #f4f8ff; }
+.leaderboard-username { margin-top: 3px; color: var(--muted); font-size: 12px; }
+.mmr-cell { font-size: 18px; font-weight: 900; color: #dce9ff; }
+.leaderboard-empty {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+}
+@media (max-width: 560px) {
+  .ruler-board-header { flex-direction: column; }
+  .ruler-board-header .secondary-btn { width: 100%; }
+}

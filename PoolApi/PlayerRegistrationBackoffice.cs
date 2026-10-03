@@ -17,6 +17,15 @@ namespace DrukDatabaseLayer
         public int Mmr { get; set; }
     }
 
+    public class PlayerMmrRankingEntry
+    {
+        public int Rank { get; set; }
+        public int UserId { get; set; }
+        public string Username { get; set; }
+        public string Name { get; set; }
+        public int Mmr { get; set; }
+    }
+
     public class PlayerTournamentInfo
     {
         public int TournamentId { get; set; }
@@ -41,6 +50,18 @@ namespace DrukDatabaseLayer
         public bool AlreadyRegistered { get; set; }
     }
 
+    public class PlayerPoolMatch
+    {
+        public int MatchId { get; set; }
+        public string MatchName { get; set; }
+        public bool IsPlayed { get; set; }
+        public string Status { get; set; }
+        public int? ResultMatchPlace { get; set; }
+        public int? ResultPoints { get; set; }
+        public string Result { get; set; }
+        public List<string> Opponents { get; set; } = new List<string>();
+    }
+
     public class PlayerPoolAssignment
     {
         public int PoolMatchId { get; set; }
@@ -52,6 +73,7 @@ namespace DrukDatabaseLayer
         public int? FacilityId { get; set; }
         public string VenueName { get; set; }
         public string VenueDescription { get; set; }
+        public List<PlayerPoolMatch> Matches { get; set; } = new List<PlayerPoolMatch>();
     }
 
     public class PlayerRegistrationBackoffice
@@ -157,6 +179,60 @@ WHERE RegisteredUserID = @UserId;";
                     };
                 }
             }
+        }
+
+        public List<PlayerMmrRankingEntry> GetMmrLeaderboard()
+        {
+            const string sql = @"
+;WITH RankedPlayers AS
+(
+    SELECT
+        RU.RegisteredUserID,
+        RU.UserName,
+        COALESCE(NULLIF(LTRIM(RTRIM(RU.RegisteredName)), ''), RU.UserName) AS DisplayName,
+        ISNULL(RU.Mmr, 1000) AS Mmr,
+        DENSE_RANK() OVER (ORDER BY ISNULL(RU.Mmr, 1000) DESC) AS MmrRank
+    FROM RegisteredUsers RU
+    WHERE EXISTS
+    (
+        SELECT 1
+        FROM Player P
+        WHERE P.RegisteredUserID = RU.RegisteredUserID
+    )
+    OR EXISTS
+    (
+        SELECT 1
+        FROM TournamentRegistration TR
+        WHERE TR.RegisteredUserId = RU.RegisteredUserID
+    )
+)
+SELECT RegisteredUserID, UserName, DisplayName, Mmr, MmrRank
+FROM RankedPlayers
+ORDER BY Mmr DESC, DisplayName ASC, UserName ASC;";
+
+            var result = new List<PlayerMmrRankingEntry>();
+
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                conn.Open();
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        result.Add(new PlayerMmrRankingEntry
+                        {
+                            Rank = Convert.ToInt32(reader["MmrRank"]),
+                            UserId = Convert.ToInt32(reader["RegisteredUserID"]),
+                            Username = Convert.ToString(reader["UserName"]),
+                            Name = Convert.ToString(reader["DisplayName"]),
+                            Mmr = Convert.ToInt32(reader["Mmr"])
+                        });
+                    }
+                }
+            }
+
+            return result;
         }
 
         public List<PlayerTournamentInfo> GetTournamentsForUser(int userId)
@@ -555,61 +631,57 @@ END;
     INNER JOIN [Match] M ON M.ParentMatchId = TT.MatchId
     WHERE M.Id <> @RootMatchId
       AND CHARINDEX('|' + CAST(M.Id AS VARCHAR(20)) + '|', TT.[Path]) = 0
-),
-PoolAssignments AS
-(
-    SELECT DISTINCT
-        Pool.MatchId AS PoolMatchId,
-        Pool.Name AS PoolName,
-        Stage.Id AS StageMatchId,
-        Stage.Name AS StageName,
-        SCH.Id AS ScheduleId,
-        SCH.FromTime,
-        F.Id AS FacilityId,
-        F.Name AS VenueName,
-        F.Description AS VenueDescription
-    FROM TournamentTree Pool
-    LEFT JOIN [Match] Stage ON Stage.Id = Pool.ParentMatchId
-    LEFT JOIN Schedule SCH ON SCH.Id = Pool.ScheduleId
-    LEFT JOIN Facility F ON F.Id = SCH.FacilityId
-    WHERE Pool.IndividualMatch = 0
-      AND EXISTS
+)
+SELECT DISTINCT
+    Pool.MatchId AS PoolMatchId,
+    Pool.Name AS PoolName,
+    Stage.Id AS StageMatchId,
+    Stage.Name AS StageName,
+    SCH.Id AS ScheduleId,
+    SCH.FromTime,
+    F.Id AS FacilityId,
+    F.Name AS VenueName,
+    F.Description AS VenueDescription
+INTO #PlayerPools
+FROM TournamentTree Pool
+LEFT JOIN [Match] Stage ON Stage.Id = Pool.ParentMatchId
+LEFT JOIN Schedule SCH ON SCH.Id = Pool.ScheduleId
+LEFT JOIN Facility F ON F.Id = SCH.FacilityId
+WHERE Pool.IndividualMatch = 0
+  AND EXISTS
+  (
+      SELECT 1
+      FROM [Match] ChildMatch
+      WHERE ChildMatch.ParentMatchId = Pool.MatchId
+        AND ChildMatch.IndividualMatch = 1
+  )
+  AND
+  (
+      EXISTS
+      (
+          SELECT 1
+          FROM Seat PoolSeat
+          WHERE PoolSeat.MatchId = Pool.MatchId
+            AND PoolSeat.PlayerId = @PlayerId
+      )
+      OR
+      EXISTS
       (
           SELECT 1
           FROM [Match] ChildMatch
+          INNER JOIN Seat ChildSeat ON ChildSeat.MatchId = ChildMatch.Id
+          LEFT JOIN Seat ParentPoolSeat ON ParentPoolSeat.Id = ChildSeat.ParentSeatId
           WHERE ChildMatch.ParentMatchId = Pool.MatchId
             AND ChildMatch.IndividualMatch = 1
+            AND
+            (
+                ChildSeat.PlayerId = @PlayerId
+                OR ParentPoolSeat.PlayerId = @PlayerId
+            )
       )
-      AND
-      (
-          -- Normal case: the player is assigned directly to a seat on the pool node.
-          EXISTS
-          (
-              SELECT 1
-              FROM Seat PoolSeat
-              WHERE PoolSeat.MatchId = Pool.MatchId
-                AND PoolSeat.PlayerId = @PlayerId
-          )
-          OR
-          -- Older/generated trees can carry the player on the playable child seat.
-          -- Venue/schedule is deliberately not part of membership, so the pool is
-          -- returned even when ScheduleId is NULL.
-          EXISTS
-          (
-              SELECT 1
-              FROM [Match] ChildMatch
-              INNER JOIN Seat ChildSeat ON ChildSeat.MatchId = ChildMatch.Id
-              LEFT JOIN Seat ParentPoolSeat ON ParentPoolSeat.Id = ChildSeat.ParentSeatId
-              WHERE ChildMatch.ParentMatchId = Pool.MatchId
-                AND ChildMatch.IndividualMatch = 1
-                AND
-                (
-                    ChildSeat.PlayerId = @PlayerId
-                    OR ParentPoolSeat.PlayerId = @PlayerId
-                )
-          )
-      )
-)
+  )
+OPTION (MAXRECURSION 1000);
+
 SELECT
     PoolMatchId,
     PoolName,
@@ -620,16 +692,82 @@ SELECT
     FacilityId,
     VenueName,
     VenueDescription
-FROM PoolAssignments
+FROM #PlayerPools
 ORDER BY
     CASE WHEN FromTime IS NULL THEN 1 ELSE 0 END,
     FromTime,
     StageName,
     PoolName,
-    PoolMatchId
-OPTION (MAXRECURSION 1000);";
+    PoolMatchId;
+
+;WITH MatchParticipants AS
+(
+    SELECT
+        PP.PoolMatchId,
+        Child.Id AS MatchId,
+        Child.Name AS MatchName,
+        ChildSeat.Id AS SeatId,
+        COALESCE(ChildSeat.PlayerId, ParentPoolSeat.PlayerId) AS EffectivePlayerId,
+        P.Name AS PlayerName,
+        ChildSeat.ResultMatchPlace,
+        ChildSeat.ResultPoints
+    FROM #PlayerPools PP
+    INNER JOIN [Match] Child
+        ON Child.ParentMatchId = PP.PoolMatchId
+       AND Child.IndividualMatch = 1
+    INNER JOIN Seat ChildSeat ON ChildSeat.MatchId = Child.Id
+    LEFT JOIN Seat ParentPoolSeat ON ParentPoolSeat.Id = ChildSeat.ParentSeatId
+    LEFT JOIN Player P ON P.Id = COALESCE(ChildSeat.PlayerId, ParentPoolSeat.PlayerId)
+    WHERE COALESCE(ChildSeat.PlayerId, ParentPoolSeat.PlayerId) IS NOT NULL
+),
+PlayerMatches AS
+(
+    SELECT DISTINCT MP.PoolMatchId, MP.MatchId
+    FROM MatchParticipants MP
+    WHERE MP.EffectivePlayerId = @PlayerId
+),
+ParticipantCounts AS
+(
+    SELECT
+        MP.PoolMatchId,
+        MP.MatchId,
+        COUNT(*) AS ParticipantCount,
+        SUM(CASE WHEN MP.ResultMatchPlace IS NOT NULL THEN 1 ELSE 0 END) AS ResultCount
+    FROM MatchParticipants MP
+    INNER JOIN PlayerMatches PM
+        ON PM.PoolMatchId = MP.PoolMatchId
+       AND PM.MatchId = MP.MatchId
+    GROUP BY MP.PoolMatchId, MP.MatchId
+)
+SELECT
+    MP.PoolMatchId,
+    MP.MatchId,
+    MP.MatchName,
+    MP.SeatId,
+    MP.EffectivePlayerId AS PlayerId,
+    MP.PlayerName,
+    MP.ResultMatchPlace,
+    MP.ResultPoints,
+    CASE WHEN MP.EffectivePlayerId = @PlayerId THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS IsCurrentPlayer,
+    PC.ParticipantCount,
+    PC.ResultCount,
+    CASE
+        WHEN PC.ParticipantCount >= 2 AND PC.ResultCount = PC.ParticipantCount
+            THEN CAST(1 AS BIT)
+        ELSE CAST(0 AS BIT)
+    END AS IsPlayed
+FROM MatchParticipants MP
+INNER JOIN PlayerMatches PM
+    ON PM.PoolMatchId = MP.PoolMatchId
+   AND PM.MatchId = MP.MatchId
+INNER JOIN ParticipantCounts PC
+    ON PC.PoolMatchId = MP.PoolMatchId
+   AND PC.MatchId = MP.MatchId
+ORDER BY MP.PoolMatchId, MP.MatchId, MP.SeatId;";
 
             var assignments = new List<PlayerPoolAssignment>();
+            var poolsById = new Dictionary<int, PlayerPoolAssignment>();
+            var matchesByKey = new Dictionary<string, PlayerPoolMatch>();
 
             using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
             using (SqlCommand cmd = new SqlCommand(sql, conn))
@@ -644,7 +782,7 @@ OPTION (MAXRECURSION 1000);";
                     {
                         while (reader.Read())
                         {
-                            assignments.Add(new PlayerPoolAssignment
+                            var assignment = new PlayerPoolAssignment
                             {
                                 PoolMatchId = Convert.ToInt32(reader["PoolMatchId"]),
                                 PoolName = reader["PoolName"] == DBNull.Value ? null : Convert.ToString(reader["PoolName"]),
@@ -655,7 +793,82 @@ OPTION (MAXRECURSION 1000);";
                                 FacilityId = reader["FacilityId"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["FacilityId"]),
                                 VenueName = reader["VenueName"] == DBNull.Value ? null : Convert.ToString(reader["VenueName"]),
                                 VenueDescription = reader["VenueDescription"] == DBNull.Value ? null : Convert.ToString(reader["VenueDescription"])
-                            });
+                            };
+
+                            assignments.Add(assignment);
+                            poolsById[assignment.PoolMatchId] = assignment;
+                        }
+
+                        if (reader.NextResult())
+                        {
+                            while (reader.Read())
+                            {
+                                int poolMatchId = Convert.ToInt32(reader["PoolMatchId"]);
+                                if (!poolsById.TryGetValue(poolMatchId, out PlayerPoolAssignment pool))
+                                {
+                                    continue;
+                                }
+
+                                int matchId = Convert.ToInt32(reader["MatchId"]);
+                                string matchKey = poolMatchId + ":" + matchId;
+
+                                if (!matchesByKey.TryGetValue(matchKey, out PlayerPoolMatch match))
+                                {
+                                    bool isPlayed = Convert.ToBoolean(reader["IsPlayed"]);
+                                    match = new PlayerPoolMatch
+                                    {
+                                        MatchId = matchId,
+                                        MatchName = reader["MatchName"] == DBNull.Value
+                                            ? "Match #" + matchId
+                                            : Convert.ToString(reader["MatchName"]),
+                                        IsPlayed = isPlayed,
+                                        Status = isPlayed ? "played" : "pending"
+                                    };
+
+                                    matchesByKey[matchKey] = match;
+                                    pool.Matches.Add(match);
+                                }
+
+                                bool isCurrentPlayer = Convert.ToBoolean(reader["IsCurrentPlayer"]);
+                                if (isCurrentPlayer)
+                                {
+                                    match.ResultMatchPlace = reader["ResultMatchPlace"] == DBNull.Value
+                                        ? (int?)null
+                                        : Convert.ToInt32(reader["ResultMatchPlace"]);
+                                    match.ResultPoints = reader["ResultPoints"] == DBNull.Value
+                                        ? (int?)null
+                                        : Convert.ToInt32(reader["ResultPoints"]);
+
+                                    if (match.IsPlayed && match.ResultMatchPlace.HasValue)
+                                    {
+                                        int participantCount = Convert.ToInt32(reader["ParticipantCount"]);
+                                        if (match.ResultMatchPlace.Value == 1)
+                                        {
+                                            match.Result = "won";
+                                        }
+                                        else if (participantCount == 2)
+                                        {
+                                            match.Result = "lost";
+                                        }
+                                        else
+                                        {
+                                            match.Result = "place " + match.ResultMatchPlace.Value;
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    string opponentName = reader["PlayerName"] == DBNull.Value
+                                        ? null
+                                        : Convert.ToString(reader["PlayerName"]);
+
+                                    if (!string.IsNullOrWhiteSpace(opponentName)
+                                        && !match.Opponents.Contains(opponentName))
+                                    {
+                                        match.Opponents.Add(opponentName);
+                                    }
+                                }
+                            }
                         }
                     }
                 }

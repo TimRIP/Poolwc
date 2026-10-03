@@ -1,24 +1,48 @@
 /* =========================
-   Small API test panel
+   MMR ruler board
    ========================= */
 new Vue({
   el: '#app',
   data: function () {
-    return { info: [] };
+    return {
+      players: [],
+      loading: false,
+      error: ''
+    };
   },
   methods: {
-    testpost: function () {
-      var token = localStorage.getItem('token');
-      if (token) axios.defaults.headers.common['Authorization'] = token;
+    loadLeaderboard: function () {
+      this.loading = true;
+      this.error = '';
 
-      axios.get('http://localhost:5000/api/test', {
+      axios.get('http://localhost:5000/api/player/leaderboard', {
         headers: { 'Content-type': 'application/json; charset=utf-8' }
       })
-      .then(response => { this.info = response.data; })
-      .catch(error => {
-        this.info = error.response ? error.response.data : error.message;
-      });
+      .then(function (response) {
+        this.players = response.data && Array.isArray(response.data.players)
+          ? response.data.players
+          : [];
+      }.bind(this))
+      .catch(function (error) {
+        this.players = [];
+        this.error = error.response && error.response.data && error.response.data.message
+          ? error.response.data.message
+          : 'Could not load the MMR ruler board.';
+      }.bind(this))
+      .then(function () {
+        this.loading = false;
+      }.bind(this));
+    },
+
+    rankClass: function (rank) {
+      if (rank === 1) return 'rank-first';
+      if (rank === 2) return 'rank-second';
+      if (rank === 3) return 'rank-third';
+      return '';
     }
+  },
+  mounted: function () {
+    this.loadLeaderboard();
   }
 });
 

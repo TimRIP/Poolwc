@@ -96,6 +96,27 @@ namespace TournamentBackend.Controllers
             }
         }
 
+        [AllowAnonymous]
+        [HttpGet("leaderboard")]
+        public IActionResult Leaderboard()
+        {
+            try
+            {
+                PlayerRegistrationBackoffice backoffice = new PlayerRegistrationBackoffice();
+                var players = backoffice.GetMmrLeaderboard();
+                return Ok(new
+                {
+                    players = players,
+                    count = players.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                return StatusCode(500, new { message = "The MMR ruler board could not be loaded." });
+            }
+        }
+
         [HttpGet("tournaments")]
         public IActionResult Tournaments()
         {

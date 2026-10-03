@@ -16,7 +16,7 @@
         <ul>
           <li><a id="dashboardItem" class="dashboard" href="#">Tournament builder<i class="sideicon fa fa-sitemap"></i></a></li>
           <li><a id="vuematchItem" class="vuematch" href="matches.html">Matches<i class="sideicon fa fa-area-chart"></i></a></li>
-          <li><a id="appItem" class="app" href="#">Test API<i class="sideicon fa fa-cube"></i></a></li>
+          <li><a id="appItem" class="app" href="#">Ruler board<i class="sideicon fa fa-trophy"></i></a></li>
           <li><a id="vueformappItem" class="vueformapp" href="#">Login &amp; token<i class="sideicon fa fa-file-text-o"></i></a></li>
         </ul>
       </div>
@@ -304,10 +304,47 @@
         <p><a href="matches.html">Open match tree</a></p>
       </div>
 
-      <div id="app" class="simple-page">
-        <h2>API test</h2>
-        <pre>{{ info }}</pre>
-        <button class="secondary-btn" @click="testpost">Test API</button>
+      <div id="app" class="simple-page ruler-board-page">
+        <div class="ruler-board-header">
+          <div>
+            <div class="eyebrow">MMR</div>
+            <h2>Ruler board</h2>
+            <p>All tournament players ranked by MMR.</p>
+          </div>
+          <button type="button" class="secondary-btn" @click="loadLeaderboard" :disabled="loading">
+            <i class="fa fa-refresh" :class="{ 'fa-spin': loading }"></i> Refresh
+          </button>
+        </div>
+
+        <p class="api-message error" v-if="error">{{ error }}</p>
+
+        <div class="leaderboard-empty" v-if="!loading && !error && players.length === 0">
+          No ranked players yet. Players appear here after joining a tournament.
+        </div>
+
+        <div class="leaderboard-table-wrap" v-if="players.length">
+          <table class="leaderboard-table">
+            <thead>
+              <tr>
+                <th class="rank-col">Rank</th>
+                <th>Player</th>
+                <th class="mmr-col">MMR</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="player in players" :key="player.userId">
+                <td class="rank-cell">
+                  <span class="rank-badge" :class="rankClass(player.rank)">#{{ player.rank }}</span>
+                </td>
+                <td>
+                  <div class="leaderboard-player-name">{{ player.name }}</div>
+                  <div class="leaderboard-username">@{{ player.username }}</div>
+                </td>
+                <td class="mmr-cell">{{ player.mmr }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div id="vueformapp" class="simple-page login-panel">
