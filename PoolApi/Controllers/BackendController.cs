@@ -122,7 +122,7 @@ namespace TournamentBackend.Controllers
                 return StatusCode(500, new { message = "The tournament could not be created." });
             }
 
-            string joinCode = ubo.ConfigureTournamentPrivacy(tournamentId, UserId, isPrivate);
+            string? joinCode = ubo.ConfigureTournamentPrivacy(tournamentId, UserId, isPrivate);
 
             return Ok(new
             {

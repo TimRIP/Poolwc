@@ -129,7 +129,8 @@ var dash = new Vue({
           distributeEvenly: true,
           poolSizes: [4, 4],
           valsArray: [-1, -1, -1, -1],
-          playstyle: 'roundrobin'
+          playstyle: 'roundrobin',
+          swissRounds: 2
         }
       ]
     }
@@ -162,6 +163,11 @@ var dash = new Vue({
       if (players === 16) return 'Round of 16';
       if (players === 32) return 'Round of 32';
       return 'Knockout - ' + players + ' players';
+    },
+
+    recommendedSwissRounds: function (players) {
+      players = Math.max(2, Number(players) || 2);
+      return Math.max(1, Math.ceil(Math.log(players) / Math.log(2)));
     },
 
     calculateEvenPoolSizes: function (players, preferredSize) {
@@ -240,7 +246,8 @@ var dash = new Vue({
         distributeEvenly: true,
         poolSizes: this.calculateEvenPoolSizes(players, poolSize),
         valsArray: routes,
-        playstyle: 'roundrobin'
+        playstyle: 'roundrobin',
+        swissRounds: this.recommendedSwissRounds(poolSize)
       };
     },
 
@@ -255,7 +262,8 @@ var dash = new Vue({
         distributeEvenly: false,
         poolSizes: [],
         valsArray: [hasNextStage ? stageIndex + 1 : 0, -1],
-        playstyle: 'roundrobin'
+        playstyle: 'roundrobin',
+        swissRounds: 1
       };
     },
 
@@ -366,7 +374,8 @@ var dash = new Vue({
             distributeEvenly: true,
             poolSizes: [],
             valsArray: [],
-            playstyle: 'roundrobin'
+            playstyle: 'roundrobin',
+            swissRounds: this.recommendedSwissRounds(Math.min(4, players))
           }
         ];
         this.ensureRoutes(0);
@@ -401,7 +410,8 @@ var dash = new Vue({
         distributeEvenly: false,
         poolSizes: [],
         valsArray: [0, -1],
-        playstyle: 'roundrobin'
+        playstyle: 'roundrobin',
+        swissRounds: 1
       };
 
       this.formdata.rundearray.push(stage);
@@ -472,6 +482,9 @@ var dash = new Vue({
         if (round.distributeEvenly === undefined) this.$set(round, 'distributeEvenly', true);
         this.$set(round, 'playstyle', round.playstyle || 'roundrobin');
         this.$set(round, 'BestOf', Number(round.BestOf) >= 1 ? Number(round.BestOf) : 1);
+        if (!Number.isInteger(Number(round.swissRounds)) || Number(round.swissRounds) < 1) {
+          this.$set(round, 'swissRounds', this.recommendedSwissRounds(round.puljesize));
+        }
       } else if (round.selected === 'knockout') {
         this.$set(round, 'puljesize', 2);
         this.$set(round, 'distributeEvenly', false);
@@ -502,6 +515,13 @@ var dash = new Vue({
 
       if (round.playstyle === 'beerpot') {
         this.$delete(round, 'BestOf');
+      } else if (round.playstyle === 'swiss') {
+        // A Swiss round is one pairing per player. The next pairing round is
+        // generated only after every match in the current round is complete.
+        this.$set(round, 'BestOf', 1);
+        if (!Number.isInteger(Number(round.swissRounds)) || Number(round.swissRounds) < 1) {
+          this.$set(round, 'swissRounds', this.recommendedSwissRounds(round.puljesize));
+        }
       } else if (!Number.isInteger(Number(round.BestOf)) || Number(round.BestOf) < 1) {
         this.$set(round, 'BestOf', 1);
       }
@@ -594,7 +614,15 @@ var dash = new Vue({
             errors.push({ type: 'style-' + i, description: label + ': choose how the group is played.' });
           }
 
-          if (round.playstyle !== 'beerpot' && (!Number.isInteger(Number(round.BestOf)) || Number(round.BestOf) < 1)) {
+          if (round.playstyle === 'swiss') {
+            var swissRounds = Number(round.swissRounds);
+            if (!Number.isInteger(swissRounds) || swissRounds < 1 || swissRounds > 20) {
+              errors.push({ type: 'swiss-rounds-' + i, description: label + ': Swiss rounds must be a whole number from 1 to 20.' });
+            }
+            if (Number(round.BestOf) !== 1) {
+              this.$set(round, 'BestOf', 1);
+            }
+          } else if (round.playstyle !== 'beerpot' && (!Number.isInteger(Number(round.BestOf)) || Number(round.BestOf) < 1)) {
             errors.push({ type: 'bestof-' + i, description: label + ': Best of must be at least 1.' });
           }
         }
@@ -689,7 +717,11 @@ var dash = new Vue({
       var players = Number(round.NbPlayers) || 0;
       if (round.selected === 'pool') {
         var styleNames = { roundrobin: 'Round robin', swiss: 'Swiss', beerpot: 'Beer pot' };
-        return players + ' players • ' + this.groupSummary(round) + ' • ' + (styleNames[round.playstyle] || 'Pool');
+        var style = styleNames[round.playstyle] || 'Pool';
+        if (round.playstyle === 'swiss') {
+          style += ' • ' + (Number(round.swissRounds) || this.recommendedSwissRounds(round.puljesize)) + ' rounds';
+        }
+        return players + ' players • ' + this.groupSummary(round) + ' • ' + style;
       }
       if (round.selected === 'knockout') {
         return players + ' players • Knockout • Best of ' + (round.BestOf || 1);
@@ -732,6 +764,12 @@ var dash = new Vue({
         }
         if (this.formdata.rundearray[i].selected === 'pool' && this.formdata.rundearray[i].distributeEvenly === undefined) {
           this.$set(this.formdata.rundearray[i], 'distributeEvenly', true);
+        }
+        if (this.formdata.rundearray[i].playstyle === 'swiss') {
+          this.$set(this.formdata.rundearray[i], 'BestOf', 1);
+          if (!Number.isInteger(Number(this.formdata.rundearray[i].swissRounds)) || Number(this.formdata.rundearray[i].swissRounds) < 1) {
+            this.$set(this.formdata.rundearray[i], 'swissRounds', this.recommendedSwissRounds(this.formdata.rundearray[i].puljesize));
+          }
         }
       }
       this.recalculate();

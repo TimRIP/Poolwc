@@ -147,9 +147,15 @@
                         </select>
                       </label>
 
-                      <label class="field" v-if="runde.playstyle !== 'beerpot'">
+                      <label class="field" v-if="runde.playstyle !== 'beerpot' && runde.playstyle !== 'swiss'">
                         <span>Best of</span>
                         <input type="number" min="1" step="1" v-model.number="runde.BestOf" @change="recalculate">
+                      </label>
+
+                      <label class="field" v-if="runde.playstyle === 'swiss'">
+                        <span>Swiss rounds</span>
+                        <input type="number" min="1" max="20" step="1" v-model.number="runde.swissRounds" @change="recalculate">
+                        <small>New pairings are created after every completed round. Players with similar results are paired and repeat opponents are avoided when possible.</small>
                       </label>
                     </div>
 

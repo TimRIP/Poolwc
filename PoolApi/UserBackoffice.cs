@@ -392,7 +392,7 @@ namespace DrukDatabaseLayer
             return TournamentID;
         }
 
-        public string ConfigureTournamentPrivacy(int tournamentId, int adminId, bool isPrivate)
+        public string? ConfigureTournamentPrivacy(int tournamentId, int adminId, bool isPrivate)
         {
             const string sql = @"
 UPDATE Tournament
@@ -405,7 +405,7 @@ SELECT @@ROWCOUNT;";
 
             for (int attempt = 0; attempt < 10; attempt++)
             {
-                string joinCode = isPrivate
+                string? joinCode = isPrivate
                     ? Guid.NewGuid().ToString("N").Substring(0, 10).ToUpperInvariant()
                     : null;
 
@@ -413,7 +413,8 @@ SELECT @@ROWCOUNT;";
                 using (SqlCommand cmd = new SqlCommand(sql, conn))
                 {
                     cmd.Parameters.Add("@IsPrivate", SqlDbType.Bit).Value = isPrivate;
-                    cmd.Parameters.Add("@JoinCode", SqlDbType.NVarChar, 20).Value = (object)joinCode ?? DBNull.Value;
+                    cmd.Parameters.Add("@JoinCode", SqlDbType.NVarChar, 20).Value =
+                        joinCode is null ? DBNull.Value : joinCode;
                     cmd.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
                     cmd.Parameters.Add("@AdminId", SqlDbType.Int).Value = adminId;
 
@@ -618,6 +619,25 @@ SELECT @@ROWCOUNT;";
                 conn.Close();
             }
             return MatchRulesID;
+        }
+
+        public void SetSeatResult(int seatId, int resultMatchPlace, int? resultPoints)
+        {
+            using (SqlConnection conn = new SqlConnection(Configuration["connectionstring"]))
+            using (SqlCommand cmd = new SqlCommand(@"
+UPDATE Seat
+SET ResultMatchPlace = @ResultMatchPlace,
+    ResultPoints = @ResultPoints
+WHERE Id = @SeatId;", conn))
+            {
+                cmd.Parameters.Add("@SeatId", SqlDbType.Int).Value = seatId;
+                cmd.Parameters.Add("@ResultMatchPlace", SqlDbType.Int).Value = resultMatchPlace;
+                SqlParameter points = cmd.Parameters.Add("@ResultPoints", SqlDbType.Int);
+                points.Value = resultPoints.HasValue ? (object)resultPoints.Value : DBNull.Value;
+
+                conn.Open();
+                cmd.ExecuteNonQuery();
+            }
         }
 
         public string SP_GetMatchesFromTournament(int tournamentId)

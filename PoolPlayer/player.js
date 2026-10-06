@@ -249,7 +249,10 @@
           const opponent = document.createElement('div');
           opponent.className = 'playerMatchOpponent';
           const opponents = Array.isArray(match.opponents) ? match.opponents.filter(Boolean) : [];
-          opponent.textContent = opponents.length ? 'vs ' + opponents.join(', ') : 'Opponent not assigned yet';
+          const isBye = /\bBYE\b/i.test(match.matchName || '');
+          opponent.textContent = isBye
+            ? 'BYE — automatic win'
+            : (opponents.length ? 'vs ' + opponents.join(', ') : 'Opponent not assigned yet');
 
           matchText.append(matchName, opponent);
 

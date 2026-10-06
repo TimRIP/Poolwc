@@ -6,6 +6,7 @@ using System.Data.SqlClient;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 
 namespace DrukDatabaseLayer
 {
@@ -104,6 +105,8 @@ namespace DrukDatabaseLayer
         public int Wins { get; set; }
         public int? ScoreDifference { get; set; }
         public int HeadToHeadWins { get; set; }
+        public int Buchholz { get; set; }
+        public bool HadBye { get; set; }
         public int? DirectPlace { get; set; }
         public int? DirectPoints { get; set; }
     }
@@ -115,6 +118,20 @@ namespace DrukDatabaseLayer
         public int PlayerId { get; set; }
         public int? ResultMatchPlace { get; set; }
         public int? ResultPoints { get; set; }
+    }
+
+    internal class SwissMatchInfo
+    {
+        public int MatchId { get; set; }
+        public int Round { get; set; }
+        public int MatchRulesId { get; set; }
+        public string MatchName { get; set; }
+    }
+
+    internal class SwissPair
+    {
+        public StageSeatScore First { get; set; }
+        public StageSeatScore Second { get; set; }
     }
 
     internal class DestinationSeat
@@ -373,6 +390,11 @@ ORDER BY S.Id;";
                 {
                     try
                     {
+                        // If an earlier Swiss round is edited, every later Swiss pairing
+                        // is no longer trustworthy. Remove later rounds first so they can
+                        // be generated again from the corrected standings.
+                        InvalidateFutureSwissRounds(conn, transaction, matchId);
+
                         // Re-saving a match must never award MMR twice. Undo any previous
                         // MMR change for this match before applying the new result.
                         UndoMmrForMatch(conn, transaction, matchId);
@@ -405,6 +427,7 @@ ORDER BY S.Id;";
                     try
                     {
                         int? stageMatchId = GetParentStageMatchId(conn, transaction, matchId);
+                        InvalidateFutureSwissRounds(conn, transaction, matchId);
                         UndoMmrForMatch(conn, transaction, matchId);
 
                         using (SqlCommand cmd = new SqlCommand(@"
@@ -778,6 +801,11 @@ WHERE ParentMatchId = @StageMatchId
                 PlacementResolved = false
             };
 
+            if (IsSwissStage(conn, transaction, stageId))
+            {
+                return RecalculateSwissStage(conn, transaction, stageId, stageName);
+            }
+
             if (stageSeats.Count < 2 || childMatchIds.Count == 0)
             {
                 ClearStageOutcomeAndDestinations(conn, transaction, stageId, false, new HashSet<int>());
@@ -830,6 +858,1042 @@ WHERE ParentMatchId = @StageMatchId
             }
 
             return response;
+        }
+
+
+        private static bool IsSwissStage(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int stageMatchId)
+        {
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT TOP 1 1
+FROM [Match] M
+INNER JOIN MatchRules MR ON MR.Id = M.MatchRulesId
+WHERE M.ParentMatchId = @StageMatchId
+  AND M.IndividualMatch = 1
+  AND MR.PlayStyleId = 2;", conn, transaction))
+            {
+                cmd.Parameters.Add("@StageMatchId", SqlDbType.Int).Value = stageMatchId;
+                object value = cmd.ExecuteScalar();
+                return value != null && value != DBNull.Value;
+            }
+        }
+
+        private static int GetSwissTotalRounds(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int stageMatchId,
+            int playerCount)
+        {
+            string description = null;
+
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT TOP 1 MR.Description
+FROM [Match] M
+INNER JOIN MatchRules MR ON MR.Id = M.MatchRulesId
+WHERE M.ParentMatchId = @StageMatchId
+  AND M.IndividualMatch = 1
+  AND MR.PlayStyleId = 2
+ORDER BY M.Id;", conn, transaction))
+            {
+                cmd.Parameters.Add("@StageMatchId", SqlDbType.Int).Value = stageMatchId;
+                object value = cmd.ExecuteScalar();
+                if (value != null && value != DBNull.Value)
+                {
+                    description = Convert.ToString(value);
+                }
+            }
+
+            if (!String.IsNullOrWhiteSpace(description))
+            {
+                System.Text.RegularExpressions.Match parsed = Regex.Match(
+                    description,
+                    @"Swiss\s+system:\s*(\d+)\s*rounds?",
+                    RegexOptions.IgnoreCase);
+
+                if (parsed.Success)
+                {
+                    int configured;
+                    if (Int32.TryParse(parsed.Groups[1].Value, out configured) && configured > 0)
+                    {
+                        return configured;
+                    }
+                }
+            }
+
+            return Math.Max(
+                1,
+                (int)Math.Ceiling(Math.Log(Math.Max(2, playerCount), 2)));
+        }
+
+        private static int ParseSwissRound(string matchName)
+        {
+            if (String.IsNullOrWhiteSpace(matchName))
+            {
+                return 0;
+            }
+
+            System.Text.RegularExpressions.Match parsed = Regex.Match(
+                matchName,
+                @"Swiss\s+round\s+(\d+)",
+                RegexOptions.IgnoreCase);
+
+            int round;
+            return parsed.Success && Int32.TryParse(parsed.Groups[1].Value, out round)
+                ? round
+                : 0;
+        }
+
+        private static List<SwissMatchInfo> GetSwissMatches(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int stageMatchId)
+        {
+            List<SwissMatchInfo> result = new List<SwissMatchInfo>();
+
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT M.Id, M.Name, M.MatchRulesId
+FROM [Match] M
+INNER JOIN MatchRules MR ON MR.Id = M.MatchRulesId
+WHERE M.ParentMatchId = @StageMatchId
+  AND M.IndividualMatch = 1
+  AND MR.PlayStyleId = 2
+ORDER BY M.Id;", conn, transaction))
+            {
+                cmd.Parameters.Add("@StageMatchId", SqlDbType.Int).Value = stageMatchId;
+
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        string name = reader["Name"] == DBNull.Value
+                            ? null
+                            : Convert.ToString(reader["Name"]);
+
+                        int round = ParseSwissRound(name);
+                        if (round <= 0)
+                        {
+                            continue;
+                        }
+
+                        result.Add(new SwissMatchInfo
+                        {
+                            MatchId = Convert.ToInt32(reader["Id"]),
+                            MatchRulesId = Convert.ToInt32(reader["MatchRulesId"]),
+                            MatchName = name,
+                            Round = round
+                        });
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private static int GetSwissRoundForMatch(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int matchId)
+        {
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT Name
+FROM [Match]
+WHERE Id = @MatchId;", conn, transaction))
+            {
+                cmd.Parameters.Add("@MatchId", SqlDbType.Int).Value = matchId;
+                object value = cmd.ExecuteScalar();
+                return ParseSwissRound(value == null || value == DBNull.Value
+                    ? null
+                    : Convert.ToString(value));
+            }
+        }
+
+        private static string GetSwissRoundStageName(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int stageMatchId)
+        {
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT COALESCE(P.Name, S.Name)
+FROM [Match] S
+LEFT JOIN [Match] P ON P.Id = S.ParentMatchId
+WHERE S.Id = @StageMatchId;", conn, transaction))
+            {
+                cmd.Parameters.Add("@StageMatchId", SqlDbType.Int).Value = stageMatchId;
+                object value = cmd.ExecuteScalar();
+                return value == null || value == DBNull.Value
+                    ? "Swiss"
+                    : Convert.ToString(value);
+            }
+        }
+
+        private static List<StageSeatScore> BuildSwissStandings(
+            List<StageSeatScore> stageSeats,
+            List<ChildSeatResult> childResults,
+            List<SwissMatchInfo> swissMatches,
+            int? playTo)
+        {
+            Dictionary<int, StageSeatScore> bySeat =
+                stageSeats.ToDictionary(x => x.SeatId, x => x);
+
+            Dictionary<int, List<int>> opponents =
+                stageSeats.ToDictionary(x => x.SeatId, x => new List<int>());
+
+            Dictionary<int, int> scoreDifferences =
+                stageSeats.ToDictionary(x => x.SeatId, x => 0);
+
+            Dictionary<int, bool> scoreAvailable =
+                stageSeats.ToDictionary(x => x.SeatId, x => true);
+
+            foreach (StageSeatScore seat in stageSeats)
+            {
+                seat.Wins = 0;
+                seat.Buchholz = 0;
+                seat.HeadToHeadWins = 0;
+                seat.HadBye = false;
+                seat.ScoreDifference = 0;
+            }
+
+            foreach (SwissMatchInfo match in swissMatches)
+            {
+                List<ChildSeatResult> seats = childResults
+                    .Where(x => x.MatchId == match.MatchId && x.PlayerId > 0)
+                    .ToList();
+
+                if (seats.Count == 1)
+                {
+                    ChildSeatResult bye = seats[0];
+                    StageSeatScore byeStanding;
+                    if (bySeat.TryGetValue(bye.StageSeatId, out byeStanding))
+                    {
+                        if (bye.ResultMatchPlace == 1)
+                        {
+                            byeStanding.Wins++;
+                        }
+                        byeStanding.HadBye = true;
+                    }
+                    continue;
+                }
+
+                foreach (ChildSeatResult own in seats)
+                {
+                    StageSeatScore standing;
+                    if (!bySeat.TryGetValue(own.StageSeatId, out standing))
+                    {
+                        continue;
+                    }
+
+                    if (own.ResultMatchPlace == 1)
+                    {
+                        standing.Wins++;
+                    }
+
+                    List<ChildSeatResult> matchOpponents = seats
+                        .Where(x => x.StageSeatId != own.StageSeatId)
+                        .ToList();
+
+                    foreach (ChildSeatResult opponent in matchOpponents)
+                    {
+                        opponents[own.StageSeatId].Add(opponent.StageSeatId);
+                    }
+
+                    if (playTo.HasValue)
+                    {
+                        if (!own.ResultPoints.HasValue ||
+                            matchOpponents.Any(x => !x.ResultPoints.HasValue))
+                        {
+                            scoreAvailable[own.StageSeatId] = false;
+                        }
+                        else
+                        {
+                            int ownDistance =
+                                Math.Abs(own.ResultPoints.Value - playTo.Value);
+
+                            foreach (ChildSeatResult opponent in matchOpponents)
+                            {
+                                int opponentDistance =
+                                    Math.Abs(opponent.ResultPoints.Value - playTo.Value);
+
+                                scoreDifferences[own.StageSeatId] +=
+                                    opponentDistance - ownDistance;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        scoreAvailable[own.StageSeatId] = false;
+                    }
+                }
+            }
+
+            foreach (StageSeatScore seat in stageSeats)
+            {
+                seat.ScoreDifference = scoreAvailable[seat.SeatId]
+                    ? (int?)scoreDifferences[seat.SeatId]
+                    : null;
+
+                int buchholz = 0;
+                foreach (int opponentSeatId in opponents[seat.SeatId])
+                {
+                    StageSeatScore opponent;
+                    if (bySeat.TryGetValue(opponentSeatId, out opponent))
+                    {
+                        buchholz += opponent.Wins;
+                    }
+                }
+                seat.Buchholz = buchholz;
+            }
+
+            return stageSeats;
+        }
+
+        private static bool TryRankSwissStage(
+            List<StageSeatScore> standings,
+            List<ChildSeatResult> childResults,
+            List<SwissMatchInfo> swissMatches,
+            out List<StageSeatScore> ranked,
+            out string unresolvedReason)
+        {
+            ranked = new List<StageSeatScore>();
+            unresolvedReason = null;
+
+            bool scoreDifferenceAvailable =
+                standings.All(x => x.ScoreDifference.HasValue);
+
+            List<StageSeatScore> initial = scoreDifferenceAvailable
+                ? standings
+                    .OrderByDescending(x => x.Wins)
+                    .ThenByDescending(x => x.Buchholz)
+                    .ThenByDescending(x => x.ScoreDifference.Value)
+                    .ToList()
+                : standings
+                    .OrderByDescending(x => x.Wins)
+                    .ThenByDescending(x => x.Buchholz)
+                    .ToList();
+
+            int index = 0;
+            while (index < initial.Count)
+            {
+                StageSeatScore first = initial[index];
+
+                List<StageSeatScore> tied = initial
+                    .Skip(index)
+                    .TakeWhile(x =>
+                        x.Wins == first.Wins &&
+                        x.Buchholz == first.Buchholz &&
+                        (!scoreDifferenceAvailable ||
+                         x.ScoreDifference == first.ScoreDifference))
+                    .ToList();
+
+                if (tied.Count == 1)
+                {
+                    ranked.Add(tied[0]);
+                    index++;
+                    continue;
+                }
+
+                HashSet<int> tiedSeatIds =
+                    new HashSet<int>(tied.Select(x => x.SeatId));
+
+                foreach (StageSeatScore player in tied)
+                {
+                    player.HeadToHeadWins = 0;
+
+                    foreach (SwissMatchInfo match in swissMatches)
+                    {
+                        List<ChildSeatResult> seats = childResults
+                            .Where(x =>
+                                x.MatchId == match.MatchId &&
+                                x.PlayerId > 0)
+                            .ToList();
+
+                        if (seats.Count != 2)
+                        {
+                            continue;
+                        }
+
+                        bool containsPlayer =
+                            seats.Any(x => x.StageSeatId == player.SeatId);
+
+                        bool containsOtherTied =
+                            seats.Any(x =>
+                                x.StageSeatId != player.SeatId &&
+                                tiedSeatIds.Contains(x.StageSeatId));
+
+                        if (containsPlayer &&
+                            containsOtherTied &&
+                            seats.Any(x =>
+                                x.StageSeatId == player.SeatId &&
+                                x.ResultMatchPlace == 1))
+                        {
+                            player.HeadToHeadWins++;
+                        }
+                    }
+                }
+
+                List<StageSeatScore> tieOrdered = tied
+                    .OrderByDescending(x => x.HeadToHeadWins)
+                    .ToList();
+
+                bool stillTied = tieOrdered
+                    .GroupBy(x => x.HeadToHeadWins)
+                    .Any(g => g.Count() > 1);
+
+                if (stillTied)
+                {
+                    unresolvedReason = scoreDifferenceAvailable
+                        ? "Players are still tied on wins, Buchholz, score difference and head-to-head. Play an extra deciding match before advancing them."
+                        : "Players are still tied on wins, Buchholz and head-to-head. Enter scores for every match or play an extra deciding match.";
+                    return false;
+                }
+
+                ranked.AddRange(tieOrdered);
+                index += tied.Count;
+            }
+
+            return true;
+        }
+
+        private static string SwissPairKey(int seatA, int seatB)
+        {
+            int low = Math.Min(seatA, seatB);
+            int high = Math.Max(seatA, seatB);
+            return low.ToString() + ":" + high.ToString();
+        }
+
+        private static HashSet<string> GetPreviousSwissPairs(
+            List<ChildSeatResult> childResults,
+            List<SwissMatchInfo> swissMatches)
+        {
+            HashSet<string> pairs = new HashSet<string>();
+
+            foreach (SwissMatchInfo match in swissMatches)
+            {
+                List<ChildSeatResult> seats = childResults
+                    .Where(x => x.MatchId == match.MatchId && x.PlayerId > 0)
+                    .ToList();
+
+                if (seats.Count == 2)
+                {
+                    pairs.Add(SwissPairKey(
+                        seats[0].StageSeatId,
+                        seats[1].StageSeatId));
+                }
+            }
+
+            return pairs;
+        }
+
+        private static bool TryPairSwissPlayersRecursive(
+            List<StageSeatScore> remaining,
+            HashSet<string> previousPairs,
+            bool allowRematches,
+            List<SwissPair> result)
+        {
+            if (remaining.Count == 0)
+            {
+                return true;
+            }
+
+            StageSeatScore first = remaining[0];
+
+            List<StageSeatScore> candidates = remaining
+                .Skip(1)
+                .OrderBy(x => Math.Abs(x.Wins - first.Wins))
+                .ThenBy(x => Math.Abs(x.Buchholz - first.Buchholz))
+                .ThenByDescending(x => x.ScoreDifference ?? Int32.MinValue)
+                .ThenBy(x => x.SeatId)
+                .ToList();
+
+            foreach (StageSeatScore candidate in candidates)
+            {
+                bool isRematch = previousPairs.Contains(
+                    SwissPairKey(first.SeatId, candidate.SeatId));
+
+                if (isRematch && !allowRematches)
+                {
+                    continue;
+                }
+
+                List<StageSeatScore> next = remaining
+                    .Where(x =>
+                        x.SeatId != first.SeatId &&
+                        x.SeatId != candidate.SeatId)
+                    .ToList();
+
+                result.Add(new SwissPair
+                {
+                    First = first,
+                    Second = candidate
+                });
+
+                if (TryPairSwissPlayersRecursive(
+                    next,
+                    previousPairs,
+                    allowRematches,
+                    result))
+                {
+                    return true;
+                }
+
+                result.RemoveAt(result.Count - 1);
+            }
+
+            return false;
+        }
+
+        private static List<SwissPair> BuildSwissPairings(
+            List<StageSeatScore> standings,
+            HashSet<string> previousPairs,
+            out StageSeatScore? byePlayer)
+        {
+            List<StageSeatScore> ordered = standings
+                .OrderByDescending(x => x.Wins)
+                .ThenByDescending(x => x.Buchholz)
+                .ThenByDescending(x => x.ScoreDifference ?? Int32.MinValue)
+                .ThenBy(x => x.SeatId)
+                .ToList();
+
+            byePlayer = null;
+
+            if (ordered.Count % 2 != 0)
+            {
+                StageSeatScore? selectedBye = ordered
+                    .AsEnumerable()
+                    .Reverse()
+                    .FirstOrDefault(x => !x.HadBye);
+
+                if (selectedBye == null)
+                {
+                    selectedBye = ordered.Last();
+                }
+
+                byePlayer = selectedBye;
+                int byeSeatId = selectedBye.SeatId;
+                ordered.RemoveAll(x => x.SeatId == byeSeatId);
+            }
+
+            List<SwissPair> pairings = new List<SwissPair>();
+
+            if (!TryPairSwissPlayersRecursive(
+                ordered,
+                previousPairs,
+                false,
+                pairings))
+            {
+                pairings.Clear();
+
+                if (!TryPairSwissPlayersRecursive(
+                    ordered,
+                    previousPairs,
+                    true,
+                    pairings))
+                {
+                    throw new InvalidOperationException(
+                        "Swiss pairings could not be generated.");
+                }
+            }
+
+            return pairings;
+        }
+
+        private static int InsertSwissMatch(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int stageMatchId,
+            int matchRulesId,
+            string matchName)
+        {
+            using (SqlCommand cmd = new SqlCommand(@"
+INSERT INTO [Match]
+(
+    ParentMatchId,
+    MatchRulesId,
+    IndividualMatch,
+    [Name]
+)
+VALUES
+(
+    @ParentMatchId,
+    @MatchRulesId,
+    1,
+    @Name
+);
+
+SELECT CAST(SCOPE_IDENTITY() AS INT);", conn, transaction))
+            {
+                cmd.Parameters.Add("@ParentMatchId", SqlDbType.Int).Value =
+                    stageMatchId;
+                cmd.Parameters.Add("@MatchRulesId", SqlDbType.Int).Value =
+                    matchRulesId;
+                cmd.Parameters.Add("@Name", SqlDbType.NVarChar, 255).Value =
+                    matchName;
+
+                return Convert.ToInt32(cmd.ExecuteScalar());
+            }
+        }
+
+        private static int InsertSwissSeat(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int parentSeatId,
+            int playerId,
+            int matchId,
+            int? resultPlace,
+            int? resultPoints)
+        {
+            using (SqlCommand cmd = new SqlCommand(@"
+INSERT INTO Seat
+(
+    ParentSeatId,
+    PlayerId,
+    MatchId,
+    ResultMatchPlace,
+    ResultPoints
+)
+VALUES
+(
+    @ParentSeatId,
+    @PlayerId,
+    @MatchId,
+    @ResultMatchPlace,
+    @ResultPoints
+);
+
+SELECT CAST(SCOPE_IDENTITY() AS INT);", conn, transaction))
+            {
+                cmd.Parameters.Add("@ParentSeatId", SqlDbType.Int).Value =
+                    parentSeatId;
+                cmd.Parameters.Add("@PlayerId", SqlDbType.Int).Value =
+                    playerId;
+                cmd.Parameters.Add("@MatchId", SqlDbType.Int).Value =
+                    matchId;
+
+                SqlParameter place = cmd.Parameters.Add(
+                    "@ResultMatchPlace",
+                    SqlDbType.Int);
+                place.Value = resultPlace.HasValue
+                    ? (object)resultPlace.Value
+                    : DBNull.Value;
+
+                SqlParameter points = cmd.Parameters.Add(
+                    "@ResultPoints",
+                    SqlDbType.Int);
+                points.Value = resultPoints.HasValue
+                    ? (object)resultPoints.Value
+                    : DBNull.Value;
+
+                return Convert.ToInt32(cmd.ExecuteScalar());
+            }
+        }
+
+        private static int CreateNextSwissRound(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int stageMatchId,
+            int nextRound,
+            List<StageSeatScore> standings,
+            List<ChildSeatResult> childResults,
+            List<SwissMatchInfo> swissMatches,
+            int? playTo)
+        {
+            if (swissMatches.Any(x => x.Round == nextRound))
+            {
+                return 0;
+            }
+
+            int matchRulesId = swissMatches
+                .Select(x => x.MatchRulesId)
+                .FirstOrDefault();
+
+            if (matchRulesId <= 0)
+            {
+                throw new InvalidOperationException(
+                    "The Swiss stage does not have match rules.");
+            }
+
+            HashSet<string> previousPairs =
+                GetPreviousSwissPairs(childResults, swissMatches);
+
+            StageSeatScore? byePlayer;
+            List<SwissPair> pairings = BuildSwissPairings(
+                standings,
+                previousPairs,
+                out byePlayer);
+
+            string roundStageName =
+                GetSwissRoundStageName(conn, transaction, stageMatchId);
+
+            string poolName =
+                GetMatchName(conn, transaction, stageMatchId);
+
+            int matchNumber = 1;
+
+            foreach (SwissPair pairing in pairings)
+            {
+                string name =
+                    "runde: " + roundStageName +
+                    " " + poolName +
+                    " Swiss round " + nextRound +
+                    " Match " + matchNumber;
+
+                int matchId = InsertSwissMatch(
+                    conn,
+                    transaction,
+                    stageMatchId,
+                    matchRulesId,
+                    name);
+
+                InsertSwissSeat(
+                    conn,
+                    transaction,
+                    pairing.First.SeatId,
+                    pairing.First.PlayerId,
+                    matchId,
+                    null,
+                    null);
+
+                InsertSwissSeat(
+                    conn,
+                    transaction,
+                    pairing.Second.SeatId,
+                    pairing.Second.PlayerId,
+                    matchId,
+                    null,
+                    null);
+
+                matchNumber++;
+            }
+
+            if (byePlayer != null)
+            {
+                string byeName =
+                    "runde: " + roundStageName +
+                    " " + poolName +
+                    " Swiss round " + nextRound +
+                    " BYE";
+
+                int byeMatchId = InsertSwissMatch(
+                    conn,
+                    transaction,
+                    stageMatchId,
+                    matchRulesId,
+                    byeName);
+
+                InsertSwissSeat(
+                    conn,
+                    transaction,
+                    byePlayer.SeatId,
+                    byePlayer.PlayerId,
+                    byeMatchId,
+                    1,
+                    playTo ?? 0);
+            }
+
+            return pairings.Count + (byePlayer == null ? 0 : 1);
+        }
+
+        private static StageAdvanceResult RecalculateSwissStage(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int stageMatchId,
+            string stageName)
+        {
+            List<StageSeatScore> stageSeats =
+                GetStageSeats(conn, transaction, stageMatchId);
+
+            List<SwissMatchInfo> swissMatches =
+                GetSwissMatches(conn, transaction, stageMatchId);
+
+            List<ChildSeatResult> childResults =
+                GetChildResults(conn, transaction, stageMatchId);
+
+            StageAdvanceResult response = new StageAdvanceResult
+            {
+                StageMatchId = stageMatchId,
+                StageName = stageName,
+                StageComplete = false,
+                PlacementResolved = false
+            };
+
+            if (stageSeats.Count < 2 || swissMatches.Count == 0)
+            {
+                ClearStageOutcomeAndDestinations(
+                    conn,
+                    transaction,
+                    stageMatchId,
+                    false,
+                    new HashSet<int>());
+
+                response.Message =
+                    "Result saved. The Swiss stage is still waiting for players or pairings.";
+                return response;
+            }
+
+            int currentRound = swissMatches.Max(x => x.Round);
+            int totalRounds = GetSwissTotalRounds(
+                conn,
+                transaction,
+                stageMatchId,
+                stageSeats.Count);
+
+            List<SwissMatchInfo> currentMatches = swissMatches
+                .Where(x => x.Round == currentRound)
+                .ToList();
+
+            foreach (SwissMatchInfo match in currentMatches)
+            {
+                List<ChildSeatResult> seats = childResults
+                    .Where(x =>
+                        x.MatchId == match.MatchId &&
+                        x.PlayerId > 0)
+                    .ToList();
+
+                bool complete =
+                    seats.Count == 1
+                        ? seats[0].ResultMatchPlace == 1
+                        : seats.Count >= 2 &&
+                          seats.All(x => x.ResultMatchPlace.HasValue);
+
+                if (!complete)
+                {
+                    ClearStageOutcomeAndDestinations(
+                        conn,
+                        transaction,
+                        stageMatchId,
+                        false,
+                        new HashSet<int>());
+
+                    response.Message =
+                        "Swiss round " + currentRound +
+                        " is not complete yet. The next pairings will be created when every match in this round has a result.";
+                    return response;
+                }
+            }
+
+            int? playTo = GetPlayTo(
+                conn,
+                transaction,
+                stageMatchId);
+
+            List<StageSeatScore> standings = BuildSwissStandings(
+                stageSeats,
+                childResults,
+                swissMatches,
+                playTo);
+
+            if (currentRound < totalRounds)
+            {
+                int nextRound = currentRound + 1;
+
+                int created = CreateNextSwissRound(
+                    conn,
+                    transaction,
+                    stageMatchId,
+                    nextRound,
+                    standings,
+                    childResults,
+                    swissMatches,
+                    playTo);
+
+                response.Message =
+                    "Swiss round " + currentRound +
+                    " complete. Swiss round " + nextRound +
+                    " pairings were created" +
+                    (created > 0
+                        ? " (" + created + " match" +
+                          (created == 1 ? "" : "es") + ")."
+                        : ".");
+
+                return response;
+            }
+
+            response.StageComplete = true;
+
+            List<StageSeatScore> ranked;
+            string unresolvedReason;
+
+            if (!TryRankSwissStage(
+                standings,
+                childResults,
+                swissMatches,
+                out ranked,
+                out unresolvedReason))
+            {
+                ClearStageOutcomeAndDestinations(
+                    conn,
+                    transaction,
+                    stageMatchId,
+                    false,
+                    new HashSet<int>());
+
+                response.Message =
+                    "All Swiss rounds are complete, but the final placement is tied. " +
+                    unresolvedReason;
+                return response;
+            }
+
+            response.PlacementResolved = true;
+
+            SaveStagePlacements(
+                conn,
+                transaction,
+                ranked);
+
+            response.AdvancedPlayers =
+                MovePlayersToDestinationSeats(
+                    conn,
+                    transaction,
+                    stageMatchId,
+                    ranked);
+
+            response.Message =
+                "Swiss stage complete after " + totalRounds +
+                " rounds. Final placements were saved" +
+                (response.AdvancedPlayers.Count > 0
+                    ? " and " + response.AdvancedPlayers.Count +
+                      " player" +
+                      (response.AdvancedPlayers.Count == 1 ? " was" : "s were") +
+                      " moved to the configured next stage."
+                    : ".");
+
+            return response;
+        }
+
+        private static void DeleteSwissRoundsAfter(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int stageMatchId,
+            int round)
+        {
+            List<SwissMatchInfo> laterMatches = GetSwissMatches(
+                conn,
+                transaction,
+                stageMatchId)
+                .Where(x => x.Round > round)
+                .OrderByDescending(x => x.Round)
+                .ThenByDescending(x => x.MatchId)
+                .ToList();
+
+            foreach (SwissMatchInfo match in laterMatches)
+            {
+                UndoMmrForMatch(
+                    conn,
+                    transaction,
+                    match.MatchId);
+
+                using (SqlCommand cmd = new SqlCommand(@"
+DELETE FROM Seat
+WHERE MatchId = @MatchId;
+
+DELETE FROM [Match]
+WHERE Id = @MatchId;", conn, transaction))
+                {
+                    cmd.Parameters.Add("@MatchId", SqlDbType.Int).Value =
+                        match.MatchId;
+                    cmd.ExecuteNonQuery();
+                }
+            }
+        }
+
+        private static void RestoreSwissByeResults(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int stageMatchId,
+            int round)
+        {
+            foreach (SwissMatchInfo match in GetSwissMatches(
+                conn,
+                transaction,
+                stageMatchId).Where(x => x.Round == round))
+            {
+                int seatCount;
+
+                using (SqlCommand cmd = new SqlCommand(@"
+SELECT COUNT(1)
+FROM Seat
+WHERE MatchId = @MatchId
+  AND PlayerId IS NOT NULL;", conn, transaction))
+                {
+                    cmd.Parameters.Add("@MatchId", SqlDbType.Int).Value =
+                        match.MatchId;
+                    seatCount = Convert.ToInt32(cmd.ExecuteScalar());
+                }
+
+                if (seatCount != 1)
+                {
+                    continue;
+                }
+
+                int? playTo = GetPlayTo(
+                    conn,
+                    transaction,
+                    stageMatchId);
+
+                using (SqlCommand cmd = new SqlCommand(@"
+UPDATE Seat
+SET ResultMatchPlace = 1,
+    ResultPoints = @ResultPoints
+WHERE MatchId = @MatchId
+  AND PlayerId IS NOT NULL;", conn, transaction))
+                {
+                    cmd.Parameters.Add("@MatchId", SqlDbType.Int).Value =
+                        match.MatchId;
+                    cmd.Parameters.Add("@ResultPoints", SqlDbType.Int).Value =
+                        playTo ?? 0;
+                    cmd.ExecuteNonQuery();
+                }
+            }
+        }
+
+        private static void InvalidateFutureSwissRounds(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int matchId)
+        {
+            int? stageMatchId =
+                GetParentStageMatchId(conn, transaction, matchId);
+
+            if (!stageMatchId.HasValue ||
+                !IsSwissStage(conn, transaction, stageMatchId.Value))
+            {
+                return;
+            }
+
+            int round = GetSwissRoundForMatch(
+                conn,
+                transaction,
+                matchId);
+
+            if (round <= 0)
+            {
+                return;
+            }
+
+            bool hasLaterRounds = GetSwissMatches(
+                conn,
+                transaction,
+                stageMatchId.Value)
+                .Any(x => x.Round > round);
+
+            if (!hasLaterRounds)
+            {
+                return;
+            }
+
+            ClearStageOutcomeAndDestinations(
+                conn,
+                transaction,
+                stageMatchId.Value,
+                false,
+                new HashSet<int>());
+
+            DeleteSwissRoundsAfter(
+                conn,
+                transaction,
+                stageMatchId.Value,
+                round);
         }
 
         private static bool TryRankStage(
@@ -1078,6 +2142,15 @@ WHERE Id = @SeatId;";
                             transaction,
                             destination.SeatId,
                             player.PlayerId);
+
+                        if (IsSwissStage(conn, transaction, destination.MatchId))
+                        {
+                            RestoreSwissByeResults(
+                                conn,
+                                transaction,
+                                destination.MatchId,
+                                1);
+                        }
                     }
 
                     advanced.Add(new AdvancedPlayerDetails
@@ -1121,6 +2194,15 @@ WHERE MatchId = @StageMatchId;", conn, transaction))
             {
                 UndoMmrForStageChildMatches(conn, transaction, stageMatchId);
 
+                bool swissStage = IsSwissStage(conn, transaction, stageMatchId);
+                if (swissStage)
+                {
+                    // Later Swiss rounds depend on earlier standings. If this stage is
+                    // invalidated by an upstream change, keep only round 1 and let the
+                    // following rounds be generated again from the new results.
+                    DeleteSwissRoundsAfter(conn, transaction, stageMatchId, 1);
+                }
+
                 using (SqlCommand cmd = new SqlCommand(@"
 UPDATE S
 SET S.ResultMatchPlace = NULL,
@@ -1132,6 +2214,13 @@ WHERE M.ParentMatchId = @StageMatchId
                 {
                     cmd.Parameters.Add("@StageMatchId", SqlDbType.Int).Value = stageMatchId;
                     cmd.ExecuteNonQuery();
+                }
+
+                if (swissStage)
+                {
+                    // A Swiss bye is an automatic win and must remain complete after
+                    // results are reset.
+                    RestoreSwissByeResults(conn, transaction, stageMatchId, 1);
                 }
             }
 
