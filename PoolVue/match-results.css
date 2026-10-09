@@ -2,7 +2,7 @@
 
 .matchWorkspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 430px);
+  grid-template-columns: minmax(0, 1fr) clamp(900px, 68vw, 1450px);
   gap: 18px;
   align-items: start;
 }
@@ -234,7 +234,7 @@
 .treeToggleButton .chev { margin: 0; }
 .leafDot { display: inline-grid; place-items: center; width: 28px; }
 
-@media (max-width: 980px) {
+@media (max-width: 1500px) {
   .matchWorkspace { grid-template-columns: 1fr; }
   .matchResultPanel { position: static; order: -1; }
 }
@@ -510,8 +510,7 @@
   min-width: 0;
 }
 
-/* The result sidebar is intentionally narrow, even on a wide desktop.
-   Keep venue on its own row and let Date + Starts share the next row. */
+/* Keep venue on its own row and let Date + Starts share the next row. */
 .poolScheduleEditor .scheduleVenueField {
   grid-column: 1 / -1;
 }
@@ -640,5 +639,304 @@
   .matchesTopControls input {
     width: 100%;
     min-width: 0;
+  }
+}
+
+/* Manual player draw */
+.drawManager .venueManagerBody {
+  gap: 12px;
+}
+
+.drawStatusRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.drawStatusRow span {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.drawStatusRow .drawComplete {
+  color: #8fe2b8;
+}
+
+.manualDrawList {
+  display: grid;
+  gap: 8px;
+}
+
+.manualDrawRow {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(180px, 260px);
+  gap: 12px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid #33445d;
+  border-radius: 10px;
+  background: #0f1a2a;
+}
+
+.manualDrawPlayer {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.manualDrawPlayer strong,
+.manualDrawPlayer span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manualDrawPlayer span {
+  color: #9db1cb;
+  font-size: 12px;
+}
+
+.manualDrawSelect {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  color: #a9bdd5;
+}
+
+.manualDrawSelect select {
+  width: 100%;
+  min-width: 0;
+}
+
+.drawActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 680px) {
+  .manualDrawRow {
+    grid-template-columns: 1fr;
+  }
+
+  .drawActions .saveResultBtn {
+    width: 100%;
+  }
+}
+
+/* Pool result matrix ----------------------------------------------------- */
+.poolMatrixHelp {
+  line-height: 1.45;
+}
+
+.poolMatrixMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.poolMatrixMeta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid #33445d;
+  border-radius: 999px;
+  background: #0f1a2a;
+  color: #c5d5ea;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+
+.poolMatrixScroll {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #33445d;
+  border-radius: 10px;
+  background: #0b1320;
+  -webkit-overflow-scrolling: touch;
+}
+
+.poolMatrixTable {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+  color: #e7ecff;
+}
+
+.poolMatrixTable th,
+.poolMatrixTable td {
+  min-width: 72px;
+  height: 44px;
+  padding: 5px 6px;
+  border-right: 1px solid #26364c;
+  border-bottom: 1px solid #26364c;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.poolMatrixTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #142033;
+  color: #f4f7ff;
+  font-weight: 700;
+}
+
+.poolMatrixTable tr:last-child th,
+.poolMatrixTable tr:last-child td {
+  border-bottom: 0;
+}
+
+.poolMatrixTable th:last-child,
+.poolMatrixTable td:last-child {
+  border-right: 0;
+}
+
+.poolMatrixCorner,
+.poolMatrixRowHead {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  min-width: 118px !important;
+  max-width: 160px;
+  text-align: left !important;
+  background: #142033 !important;
+}
+
+.poolMatrixPlayerHead {
+  min-width: 88px !important;
+  max-width: 120px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.poolMatrixRowHead {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.poolMatrixCell {
+  background: #0d1724;
+  transition: background-color .15s ease, box-shadow .15s ease;
+}
+
+.poolMatrixCell input {
+  width: 62px;
+  min-width: 0;
+  height: 34px;
+  padding: 4px 5px;
+  border: 1px solid #40536f;
+  border-radius: 7px;
+  background: #09121f;
+  color: #fff;
+  text-align: center;
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.poolMatrixCell input:focus {
+  outline: 2px solid #67a2ff;
+  outline-offset: 1px;
+}
+
+.poolMatrixCell input:disabled {
+  opacity: .65;
+  cursor: not-allowed;
+}
+
+.poolMatrixDiagonal {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 32px;
+  border-radius: 6px;
+  background: #857a00;
+  color: #fff7a6;
+  font-weight: 700;
+}
+
+.poolMatrixNoMatch {
+  color: #607087;
+}
+
+.poolMatrixCell.matrixWinner {
+  background: rgba(35, 133, 92, .18);
+}
+
+.poolMatrixCell.matrixWinner input {
+  border-color: #3fa576;
+}
+
+.poolMatrixCell.matrixLoser {
+  background: rgba(154, 67, 78, .13);
+}
+
+.poolMatrixCell.matrixDirty {
+  box-shadow: inset 0 -2px 0 #5b91e8;
+}
+
+.poolMatrixSummaryHead,
+.poolMatrixSummary {
+  min-width: 78px !important;
+  background: #101b2a;
+  font-variant-numeric: tabular-nums;
+}
+
+.poolMatrixPlace {
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.positiveScore {
+  color: #8fe2b8;
+}
+
+.negativeScore {
+  color: #ff9aa8;
+}
+
+.poolMatrixLegend {
+  margin-top: 10px;
+  line-height: 1.45;
+}
+
+.poolMatrixActions {
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 720px) {
+  .poolMatrixTable th,
+  .poolMatrixTable td {
+    min-width: 66px;
+  }
+
+  .poolMatrixCorner,
+  .poolMatrixRowHead {
+    min-width: 96px !important;
+    max-width: 120px;
+  }
+
+  .poolMatrixPlayerHead {
+    min-width: 76px !important;
+  }
+
+  .poolMatrixCell input {
+    width: 54px;
+  }
+
+  .poolMatrixActions .saveResultBtn,
+  .poolMatrixActions .miniBtn {
+    flex: 1 1 150px;
   }
 }

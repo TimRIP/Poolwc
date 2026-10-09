@@ -332,7 +332,11 @@
     const info = document.createElement('div');
     info.className = 'slotInfo';
     if (tournament.isRegistered) {
-      info.textContent = 'You are entered as ' + (tournament.playerName || 'player') + ' (player #' + tournament.playerId + ').';
+      if (tournament.manualPlayerDraw && !tournament.playerId) {
+        info.textContent = 'You are registered. Waiting for the tournament administrator to assign your Player:n place in the manual draw.';
+      } else {
+        info.textContent = 'You are entered as ' + (tournament.playerName || 'player') + ' (player #' + tournament.playerId + ').';
+      }
     } else if (tournament.availableSlots > 0) {
       info.textContent = tournament.availableSlots + ' place' + (tournament.availableSlots === 1 ? '' : 's') + ' available.';
     } else {
@@ -353,7 +357,14 @@
     card.append(top, bottom);
 
     if (tournament.isRegistered) {
-      card.append(buildPlayerPools(tournament.tournamentId));
+      if (tournament.manualPlayerDraw && !tournament.playerId) {
+        const waiting = document.createElement('div');
+        waiting.className = 'poolScheduleEmpty';
+        waiting.textContent = 'Manual draw pending. Your pool, venue and matches will appear after the tournament administrator assigns your Player:n place.';
+        card.append(waiting);
+      } else {
+        card.append(buildPlayerPools(tournament.tournamentId));
+      }
     }
 
     return card;

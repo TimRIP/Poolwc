@@ -829,11 +829,12 @@ WHERE ParentMatchId = @StageMatchId
 
             response.StageComplete = true;
 
+            int? playFrom = GetPlayFrom(conn, transaction, stageId);
             int? playTo = GetPlayTo(conn, transaction, stageId);
 
             List<StageSeatScore> ranked;
             string unresolvedReason;
-            if (!TryRankStage(stageSeats, childResults, childMatchIds, playTo, out ranked, out unresolvedReason))
+            if (!TryRankStage(stageSeats, childResults, childMatchIds, playFrom, playTo, out ranked, out unresolvedReason))
             {
                 ClearStageOutcomeAndDestinations(conn, transaction, stageId, false, new HashSet<int>());
                 response.Message = "All matches are complete, but the stage placement is tied. " + unresolvedReason;
@@ -1040,7 +1041,7 @@ WHERE S.Id = @StageMatchId;", conn, transaction))
             Dictionary<int, List<int>> opponents =
                 stageSeats.ToDictionary(x => x.SeatId, x => new List<int>());
 
-            Dictionary<int, int> scoreDifferences =
+            Dictionary<int, int> accumulatedScores =
                 stageSeats.ToDictionary(x => x.SeatId, x => 0);
 
             Dictionary<int, bool> scoreAvailable =
@@ -1098,27 +1099,9 @@ WHERE S.Id = @StageMatchId;", conn, transaction))
                         opponents[own.StageSeatId].Add(opponent.StageSeatId);
                     }
 
-                    if (playTo.HasValue)
+                    if (own.ResultPoints.HasValue)
                     {
-                        if (!own.ResultPoints.HasValue ||
-                            matchOpponents.Any(x => !x.ResultPoints.HasValue))
-                        {
-                            scoreAvailable[own.StageSeatId] = false;
-                        }
-                        else
-                        {
-                            int ownDistance =
-                                Math.Abs(own.ResultPoints.Value - playTo.Value);
-
-                            foreach (ChildSeatResult opponent in matchOpponents)
-                            {
-                                int opponentDistance =
-                                    Math.Abs(opponent.ResultPoints.Value - playTo.Value);
-
-                                scoreDifferences[own.StageSeatId] +=
-                                    opponentDistance - ownDistance;
-                            }
-                        }
+                        accumulatedScores[own.StageSeatId] += own.ResultPoints.Value;
                     }
                     else
                     {
@@ -1129,8 +1112,11 @@ WHERE S.Id = @StageMatchId;", conn, transaction))
 
             foreach (StageSeatScore seat in stageSeats)
             {
+                // Reuse ScoreDifference as the stage score field for backwards
+                // compatibility. It now contains the player's accumulated final
+                // scores, not a plus/minus margin.
                 seat.ScoreDifference = scoreAvailable[seat.SeatId]
-                    ? (int?)scoreDifferences[seat.SeatId]
+                    ? (int?)accumulatedScores[seat.SeatId]
                     : null;
 
                 int buchholz = 0;
@@ -1152,6 +1138,7 @@ WHERE S.Id = @StageMatchId;", conn, transaction))
             List<StageSeatScore> standings,
             List<ChildSeatResult> childResults,
             List<SwissMatchInfo> swissMatches,
+            bool higherScoreIsBetter,
             out List<StageSeatScore> ranked,
             out string unresolvedReason)
         {
@@ -1161,16 +1148,24 @@ WHERE S.Id = @StageMatchId;", conn, transaction))
             bool scoreDifferenceAvailable =
                 standings.All(x => x.ScoreDifference.HasValue);
 
-            List<StageSeatScore> initial = scoreDifferenceAvailable
-                ? standings
+            List<StageSeatScore> initial;
+            if (scoreDifferenceAvailable)
+            {
+                IOrderedEnumerable<StageSeatScore> baseOrder = standings
                     .OrderByDescending(x => x.Wins)
-                    .ThenByDescending(x => x.Buchholz)
-                    .ThenByDescending(x => x.ScoreDifference.Value)
-                    .ToList()
-                : standings
+                    .ThenByDescending(x => x.Buchholz);
+
+                initial = higherScoreIsBetter
+                    ? baseOrder.ThenByDescending(x => x.ScoreDifference.Value).ToList()
+                    : baseOrder.ThenBy(x => x.ScoreDifference.Value).ToList();
+            }
+            else
+            {
+                initial = standings
                     .OrderByDescending(x => x.Wins)
                     .ThenByDescending(x => x.Buchholz)
                     .ToList();
+            }
 
             int index = 0;
             while (index < initial.Count)
@@ -1243,7 +1238,7 @@ WHERE S.Id = @StageMatchId;", conn, transaction))
                 if (stillTied)
                 {
                     unresolvedReason = scoreDifferenceAvailable
-                        ? "Players are still tied on wins, Buchholz, score difference and head-to-head. Play an extra deciding match before advancing them."
+                        ? "Players are still tied on wins, Buchholz, accumulated score and head-to-head. Play an extra deciding match before advancing them."
                         : "Players are still tied on wins, Buchholz and head-to-head. Enter scores for every match or play an extra deciding match.";
                     return false;
                 }
@@ -1302,7 +1297,7 @@ WHERE S.Id = @StageMatchId;", conn, transaction))
                 .Skip(1)
                 .OrderBy(x => Math.Abs(x.Wins - first.Wins))
                 .ThenBy(x => Math.Abs(x.Buchholz - first.Buchholz))
-                .ThenByDescending(x => x.ScoreDifference ?? Int32.MinValue)
+                .ThenBy(x => Math.Abs((x.ScoreDifference ?? 0) - (first.ScoreDifference ?? 0)))
                 .ThenBy(x => x.SeatId)
                 .ToList();
 
@@ -1346,12 +1341,16 @@ WHERE S.Id = @StageMatchId;", conn, transaction))
         private static List<SwissPair> BuildSwissPairings(
             List<StageSeatScore> standings,
             HashSet<string> previousPairs,
+            bool higherScoreIsBetter,
             out StageSeatScore? byePlayer)
         {
-            List<StageSeatScore> ordered = standings
+            IOrderedEnumerable<StageSeatScore> baseOrder = standings
                 .OrderByDescending(x => x.Wins)
-                .ThenByDescending(x => x.Buchholz)
-                .ThenByDescending(x => x.ScoreDifference ?? Int32.MinValue)
+                .ThenByDescending(x => x.Buchholz);
+
+            List<StageSeatScore> ordered = (higherScoreIsBetter
+                    ? baseOrder.ThenByDescending(x => x.ScoreDifference ?? Int32.MinValue)
+                    : baseOrder.ThenBy(x => x.ScoreDifference ?? Int32.MaxValue))
                 .ThenBy(x => x.SeatId)
                 .ToList();
 
@@ -1496,7 +1495,8 @@ SELECT CAST(SCOPE_IDENTITY() AS INT);", conn, transaction))
             List<StageSeatScore> standings,
             List<ChildSeatResult> childResults,
             List<SwissMatchInfo> swissMatches,
-            int? playTo)
+            int? playTo,
+            bool higherScoreIsBetter)
         {
             if (swissMatches.Any(x => x.Round == nextRound))
             {
@@ -1520,6 +1520,7 @@ SELECT CAST(SCOPE_IDENTITY() AS INT);", conn, transaction))
             List<SwissPair> pairings = BuildSwissPairings(
                 standings,
                 previousPairs,
+                higherScoreIsBetter,
                 out byePlayer);
 
             string roundStageName =
@@ -1672,10 +1673,17 @@ SELECT CAST(SCOPE_IDENTITY() AS INT);", conn, transaction))
                 }
             }
 
+            int? playFrom = GetPlayFrom(
+                conn,
+                transaction,
+                stageMatchId);
+
             int? playTo = GetPlayTo(
                 conn,
                 transaction,
                 stageMatchId);
+
+            bool higherScoreIsBetter = IsHigherScoreBetter(playFrom, playTo);
 
             List<StageSeatScore> standings = BuildSwissStandings(
                 stageSeats,
@@ -1695,7 +1703,8 @@ SELECT CAST(SCOPE_IDENTITY() AS INT);", conn, transaction))
                     standings,
                     childResults,
                     swissMatches,
-                    playTo);
+                    playTo,
+                    higherScoreIsBetter);
 
                 response.Message =
                     "Swiss round " + currentRound +
@@ -1718,6 +1727,7 @@ SELECT CAST(SCOPE_IDENTITY() AS INT);", conn, transaction))
                 standings,
                 childResults,
                 swissMatches,
+                higherScoreIsBetter,
                 out ranked,
                 out unresolvedReason))
             {
@@ -1900,6 +1910,7 @@ WHERE MatchId = @MatchId
             List<StageSeatScore> stageSeats,
             List<ChildSeatResult> childResults,
             List<int> childMatchIds,
+            int? playFrom,
             int? playTo,
             out List<StageSeatScore> ranked,
             out string unresolvedReason)
@@ -1949,62 +1960,36 @@ WHERE MatchId = @MatchId
 
                 stageSeat.Wins = playerResults.Count(x => x.ResultMatchPlace == 1);
 
-                // Score difference measures how far ahead/behind a player finished.
-                // The winner always ends on PlayTo. Example with 70 -> 0:
-                // 0-35 gives the winner +35 and the loser -35.
-                // 0-22 gives +22/-22, so +35 is the better result.
-                if (playTo.HasValue)
-                {
-                    int difference = 0;
-                    bool completeScores = true;
-
-                    foreach (ChildSeatResult ownResult in playerResults)
-                    {
-                        if (!ownResult.ResultPoints.HasValue)
-                        {
-                            completeScores = false;
-                            break;
-                        }
-
-                        List<ChildSeatResult> opponents = childResults
-                            .Where(x =>
-                                x.MatchId == ownResult.MatchId &&
-                                x.PlayerId > 0 &&
-                                x.StageSeatId != stageSeat.SeatId)
-                            .ToList();
-
-                        if (opponents.Count == 0 || opponents.Any(x => !x.ResultPoints.HasValue))
-                        {
-                            completeScores = false;
-                            break;
-                        }
-
-                        int ownDistanceToTarget = Math.Abs(ownResult.ResultPoints.Value - playTo.Value);
-                        foreach (ChildSeatResult opponent in opponents)
-                        {
-                            int opponentDistanceToTarget = Math.Abs(opponent.ResultPoints.Value - playTo.Value);
-                            difference += opponentDistanceToTarget - ownDistanceToTarget;
-                        }
-                    }
-
-                    stageSeat.ScoreDifference = completeScores ? (int?)difference : null;
-                }
-                else
-                {
-                    stageSeat.ScoreDifference = null;
-                }
+                // The pool Score is the sum of the player's actual final scores.
+                // Example with 70 -> 0: results 60, 20 and 0 give Score = 80.
+                // When counting down (70 -> 0), lower accumulated score is better.
+                // When counting up (0 -> 70), higher accumulated score is better.
+                bool completeScores = playerResults.All(x => x.ResultPoints.HasValue);
+                stageSeat.ScoreDifference = completeScores
+                    ? (int?)playerResults.Sum(x => x.ResultPoints.Value)
+                    : null;
             }
 
             bool scoreDifferenceAvailable = stageSeats.All(x => x.ScoreDifference.HasValue);
 
-            List<StageSeatScore> initial = scoreDifferenceAvailable
-                ? stageSeats
-                    .OrderByDescending(x => x.Wins)
-                    .ThenByDescending(x => x.ScoreDifference.Value)
-                    .ToList()
-                : stageSeats
+            bool higherScoreIsBetter = IsHigherScoreBetter(playFrom, playTo);
+
+            List<StageSeatScore> initial;
+            if (scoreDifferenceAvailable)
+            {
+                IOrderedEnumerable<StageSeatScore> baseOrder =
+                    stageSeats.OrderByDescending(x => x.Wins);
+
+                initial = higherScoreIsBetter
+                    ? baseOrder.ThenByDescending(x => x.ScoreDifference.Value).ToList()
+                    : baseOrder.ThenBy(x => x.ScoreDifference.Value).ToList();
+            }
+            else
+            {
+                initial = stageSeats
                     .OrderByDescending(x => x.Wins)
                     .ToList();
+            }
 
             List<StageSeatScore> finalRanking = new List<StageSeatScore>();
             int index = 0;
@@ -2063,8 +2048,8 @@ WHERE MatchId = @MatchId
                 if (stillTied)
                 {
                     unresolvedReason = scoreDifferenceAvailable
-                        ? "The players are still tied on wins, score difference and head-to-head results. Play an extra deciding match before advancing them."
-                        : "Scores are missing, so score difference cannot break the tie. Enter the final score for every match or play an extra deciding match.";
+                        ? "The players are still tied on wins, accumulated score and head-to-head results. Play an extra deciding match before advancing them."
+                        : "Scores are missing, so accumulated score cannot break the tie. Enter the final score for every match or play an extra deciding match.";
                     return false;
                 }
 
@@ -2342,6 +2327,41 @@ ORDER BY S.Id;", conn, transaction))
             return result;
         }
 
+
+        private static int? GetPlayFrom(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int stageMatchId)
+        {
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT TOP 1 MR.PlayFrom
+FROM [Match] M
+INNER JOIN MatchRules MR ON MR.Id = M.MatchRulesId
+WHERE (M.ParentMatchId = @StageMatchId AND M.IndividualMatch = 1)
+   OR M.Id = @StageMatchId
+ORDER BY CASE WHEN M.ParentMatchId = @StageMatchId THEN 0 ELSE 1 END, M.Id;", conn, transaction))
+            {
+                cmd.Parameters.Add("@StageMatchId", SqlDbType.Int).Value = stageMatchId;
+                object value = cmd.ExecuteScalar();
+                if (value == null || value == DBNull.Value)
+                {
+                    return null;
+                }
+
+                return Convert.ToInt32(value);
+            }
+        }
+
+        private static bool IsHigherScoreBetter(int? playFrom, int? playTo)
+        {
+            if (playFrom.HasValue && playTo.HasValue)
+            {
+                return playTo.Value > playFrom.Value;
+            }
+
+            // If the rule is incomplete, preserve the traditional high-score sort.
+            return true;
+        }
 
         private static int? GetPlayTo(
             SqlConnection conn,

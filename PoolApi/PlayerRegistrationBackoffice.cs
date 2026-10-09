@@ -37,6 +37,7 @@ namespace DrukDatabaseLayer
         public int AvailableSlots { get; set; }
         public bool IsFull { get; set; }
         public bool IsRegistered { get; set; }
+        public bool ManualPlayerDraw { get; set; }
         public int? PlayerId { get; set; }
         public string PlayerName { get; set; }
     }
@@ -45,9 +46,10 @@ namespace DrukDatabaseLayer
     {
         public int TournamentId { get; set; }
         public string TournamentName { get; set; }
-        public int PlayerId { get; set; }
+        public int? PlayerId { get; set; }
         public string PlayerName { get; set; }
         public bool AlreadyRegistered { get; set; }
+        public bool AwaitingDraw { get; set; }
     }
 
     public class PlayerPoolMatch
@@ -281,22 +283,37 @@ SlotCounts AS
         SUM(CASE WHEN RegisteredUserID IS NULL AND Name LIKE 'Player:%' AND HasResult = 0 THEN 1 ELSE 0 END) AS AvailableSlots
     FROM SlotPlayers
     GROUP BY TournamentId
+),
+RegistrationCounts AS
+(
+    SELECT TournamentId, COUNT(*) AS RegisteredCount
+    FROM TournamentRegistration
+    WHERE Status = 'registered'
+    GROUP BY TournamentId
 )
 SELECT
     T.Id AS TournamentId,
     RM.Name AS TournamentName,
     T.Description,
     ISNULL(T.IsPrivate, 0) AS IsPrivate,
+    ISNULL(T.UsePlayerDraw, 0) AS ManualPlayerDraw,
     ISNULL(SC.Capacity, 0) AS Capacity,
-    ISNULL(SC.Capacity, 0) - ISNULL(SC.AvailableSlots, 0) AS RegisteredPlayers,
-    ISNULL(SC.AvailableSlots, 0) AS AvailableSlots,
-    CASE WHEN ISNULL(SC.AvailableSlots, 0) <= 0 THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS IsFull,
+    CASE WHEN ISNULL(T.UsePlayerDraw, 0) = 1
+         THEN ISNULL(RC.RegisteredCount, 0)
+         ELSE ISNULL(SC.Capacity, 0) - ISNULL(SC.AvailableSlots, 0) END AS RegisteredPlayers,
+    CASE WHEN ISNULL(T.UsePlayerDraw, 0) = 1
+         THEN CASE WHEN ISNULL(SC.Capacity, 0) - ISNULL(RC.RegisteredCount, 0) < 0 THEN 0 ELSE ISNULL(SC.Capacity, 0) - ISNULL(RC.RegisteredCount, 0) END
+         ELSE ISNULL(SC.AvailableSlots, 0) END AS AvailableSlots,
+    CASE WHEN ISNULL(T.UsePlayerDraw, 0) = 1
+         THEN CASE WHEN ISNULL(RC.RegisteredCount, 0) >= ISNULL(SC.Capacity, 0) THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END
+         ELSE CASE WHEN ISNULL(SC.AvailableSlots, 0) <= 0 THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END END AS IsFull,
     CASE WHEN TR.Id IS NOT NULL AND TR.Status = 'registered' THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS IsRegistered,
     CASE WHEN TR.Status = 'registered' THEN TR.PlayerId ELSE NULL END AS PlayerId,
     CASE WHEN TR.Status = 'registered' THEN RP.Name ELSE NULL END AS PlayerName
 FROM Tournament T
 INNER JOIN [Match] RM ON RM.Id = T.MatchId
 LEFT JOIN SlotCounts SC ON SC.TournamentId = T.Id
+LEFT JOIN RegistrationCounts RC ON RC.TournamentId = T.Id
 LEFT JOIN TournamentRegistration TR
     ON TR.TournamentId = T.Id
    AND TR.RegisteredUserId = @UserId
@@ -329,6 +346,7 @@ OPTION (MAXRECURSION 1000);";
                             AvailableSlots = Convert.ToInt32(reader["AvailableSlots"]),
                             IsFull = Convert.ToBoolean(reader["IsFull"]),
                             IsRegistered = Convert.ToBoolean(reader["IsRegistered"]),
+                            ManualPlayerDraw = Convert.ToBoolean(reader["ManualPlayerDraw"]),
                             PlayerId = reader["PlayerId"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["PlayerId"]),
                             PlayerName = reader["PlayerName"] == DBNull.Value ? null : Convert.ToString(reader["PlayerName"])
                         });
@@ -393,22 +411,37 @@ SlotCounts AS
         SUM(CASE WHEN RegisteredUserID IS NULL AND Name LIKE 'Player:%' AND HasResult = 0 THEN 1 ELSE 0 END) AS AvailableSlots
     FROM SlotPlayers
     GROUP BY TournamentId
+),
+RegistrationCounts AS
+(
+    SELECT TournamentId, COUNT(*) AS RegisteredCount
+    FROM TournamentRegistration
+    WHERE Status = 'registered'
+    GROUP BY TournamentId
 )
 SELECT TOP 1
     T.Id AS TournamentId,
     RM.Name AS TournamentName,
     T.Description,
     ISNULL(T.IsPrivate, 0) AS IsPrivate,
+    ISNULL(T.UsePlayerDraw, 0) AS ManualPlayerDraw,
     ISNULL(SC.Capacity, 0) AS Capacity,
-    ISNULL(SC.Capacity, 0) - ISNULL(SC.AvailableSlots, 0) AS RegisteredPlayers,
-    ISNULL(SC.AvailableSlots, 0) AS AvailableSlots,
-    CASE WHEN ISNULL(SC.AvailableSlots, 0) <= 0 THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS IsFull,
+    CASE WHEN ISNULL(T.UsePlayerDraw, 0) = 1
+         THEN ISNULL(RC.RegisteredCount, 0)
+         ELSE ISNULL(SC.Capacity, 0) - ISNULL(SC.AvailableSlots, 0) END AS RegisteredPlayers,
+    CASE WHEN ISNULL(T.UsePlayerDraw, 0) = 1
+         THEN CASE WHEN ISNULL(SC.Capacity, 0) - ISNULL(RC.RegisteredCount, 0) < 0 THEN 0 ELSE ISNULL(SC.Capacity, 0) - ISNULL(RC.RegisteredCount, 0) END
+         ELSE ISNULL(SC.AvailableSlots, 0) END AS AvailableSlots,
+    CASE WHEN ISNULL(T.UsePlayerDraw, 0) = 1
+         THEN CASE WHEN ISNULL(RC.RegisteredCount, 0) >= ISNULL(SC.Capacity, 0) THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END
+         ELSE CASE WHEN ISNULL(SC.AvailableSlots, 0) <= 0 THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END END AS IsFull,
     CASE WHEN TR.Id IS NOT NULL AND TR.Status = 'registered' THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS IsRegistered,
     CASE WHEN TR.Status = 'registered' THEN TR.PlayerId ELSE NULL END AS PlayerId,
     CASE WHEN TR.Status = 'registered' THEN RP.Name ELSE NULL END AS PlayerName
 FROM Tournament T
 INNER JOIN [Match] RM ON RM.Id = T.MatchId
 LEFT JOIN SlotCounts SC ON SC.TournamentId = T.Id
+LEFT JOIN RegistrationCounts RC ON RC.TournamentId = T.Id
 LEFT JOIN TournamentRegistration TR
     ON TR.TournamentId = T.Id
    AND TR.RegisteredUserId = @UserId
@@ -442,6 +475,7 @@ OPTION (MAXRECURSION 1000);";
                         AvailableSlots = Convert.ToInt32(reader["AvailableSlots"]),
                         IsFull = Convert.ToBoolean(reader["IsFull"]),
                         IsRegistered = Convert.ToBoolean(reader["IsRegistered"]),
+                        ManualPlayerDraw = Convert.ToBoolean(reader["ManualPlayerDraw"]),
                         PlayerId = reader["PlayerId"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["PlayerId"]),
                         PlayerName = reader["PlayerName"] == DBNull.Value ? null : Convert.ToString(reader["PlayerName"])
                     };
@@ -468,6 +502,7 @@ OPTION (MAXRECURSION 1000);";
                         if (existing != null)
                         {
                             existing.AlreadyRegistered = true;
+                            existing.AwaitingDraw = !existing.PlayerId.HasValue;
                             transaction.Commit();
                             return existing;
                         }
@@ -478,6 +513,82 @@ OPTION (MAXRECURSION 1000);";
                         if (displayName == null)
                         {
                             throw new InvalidOperationException("User not found.");
+                        }
+
+                        bool manualPlayerDraw = IsManualPlayerDrawEnabled(conn, transaction, tournamentId);
+
+                        if (manualPlayerDraw)
+                        {
+                            int capacity = GetTournamentCapacity(conn, transaction, tournamentId);
+                            int registrations = CountActiveRegistrations(conn, transaction, tournamentId);
+                            if (capacity <= 0 || registrations >= capacity)
+                            {
+                                throw new InvalidOperationException("There are no free player places in this tournament.");
+                            }
+
+                            const string waitingSql = @"
+IF EXISTS
+(
+    SELECT 1
+    FROM TournamentRegistration
+    WHERE TournamentId = @TournamentId
+      AND RegisteredUserId = @UserId
+)
+BEGIN
+    UPDATE TournamentRegistration
+    SET PlayerId = NULL,
+        OriginalPlayerName = NULL,
+        Status = 'registered',
+        RegisteredAt = GETUTCDATE(),
+        UpdatedAt = GETUTCDATE()
+    WHERE TournamentId = @TournamentId
+      AND RegisteredUserId = @UserId;
+END
+ELSE
+BEGIN
+    INSERT INTO TournamentRegistration
+    (
+        TournamentId,
+        RegisteredUserId,
+        PlayerId,
+        OriginalPlayerName,
+        Status,
+        RegisteredAt,
+        UpdatedAt
+    )
+    VALUES
+    (
+        @TournamentId,
+        @UserId,
+        NULL,
+        NULL,
+        'registered',
+        GETUTCDATE(),
+        GETUTCDATE()
+    );
+END;
+
+UPDATE Tournament
+SET PlayerDrawCompleted = 0
+WHERE Id = @TournamentId;";
+
+                            using (SqlCommand waiting = new SqlCommand(waitingSql, conn, transaction))
+                            {
+                                waiting.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
+                                waiting.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                                waiting.ExecuteNonQuery();
+                            }
+
+                            transaction.Commit();
+                            return new TournamentRegistrationResult
+                            {
+                                TournamentId = tournamentId,
+                                TournamentName = tournamentName,
+                                PlayerId = null,
+                                PlayerName = displayName,
+                                AlreadyRegistered = false,
+                                AwaitingDraw = true
+                            };
                         }
 
                         int playerId;
@@ -568,7 +679,8 @@ END;";
                             TournamentName = tournamentName,
                             PlayerId = playerId,
                             PlayerName = displayName,
-                            AlreadyRegistered = false
+                            AlreadyRegistered = false,
+                            AwaitingDraw = false
                         };
                     }
                     catch
@@ -601,9 +713,23 @@ BEGIN
     THROW 51010, 'Tournament not found.', 1;
 END;
 
-IF @PlayerId IS NULL
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM TournamentRegistration TR
+    WHERE TR.TournamentId = @TournamentId
+      AND TR.RegisteredUserId = @UserId
+      AND TR.Status = 'registered'
+)
 BEGIN
     THROW 51011, 'You are not registered for this tournament.', 1;
+END;
+
+-- In manual-draw tournaments a user can be registered before a Player:n place
+-- is assigned. That is a valid registration; there are simply no pools yet.
+IF @PlayerId IS NULL
+BEGIN
+    RETURN;
 END;
 
 ;WITH TournamentTree AS
@@ -919,43 +1045,52 @@ WHERE TournamentId = @TournamentId
                             }
                         }
 
-                        if (playerId <= 0)
-                        {
-                            throw new InvalidOperationException("The tournament registration does not have a player place assigned.");
-                        }
-
-                        if (PlayerHasRecordedResults(conn, transaction, tournamentId, playerId))
+                        if (playerId > 0 && PlayerHasRecordedResults(conn, transaction, tournamentId, playerId))
                         {
                             throw new InvalidOperationException("Registration cannot be cancelled after match results have been recorded for this player.");
                         }
 
-                        if (string.IsNullOrWhiteSpace(originalPlayerName))
+                        if (playerId > 0)
                         {
-                            originalPlayerName = "Player:" + playerId;
-                        }
+                            if (string.IsNullOrWhiteSpace(originalPlayerName))
+                            {
+                                originalPlayerName = "Player:" + playerId;
+                            }
 
-                        const string releaseSql = @"
+                            const string releasePlayerSql = @"
 UPDATE Player
 SET RegisteredUserID = NULL,
     Name = @OriginalPlayerName,
     LastUsedAt = GETUTCDATE()
 WHERE Id = @PlayerId
-  AND RegisteredUserID = @UserId;
+  AND RegisteredUserID = @UserId;";
 
+                            using (SqlCommand releasePlayer = new SqlCommand(releasePlayerSql, conn, transaction))
+                            {
+                                releasePlayer.Parameters.Add("@OriginalPlayerName", SqlDbType.NVarChar, 255).Value = originalPlayerName;
+                                releasePlayer.Parameters.Add("@PlayerId", SqlDbType.Int).Value = playerId;
+                                releasePlayer.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                                releasePlayer.ExecuteNonQuery();
+                            }
+                        }
+
+                        using (SqlCommand cancel = new SqlCommand(@"
 UPDATE TournamentRegistration
 SET PlayerId = NULL,
+    OriginalPlayerName = NULL,
     Status = 'cancelled',
     UpdatedAt = GETUTCDATE()
 WHERE TournamentId = @TournamentId
-  AND RegisteredUserId = @UserId;";
+  AND RegisteredUserId = @UserId;
 
-                        using (SqlCommand release = new SqlCommand(releaseSql, conn, transaction))
+UPDATE Tournament
+SET PlayerDrawCompleted = 0
+WHERE Id = @TournamentId
+  AND ISNULL(UsePlayerDraw, 0) = 1;", conn, transaction))
                         {
-                            release.Parameters.Add("@OriginalPlayerName", SqlDbType.NVarChar, 255).Value = originalPlayerName;
-                            release.Parameters.Add("@PlayerId", SqlDbType.Int).Value = playerId;
-                            release.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
-                            release.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
-                            release.ExecuteNonQuery();
+                            cancel.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
+                            cancel.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                            cancel.ExecuteNonQuery();
                         }
 
                         transaction.Commit();
@@ -1055,6 +1190,86 @@ WHERE RegisteredUserID = @UserId;";
             }
         }
 
+        private static bool IsManualPlayerDrawEnabled(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int tournamentId)
+        {
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT ISNULL(UsePlayerDraw, 0)
+FROM Tournament WITH (UPDLOCK, HOLDLOCK)
+WHERE Id = @TournamentId;", conn, transaction))
+            {
+                cmd.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
+                object value = cmd.ExecuteScalar();
+                if (value == null || value == DBNull.Value)
+                {
+                    throw new InvalidOperationException("Tournament not found.");
+                }
+
+                return Convert.ToBoolean(value);
+            }
+        }
+
+        private static int CountActiveRegistrations(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int tournamentId)
+        {
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT COUNT(*)
+FROM TournamentRegistration WITH (UPDLOCK, HOLDLOCK)
+WHERE TournamentId = @TournamentId
+  AND Status = 'registered';", conn, transaction))
+            {
+                cmd.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
+                return Convert.ToInt32(cmd.ExecuteScalar());
+            }
+        }
+
+        private static int GetTournamentCapacity(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int tournamentId)
+        {
+            const string sql = @"
+DECLARE @RootMatchId INT;
+SELECT @RootMatchId = MatchId
+FROM Tournament WITH (UPDLOCK, HOLDLOCK)
+WHERE Id = @TournamentId;
+
+;WITH TournamentTree AS
+(
+    SELECT M.Id AS MatchId, CAST('|' + CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX)) AS [Path]
+    FROM [Match] M
+    WHERE M.Id = @RootMatchId
+
+    UNION ALL
+
+    SELECT M.Id, CAST(TT.[Path] + CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX))
+    FROM TournamentTree TT
+    INNER JOIN [Match] M ON M.ParentMatchId = TT.MatchId
+    WHERE M.Id <> @RootMatchId
+      AND CHARINDEX('|' + CAST(M.Id AS VARCHAR(20)) + '|', TT.[Path]) = 0
+),
+SlotPlayers AS
+(
+    SELECT DISTINCT P.Id AS PlayerId
+    FROM TournamentTree TT
+    INNER JOIN Seat S ON S.MatchId = TT.MatchId
+    INNER JOIN Player P ON P.Id = S.PlayerId
+)
+SELECT COUNT(*)
+FROM SlotPlayers
+OPTION (MAXRECURSION 1000);";
+
+            using (SqlCommand cmd = new SqlCommand(sql, conn, transaction))
+            {
+                cmd.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
+                return Convert.ToInt32(cmd.ExecuteScalar());
+            }
+        }
+
         private static TournamentRegistrationResult GetActiveRegistration(
             SqlConnection conn,
             SqlTransaction transaction,
@@ -1087,9 +1302,10 @@ WHERE TR.TournamentId = @TournamentId
                     {
                         TournamentId = tournamentId,
                         TournamentName = Convert.ToString(reader["TournamentName"]),
-                        PlayerId = reader["PlayerId"] == DBNull.Value ? -1 : Convert.ToInt32(reader["PlayerId"]),
+                        PlayerId = reader["PlayerId"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["PlayerId"]),
                         PlayerName = reader["PlayerName"] == DBNull.Value ? null : Convert.ToString(reader["PlayerName"]),
-                        AlreadyRegistered = true
+                        AlreadyRegistered = true,
+                        AwaitingDraw = reader["PlayerId"] == DBNull.Value
                     };
                 }
             }

@@ -149,6 +149,68 @@
         </div>
       </details>
 
+      <details class="venueManager drawManager" v-if="currentTournamentId && isTournamentAdmin && drawStatus && drawStatus.usePlayerDraw">
+        <summary>
+          <span><i class="fa fa-random"></i> Manual player draw</span>
+          <span class="venueCount">{{ drawStatus.assignedPlayers || 0 }} / {{ drawStatus.registeredPlayers || 0 }}</span>
+        </summary>
+
+        <div class="venueManagerBody">
+          <div v-if="drawLoading" class="resultNote">Loading registered players and Player:n places…</div>
+
+          <template v-else>
+            <div class="resultNote editorPermissionNote">
+              Players can register without being placed in the tournament tree. Assign each registered player to a Player:n place here, then save the draw.
+            </div>
+
+            <div class="drawStatusRow" v-if="drawStatus">
+              <span><strong>{{ drawStatus.registeredPlayers }}</strong> registered</span>
+              <span><strong>{{ drawStatus.assignedPlayers }}</strong> assigned</span>
+              <span><strong>{{ drawStatus.capacity }}</strong> places</span>
+              <span v-if="drawStatus.drawCompleted" class="drawComplete"><i class="fa fa-check-circle"></i> Complete</span>
+            </div>
+
+            <div v-if="!drawRegistrations.length" class="resultNote">No players have registered yet.</div>
+
+            <div class="manualDrawList" v-else>
+              <div class="manualDrawRow" v-for="registration in drawRegistrations" :key="registration.userId">
+                <div class="manualDrawPlayer">
+                  <strong>{{ registration.playerName }}</strong>
+                  <span>@{{ registration.userName }}</span>
+                </div>
+
+                <label class="manualDrawSelect">
+                  <span>Player place</span>
+                  <select v-model="drawAssignments[registration.userId]" :disabled="savingDraw || drawStatus.hasResults">
+                    <option value="">Not assigned</option>
+                    <option v-for="slot in drawSlots"
+                            :key="slot.playerId"
+                            :value="slot.playerId"
+                            :disabled="drawSlotTakenByOther(slot.playerId, registration.userId)">
+                      {{ slot.slotName }}
+                    </option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div class="resultMessage error" v-if="drawStatus && drawStatus.hasResults">
+              The manual draw is locked because match results have already been recorded.
+            </div>
+
+            <div class="drawActions" v-if="drawRegistrations.length">
+              <button type="button" class="saveResultBtn" @click="savePlayerDraw" :disabled="savingDraw || drawStatus.hasResults">
+                <i class="fa" :class="savingDraw ? 'fa-circle-o-notch fa-spin' : 'fa-save'"></i>
+                {{ savingDraw ? 'Saving…' : 'Save manual draw' }}
+              </button>
+            </div>
+          </template>
+
+          <div v-if="drawMessage" class="resultMessage success">{{ drawMessage }}</div>
+          <div v-if="drawError" class="resultMessage error">{{ drawError }}</div>
+        </div>
+      </details>
+
       <div class="matchWorkspace" v-if="roots.length">
         <div class="matchTreeColumn">
           <div class="treeWrap">
@@ -364,9 +426,110 @@
               </div>
             </section>
 
+            <section class="resultSection" v-else-if="selectedIsPool">
+              <div class="resultSectionTitle">Pool results</div>
+
+              <div class="resultNote poolMatrixHelp">
+                Enter the final score in the cell where the player's row meets the opponent's column.
+                When you enter the loser's remaining score, the winner is automatically set to PlayTo.
+                You can still open an individual match in the tree if you prefer the normal result editor.
+              </div>
+
+              <div v-if="poolMatrixLoading" class="resultNote">
+                <i class="fa fa-circle-o-notch fa-spin"></i> Loading pool matches…
+              </div>
+
+              <div v-else-if="poolMatrixError && !poolMatrixMatches.length" class="resultMessage error">
+                {{ poolMatrixError }}
+              </div>
+
+              <template v-else-if="poolMatrixMatches.length">
+                <div class="poolMatrixMeta">
+                  <span>{{ poolMatrixCompletedMatches }} / {{ poolMatrixMatches.length }} played</span>
+                  <span v-if="poolMatrixMatches[0] && poolMatrixMatches[0].matchRules">
+                    Play {{ displayValue(poolMatrixMatches[0].matchRules.playFrom) }}
+                    → {{ displayValue(poolMatrixMatches[0].matchRules.playTo) }}
+                  </span>
+                  <span v-if="poolMatrixDirtyCount">{{ poolMatrixDirtyCount }} changed</span>
+                </div>
+
+                <div class="poolMatrixScroll">
+                  <table class="poolMatrixTable">
+                    <thead>
+                      <tr>
+                        <th class="poolMatrixCorner"></th>
+                        <th v-for="player in poolMatrixPlayers"
+                            :key="'head-' + player.playerId"
+                            class="poolMatrixPlayerHead">
+                          {{ player.playerName }}
+                        </th>
+                        <th class="poolMatrixSummaryHead">Point</th>
+                        <th class="poolMatrixSummaryHead">Score</th>
+                        <th class="poolMatrixSummaryHead">Placering</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="player in poolMatrixPlayers" :key="'row-' + player.playerId">
+                        <th class="poolMatrixRowHead">{{ player.playerName }}</th>
+
+                        <td v-for="opponent in poolMatrixPlayers"
+                            :key="player.playerId + '-' + opponent.playerId"
+                            class="poolMatrixCell"
+                            :class="poolMatrixCellClass(player.playerId, opponent.playerId)">
+                          <span v-if="player.playerId === opponent.playerId" class="poolMatrixDiagonal">—</span>
+
+                          <input v-else-if="poolMatrixCell(player.playerId, opponent.playerId)"
+                                 type="number"
+                                 step="1"
+                                 :value="poolMatrixCell(player.playerId, opponent.playerId).value === null ? '' : poolMatrixCell(player.playerId, opponent.playerId).value"
+                                 :disabled="!matchEditAllowed || savingPoolMatrix"
+                                 @input="onPoolMatrixInput(player.playerId, opponent.playerId, $event.target.value)"
+                                 :aria-label="player.playerName + ' score against ' + opponent.playerName">
+
+                          <span v-else class="poolMatrixNoMatch">—</span>
+                        </td>
+
+                        <td class="poolMatrixSummary">{{ poolMatrixStanding(player.playerId).points }}</td>
+                        <td class="poolMatrixSummary">
+                          {{ poolMatrixStanding(player.playerId).score }}
+                        </td>
+                        <td class="poolMatrixSummary poolMatrixPlace">{{ poolMatrixStanding(player.playerId).placeLabel }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="resultNote poolMatrixLegend">
+                  <strong>Point</strong> = wins.
+                  <strong>Score</strong> = the player's accumulated final scores from all completed matches.
+                  With 70 → 0, the lower score is better. With 0 → 70, the higher score is better.
+                  <strong>Placering</strong> is a live preview; an unresolved tie is shown with “=”.
+                </div>
+
+                <div v-if="poolMatrixError" class="resultMessage error">{{ poolMatrixError }}</div>
+                <div v-if="poolMatrixMessage" class="resultMessage success">{{ poolMatrixMessage }}</div>
+
+                <div class="resultActions poolMatrixActions">
+                  <button type="button"
+                          class="miniBtn"
+                          @click="resetPoolMatrixChanges"
+                          :disabled="savingPoolMatrix || !poolMatrixDirtyCount">
+                    Reset changes
+                  </button>
+                  <button type="button"
+                          class="saveResultBtn"
+                          @click="savePoolMatrix"
+                          :disabled="!matchEditAllowed || savingPoolMatrix || !poolMatrixDirtyCount">
+                    <i class="fa" :class="savingPoolMatrix ? 'fa-circle-o-notch fa-spin' : 'fa-save'"></i>
+                    {{ savingPoolMatrix ? 'Saving…' : 'Save pool results' }}
+                  </button>
+                </div>
+              </template>
+            </section>
+
             <section class="resultSection" v-else>
               <div class="resultNote">
-                This is a tournament, round or pool container. Select one of its child matches to enter a winner and loser.
+                This is a tournament or round container. Select a pool to enter results in a table, or select an individual match to use the normal result editor.
               </div>
             </section>
           </div>

@@ -214,8 +214,12 @@ namespace TournamentBackend.Controllers
                     registered = true,
                     registration = registration,
                     message = registration.AlreadyRegistered
-                        ? "You are already registered for this tournament."
-                        : "You are now registered for the tournament."
+                        ? (registration.AwaitingDraw
+                            ? "You are already registered. Waiting for the tournament administrator to assign your player place."
+                            : "You are already registered for this tournament.")
+                        : (registration.AwaitingDraw
+                            ? "You are registered. The tournament administrator will assign your player place in the manual draw."
+                            : "You are now registered for the tournament.")
                 });
             }
             catch (InvalidOperationException ex)

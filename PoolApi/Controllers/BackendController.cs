@@ -97,11 +97,13 @@ namespace TournamentBackend.Controllers
             }
 
             bool isPrivate = false;
+            bool manualPlayerDraw = false;
             string tournamentName = "Tournament";
             try
             {
                 JObject tournamentJson = JObject.Parse(model);
                 isPrivate = tournamentJson.Value<bool?>("privateTournament") ?? false;
+                manualPlayerDraw = tournamentJson.Value<bool?>("manualPlayerDraw") ?? false;
                 string suppliedName = tournamentJson.Value<string>("tournamentname");
                 if (!string.IsNullOrWhiteSpace(suppliedName))
                 {
@@ -124,11 +126,15 @@ namespace TournamentBackend.Controllers
 
             string? joinCode = ubo.ConfigureTournamentPrivacy(tournamentId, UserId, isPrivate);
 
+            TournamentDrawBackoffice drawBackoffice = new TournamentDrawBackoffice();
+            drawBackoffice.ConfigureManualDraw(tournamentId, UserId, manualPlayerDraw);
+
             return Ok(new
             {
                 Tournament = tournamentId,
                 isPrivate = isPrivate,
-                joinCode = joinCode
+                joinCode = joinCode,
+                manualPlayerDraw = manualPlayerDraw
             });
         }
 

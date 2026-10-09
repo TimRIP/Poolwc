@@ -72,6 +72,20 @@
                 </div>
               </div>
 
+              <div class="access-area">
+                <span class="small-label">Player assignment</span>
+                <div class="choice-row access-choice-row">
+                  <label class="choice-card" :class="{ selected: !formdata.manualPlayerDraw }">
+                    <input type="radio" :value="false" v-model="formdata.manualPlayerDraw">
+                    <span><strong>Assign when registering</strong><small>The next free Player:n place is assigned immediately when a player joins.</small></span>
+                  </label>
+                  <label class="choice-card" :class="{ selected: formdata.manualPlayerDraw }">
+                    <input type="radio" :value="true" v-model="formdata.manualPlayerDraw">
+                    <span><strong>Manual draw</strong><small>Players register first without a Player:n place. The tournament administrator assigns each registered player later from the Matches page.</small></span>
+                  </label>
+                </div>
+              </div>
+
               <div class="preset-area">
                 <span class="small-label">Quick setup</span>
                 <div class="preset-buttons">
@@ -129,6 +143,17 @@
                         <span><strong>Knockout</strong><small>Players are paired; winner and loser can be routed.</small></span>
                       </label>
                     </div>
+                  </div>
+
+                  <div class="form-grid two-col compact-grid">
+                    <label class="field">
+                      <span>Play from</span>
+                      <input type="number" min="0" step="1" v-model.number="runde.PlayFrom" @change="recalculate">
+                    </label>
+                    <label class="field">
+                      <span>Play to</span>
+                      <input type="number" min="0" step="1" v-model.number="runde.PlayTo" @change="recalculate">
+                    </label>
                   </div>
 
                   <template v-if="runde.selected === 'pool'">

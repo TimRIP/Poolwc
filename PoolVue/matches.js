@@ -181,6 +181,14 @@ const matchesApp = new Vue({
     editorMessage: '',
     newEditorUsername: '',
     savingEditor: false,
+    drawLoading: false,
+    drawStatus: null,
+    drawRegistrations: [],
+    drawSlots: [],
+    drawAssignments: {},
+    drawError: '',
+    drawMessage: '',
+    savingDraw: false,
     newVenueName: '',
     newVenueDescription: '',
     selectedVenueId: null,
@@ -192,7 +200,14 @@ const matchesApp = new Vue({
     savingResult: false,
     resultError: '',
     resultMessage: '',
-    lastAdvancement: null
+    lastAdvancement: null,
+    poolMatrixLoading: false,
+    poolMatrixError: '',
+    poolMatrixMessage: '',
+    poolMatrixPlayers: [],
+    poolMatrixMatches: [],
+    poolMatrixCells: {},
+    savingPoolMatrix: false
   },
 
   computed: {
@@ -288,7 +303,8 @@ const matchesApp = new Vue({
       const from = Number(this.matchDetails.matchRules.playFrom);
       const to = Number(this.matchDetails.matchRules.playTo);
       if (!Number.isFinite(from) || !Number.isFinite(to)) return '';
-      return 'Winner finishes on ' + to + '; stage tiebreak uses score difference';
+      const direction = to < from ? 'lower accumulated stage score is better' : 'higher accumulated stage score is better';
+      return 'Winner finishes on ' + to + '; ' + direction;
     },
 
     hasPlayTo() {
@@ -309,6 +325,169 @@ const matchesApp = new Vue({
         Number.isFinite(aScore) && Number.isFinite(bScore);
       if (!bothEntered) return '';
       return 'Score difference: ' + Math.abs(aScore - bScore);
+    },
+
+    poolMatrixCompletedMatches() {
+      let complete = 0;
+      for (const match of this.poolMatrixMatches) {
+        if (!match || !Array.isArray(match.seats) || match.seats.length !== 2) continue;
+        const a = match.seats[0];
+        const b = match.seats[1];
+        const ac = this.poolMatrixCells[this.poolMatrixPairKey(a.playerId, b.playerId, a.playerId)];
+        const bc = this.poolMatrixCells[this.poolMatrixPairKey(a.playerId, b.playerId, b.playerId)];
+        if (!ac || !bc) continue;
+        const av = ac.value;
+        const bv = bc.value;
+        const playTo = Number(match.matchRules && match.matchRules.playTo);
+        const both = av !== null && av !== '' && bv !== null && bv !== '' &&
+          Number.isFinite(Number(av)) && Number.isFinite(Number(bv));
+        if (!both || !Number.isFinite(playTo)) continue;
+        const winners = [Number(av), Number(bv)].filter(v => v === playTo).length;
+        if (winners === 1) complete++;
+      }
+      return complete;
+    },
+
+    poolMatrixDirtyCount() {
+      const dirty = new Set();
+      for (const key of Object.keys(this.poolMatrixCells)) {
+        const cell = this.poolMatrixCells[key];
+        const now = cell && cell.value !== '' && cell.value !== null && cell.value !== undefined
+          ? Number(cell.value)
+          : null;
+        const before = cell && cell.originalValue !== '' && cell.originalValue !== null && cell.originalValue !== undefined
+          ? Number(cell.originalValue)
+          : null;
+        if (now !== before) dirty.add(cell.matchId);
+      }
+      return dirty.size;
+    },
+
+    poolMatrixStandings() {
+      const stats = new Map();
+      for (const player of this.poolMatrixPlayers) {
+        stats.set(Number(player.playerId), {
+          playerId: Number(player.playerId),
+          playerName: player.playerName,
+          points: 0,
+          score: 0,
+          played: 0,
+          headToHead: 0,
+          place: null,
+          placeLabel: '–'
+        });
+      }
+
+      const completed = [];
+      for (const match of this.poolMatrixMatches) {
+        if (!match || !Array.isArray(match.seats) || match.seats.length !== 2) continue;
+        const a = match.seats[0];
+        const b = match.seats[1];
+        const ac = this.poolMatrixCells[this.poolMatrixPairKey(a.playerId, b.playerId, a.playerId)];
+        const bc = this.poolMatrixCells[this.poolMatrixPairKey(a.playerId, b.playerId, b.playerId)];
+        if (!ac || !bc) continue;
+
+        const av = ac.value;
+        const bv = bc.value;
+        const playTo = Number(match.matchRules && match.matchRules.playTo);
+        if (av === null || av === '' || bv === null || bv === '' ||
+            !Number.isFinite(Number(av)) || !Number.isFinite(Number(bv)) ||
+            !Number.isFinite(playTo)) {
+          continue;
+        }
+
+        const aScore = Number(av);
+        const bScore = Number(bv);
+        const aWins = aScore === playTo;
+        const bWins = bScore === playTo;
+        if (aWins === bWins) continue;
+
+        const winnerId = Number(aWins ? a.playerId : b.playerId);
+        const loserId = Number(aWins ? b.playerId : a.playerId);
+
+        const aStanding = stats.get(Number(a.playerId));
+        const bStanding = stats.get(Number(b.playerId));
+        const winner = stats.get(winnerId);
+        const loser = stats.get(loserId);
+        if (!winner || !loser || !aStanding || !bStanding) continue;
+
+        winner.points += 1;
+        // Score is the sum of the actual final scores the player has recorded
+        // in all completed matches. Example with 70 -> 0: 60 + 20 + 0 = 80.
+        aStanding.score += aScore;
+        bStanding.score += bScore;
+        winner.played += 1;
+        loser.played += 1;
+        completed.push({ winnerId, loserId });
+      }
+
+      const firstRules = this.poolMatrixMatches.find(x => x && x.matchRules)?.matchRules || {};
+      const playFrom = Number(firstRules.playFrom);
+      const playTo = Number(firstRules.playTo);
+      // If the game counts down (70 -> 0), lower accumulated score is better.
+      // If it counts up (0 -> 70), higher accumulated score is better.
+      const higherScoreIsBetter = Number.isFinite(playFrom) && Number.isFinite(playTo)
+        ? playTo > playFrom
+        : true;
+
+      const orderedBase = [...stats.values()].sort((a, b) =>
+        (b.points - a.points) ||
+        (higherScoreIsBetter ? (b.score - a.score) : (a.score - b.score)) ||
+        a.playerName.localeCompare(b.playerName)
+      );
+
+      // Match the backend ordering: points/wins, then accumulated score in the
+      // PlayFrom -> PlayTo direction, then head-to-head amongst remaining ties.
+      let i = 0;
+      while (i < orderedBase.length) {
+        const first = orderedBase[i];
+        let j = i + 1;
+        while (j < orderedBase.length &&
+               orderedBase[j].points === first.points &&
+               orderedBase[j].score === first.score) {
+          j++;
+        }
+
+        const tied = orderedBase.slice(i, j);
+        if (tied.length > 1) {
+          const tiedIds = new Set(tied.map(x => x.playerId));
+          for (const row of tied) {
+            row.headToHead = completed.filter(x =>
+              x.winnerId === row.playerId && tiedIds.has(x.loserId)
+            ).length;
+          }
+          tied.sort((a, b) =>
+            (b.headToHead - a.headToHead) ||
+            a.playerName.localeCompare(b.playerName)
+          );
+          orderedBase.splice(i, tied.length, ...tied);
+        }
+        i = j;
+      }
+
+      let place = 1;
+      for (let idx = 0; idx < orderedBase.length; idx++) {
+        const row = orderedBase[idx];
+        if (idx > 0) {
+          const prev = orderedBase[idx - 1];
+          const same = row.points === prev.points &&
+            row.score === prev.score &&
+            row.headToHead === prev.headToHead;
+          if (!same) place = idx + 1;
+        }
+        row.place = place;
+        const tiedWithPrev = idx > 0 &&
+          row.points === orderedBase[idx - 1].points &&
+          row.score === orderedBase[idx - 1].score &&
+          row.headToHead === orderedBase[idx - 1].headToHead;
+        const tiedWithNext = idx < orderedBase.length - 1 &&
+          row.points === orderedBase[idx + 1].points &&
+          row.score === orderedBase[idx + 1].score &&
+          row.headToHead === orderedBase[idx + 1].headToHead;
+        row.placeLabel = (tiedWithPrev || tiedWithNext ? '=' : '') + String(place);
+      }
+
+      return orderedBase;
     }
   },
 
@@ -328,6 +507,370 @@ const matchesApp = new Vue({
 
     displayValue(value) {
       return value === null || value === undefined ? 'Not set' : value;
+    },
+
+    resetPoolMatrix() {
+      this.poolMatrixLoading = false;
+      this.poolMatrixError = '';
+      this.poolMatrixMessage = '';
+      this.poolMatrixPlayers = [];
+      this.poolMatrixMatches = [];
+      this.poolMatrixCells = {};
+      this.savingPoolMatrix = false;
+    },
+
+    poolMatrixPairKey(playerA, playerB, ownerPlayerId) {
+      const a = Number(playerA);
+      const b = Number(playerB);
+      const low = Math.min(a, b);
+      const high = Math.max(a, b);
+      return low + ':' + high + ':' + Number(ownerPlayerId);
+    },
+
+    poolMatrixCell(playerId, opponentId) {
+      if (Number(playerId) === Number(opponentId)) return null;
+      return this.poolMatrixCells[this.poolMatrixPairKey(playerId, opponentId, playerId)] || null;
+    },
+
+    poolMatrixStanding(playerId) {
+      return this.poolMatrixStandings.find(x => Number(x.playerId) === Number(playerId)) || {
+        points: 0,
+        score: 0,
+        placeLabel: '–'
+      };
+    },
+
+    poolMatrixCellClass(playerId, opponentId) {
+      const cell = this.poolMatrixCell(playerId, opponentId);
+      const other = this.poolMatrixCell(opponentId, playerId);
+      if (!cell || !other) return {};
+      const playTo = Number(cell.playTo);
+      const mine = cell.value === '' || cell.value === null || cell.value === undefined ? null : Number(cell.value);
+      const theirs = other.value === '' || other.value === null || other.value === undefined ? null : Number(other.value);
+      return {
+        matrixWinner: Number.isFinite(playTo) && mine === playTo && theirs !== null && theirs !== playTo,
+        matrixLoser: Number.isFinite(playTo) && theirs === playTo && mine !== null && mine !== playTo,
+        matrixDirty: this.poolMatrixMatchDirty(cell.matchId)
+      };
+    },
+
+    poolMatrixMatchDirty(matchId) {
+      return Object.keys(this.poolMatrixCells).some(key => {
+        const cell = this.poolMatrixCells[key];
+        if (!cell || Number(cell.matchId) !== Number(matchId)) return false;
+        const now = cell.value !== '' && cell.value !== null && cell.value !== undefined ? Number(cell.value) : null;
+        const before = cell.originalValue !== '' && cell.originalValue !== null && cell.originalValue !== undefined ? Number(cell.originalValue) : null;
+        return now !== before;
+      });
+    },
+
+    findTreeNodeById(matchId) {
+      const wanted = Number(matchId);
+      const walk = nodes => {
+        for (const node of nodes || []) {
+          if (Number(node.matchId) === wanted) return node;
+          const found = walk(node.children);
+          if (found) return found;
+        }
+        return null;
+      };
+      return walk(this.roots);
+    },
+
+    async loadPoolMatrix(node) {
+      this.poolMatrixLoading = true;
+      this.poolMatrixError = '';
+      this.poolMatrixMessage = '';
+      this.poolMatrixPlayers = [];
+      this.poolMatrixMatches = [];
+      this.poolMatrixCells = {};
+
+      try {
+        const children = node && Array.isArray(node.children) ? node.children : [];
+        const childIds = children
+          .filter(child => child && child.matchId)
+          .map(child => Number(child.matchId));
+
+        if (!childIds.length) {
+          this.poolMatrixError = 'This pool has no playable matches.';
+          return;
+        }
+
+        const responses = await Promise.all(childIds.map(matchId =>
+          axios.get(
+            'http://localhost:5000/api/match/' + encodeURIComponent(matchId),
+            { headers: this.authHeaders() }
+          )
+        ));
+
+        const matches = [];
+        const playerMap = new Map();
+        const cells = {};
+
+        for (const response of responses) {
+          const details = this.normalizeMatchDetails(response.data);
+          const assigned = (details.seats || []).filter(seat =>
+            seat.playerId !== null && seat.playerId !== undefined
+          );
+
+          if (!details.individualMatch || assigned.length !== 2) continue;
+
+          const matrixMatch = Object.assign({}, details, { seats: assigned });
+          matches.push(matrixMatch);
+
+          for (const seat of assigned) {
+            const id = Number(seat.playerId);
+            if (!playerMap.has(id)) {
+              playerMap.set(id, {
+                playerId: id,
+                playerName: seat.playerName || ('Player #' + id)
+              });
+            }
+          }
+
+          const first = assigned[0];
+          const second = assigned[1];
+          for (const seat of assigned) {
+            const opponent = Number(seat.playerId) === Number(first.playerId) ? second : first;
+            const key = this.poolMatrixPairKey(first.playerId, second.playerId, seat.playerId);
+            cells[key] = {
+              matchId: details.matchId,
+              matchName: details.matchName,
+              seatId: seat.seatId,
+              playerId: Number(seat.playerId),
+              opponentId: Number(opponent.playerId),
+              value: seat.resultPoints === undefined ? null : seat.resultPoints,
+              originalValue: seat.resultPoints === undefined ? null : seat.resultPoints,
+              originalPlace: seat.resultMatchPlace === undefined ? null : seat.resultMatchPlace,
+              playFrom: details.matchRules ? details.matchRules.playFrom : null,
+              playTo: details.matchRules ? details.matchRules.playTo : null
+            };
+          }
+        }
+
+        this.poolMatrixMatches = matches.sort((a, b) => Number(a.matchId) - Number(b.matchId));
+        this.poolMatrixPlayers = [...playerMap.values()].sort((a, b) =>
+          a.playerName.localeCompare(b.playerName, undefined, { numeric: true })
+        );
+        this.poolMatrixCells = cells;
+
+        if (!this.poolMatrixMatches.length) {
+          this.poolMatrixError = 'This pool does not have any two-player matches with assigned players yet.';
+        }
+      } catch (e) {
+        console.error(e);
+        if (e.response && e.response.status === 401) {
+          this.poolMatrixError = 'You are not logged in, or your login has expired.';
+        } else {
+          this.poolMatrixError = 'Could not load the pool result table.';
+        }
+      } finally {
+        this.poolMatrixLoading = false;
+      }
+    },
+
+    onPoolMatrixInput(playerId, opponentId, rawValue) {
+      if (!this.matchEditAllowed) return;
+      const cell = this.poolMatrixCell(playerId, opponentId);
+      const other = this.poolMatrixCell(opponentId, playerId);
+      if (!cell || !other) return;
+
+      this.poolMatrixError = '';
+      this.poolMatrixMessage = '';
+
+      if (rawValue === '' || rawValue === null || rawValue === undefined) {
+        this.$set(cell, 'value', null);
+        this.$set(other, 'value', null);
+        return;
+      }
+
+      const value = Number(rawValue);
+      if (!Number.isFinite(value)) return;
+
+      this.$set(cell, 'value', value);
+
+      const playTo = Number(cell.playTo);
+      if (Number.isFinite(playTo)) {
+        if (value !== playTo) {
+          this.$set(other, 'value', playTo);
+        } else if (Number(other.value) === playTo) {
+          this.$set(other, 'value', null);
+        }
+      }
+    },
+
+    resetPoolMatrixChanges() {
+      for (const key of Object.keys(this.poolMatrixCells)) {
+        const cell = this.poolMatrixCells[key];
+        this.$set(cell, 'value', cell.originalValue);
+      }
+      this.poolMatrixError = '';
+      this.poolMatrixMessage = '';
+    },
+
+    validatePoolMatrixMatch(match) {
+      if (!match || !Array.isArray(match.seats) || match.seats.length !== 2) {
+        return { action: 'skip' };
+      }
+
+      const a = match.seats[0];
+      const b = match.seats[1];
+      const ac = this.poolMatrixCell(a.playerId, b.playerId);
+      const bc = this.poolMatrixCell(b.playerId, a.playerId);
+      if (!ac || !bc) return { action: 'skip' };
+
+      const dirty = this.poolMatrixMatchDirty(match.matchId);
+      if (!dirty) return { action: 'skip' };
+
+      const emptyA = ac.value === '' || ac.value === null || ac.value === undefined;
+      const emptyB = bc.value === '' || bc.value === null || bc.value === undefined;
+      const hadOriginal = ac.originalValue !== null || bc.originalValue !== null ||
+        ac.originalPlace !== null || bc.originalPlace !== null;
+
+      if (emptyA && emptyB) {
+        return hadOriginal
+          ? { action: 'clear', matchId: match.matchId, matchName: match.matchName }
+          : { action: 'skip' };
+      }
+
+      if (emptyA || emptyB) {
+        return { error: (match.matchName || ('Match #' + match.matchId)) + ': enter both final scores, or clear both cells.' };
+      }
+
+      const aScore = Number(ac.value);
+      const bScore = Number(bc.value);
+      if (!Number.isInteger(aScore) || !Number.isInteger(bScore)) {
+        return { error: (match.matchName || ('Match #' + match.matchId)) + ': scores must be whole numbers.' };
+      }
+
+      const playFrom = Number(match.matchRules && match.matchRules.playFrom);
+      const playTo = Number(match.matchRules && match.matchRules.playTo);
+      if (!Number.isFinite(playTo)) {
+        return { error: (match.matchName || ('Match #' + match.matchId)) + ': PlayTo is not configured.' };
+      }
+
+      if (Number.isFinite(playFrom)) {
+        const min = Math.min(playFrom, playTo);
+        const max = Math.max(playFrom, playTo);
+        if (aScore < min || aScore > max || bScore < min || bScore > max) {
+          return { error: (match.matchName || ('Match #' + match.matchId)) + ': scores must be between PlayFrom (' + playFrom + ') and PlayTo (' + playTo + ').' };
+        }
+      }
+
+      const aWinner = aScore === playTo;
+      const bWinner = bScore === playTo;
+      if (aWinner === bWinner) {
+        return { error: (match.matchName || ('Match #' + match.matchId)) + ': exactly one player must finish on PlayTo (' + playTo + ').' };
+      }
+
+      return {
+        action: 'save',
+        matchId: match.matchId,
+        matchName: match.matchName,
+        payload: {
+          matchId: match.matchId,
+          results: [
+            {
+              seatId: a.seatId,
+              resultMatchPlace: aWinner ? 1 : 2,
+              resultPoints: aScore
+            },
+            {
+              seatId: b.seatId,
+              resultMatchPlace: bWinner ? 1 : 2,
+              resultPoints: bScore
+            }
+          ]
+        }
+      };
+    },
+
+    async savePoolMatrix() {
+      if (!this.matchEditAllowed || !this.selectedIsPool || this.savingPoolMatrix) return;
+
+      const changes = [];
+      for (const match of this.poolMatrixMatches) {
+        const check = this.validatePoolMatrixMatch(match);
+        if (check.error) {
+          this.poolMatrixError = check.error;
+          this.poolMatrixMessage = '';
+          return;
+        }
+        if (check.action !== 'skip') changes.push(check);
+      }
+
+      if (!changes.length) {
+        this.poolMatrixMessage = 'No pool results have changed.';
+        this.poolMatrixError = '';
+        return;
+      }
+
+      this.savingPoolMatrix = true;
+      this.poolMatrixError = '';
+      this.poolMatrixMessage = '';
+
+      const poolMatchId = this.selectedMatchId;
+      let saved = 0;
+      let cleared = 0;
+      let latestAdvancement = null;
+
+      try {
+        for (const change of changes) {
+          let res;
+          if (change.action === 'clear') {
+            res = await axios.delete(
+              'http://localhost:5000/api/match/' + encodeURIComponent(change.matchId) + '/result',
+              { headers: this.authHeaders() }
+            );
+            cleared++;
+          } else {
+            res = await axios.post(
+              'http://localhost:5000/api/match/result',
+              change.payload,
+              {
+                headers: Object.assign(
+                  { 'Content-Type': 'application/json; charset=utf-8' },
+                  this.authHeaders()
+                )
+              }
+            );
+            saved++;
+          }
+
+          if (res && res.data && res.data.advancement) {
+            latestAdvancement = res.data.advancement;
+          }
+        }
+
+        if (this.currentTournamentId) {
+          await this.loadMatches(this.currentTournamentId, true);
+        }
+
+        const freshNode = this.findTreeNodeById(poolMatchId);
+        if (freshNode) {
+          this.selectedNode = freshNode;
+          this.selectedMatchId = poolMatchId;
+          await this.loadMatchDetails(poolMatchId);
+          await this.loadPoolMatrix(freshNode);
+        }
+
+        this.lastAdvancement = latestAdvancement;
+        const pieces = [];
+        if (saved) pieces.push(saved + ' match' + (saved === 1 ? '' : 'es') + ' saved');
+        if (cleared) pieces.push(cleared + ' match' + (cleared === 1 ? '' : 'es') + ' cleared');
+        this.poolMatrixMessage = pieces.join(', ') + '.';
+      } catch (e) {
+        console.error(e);
+        if (e.response && e.response.status === 401) {
+          this.poolMatrixError = 'You are not logged in, or your login has expired.';
+        } else if (e.response && e.response.data && e.response.data.message) {
+          this.poolMatrixError = e.response.data.message;
+        } else {
+          this.poolMatrixError = 'Could not save all pool results. Any matches saved before the error remain saved.';
+        }
+      } finally {
+        this.savingPoolMatrix = false;
+      }
     },
 
     onSearchInput() {
@@ -403,7 +946,11 @@ const matchesApp = new Vue({
       this.lastAdvancement = null;
       this.venueError = '';
       this.venueMessage = '';
+      this.resetPoolMatrix();
       await this.loadMatchDetails(node.matchId);
+      if (this.selectedIsPool) {
+        await this.loadPoolMatrix(node);
+      }
     },
 
     normalizeMatchDetails(data) {
@@ -422,7 +969,8 @@ const matchesApp = new Vue({
           playerId: s.playerId === undefined ? null : s.playerId,
           playerName: s.playerName || null,
           resultMatchPlace: s.resultMatchPlace === undefined ? null : s.resultMatchPlace,
-          resultPoints: s.resultPoints === undefined ? null : s.resultPoints
+          resultPoints: s.resultPoints === undefined ? null : s.resultPoints,
+          mmr: s.mmr === undefined ? null : s.mmr
         }))
       };
     },
@@ -635,6 +1183,105 @@ const matchesApp = new Vue({
           : 'Could not remove the match editor.';
       } finally {
         this.savingEditor = false;
+      }
+    },
+
+    async loadPlayerDraw(tournamentId) {
+      const tid = Number(tournamentId);
+      if (!Number.isFinite(tid) || tid <= 0 || !this.isTournamentAdmin) {
+        this.drawStatus = null;
+        this.drawRegistrations = [];
+        this.drawSlots = [];
+        this.drawAssignments = {};
+        return;
+      }
+
+      this.drawLoading = true;
+      this.drawError = '';
+      this.drawMessage = '';
+      try {
+        const res = await axios.get(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(tid) + '/player-draw',
+          { headers: this.authHeaders() }
+        );
+
+        this.drawStatus = res.data && res.data.status ? res.data.status : null;
+        this.drawRegistrations = res.data && Array.isArray(res.data.registrations) ? res.data.registrations : [];
+        this.drawSlots = res.data && Array.isArray(res.data.slots) ? res.data.slots : [];
+
+        const next = {};
+        for (const registration of this.drawRegistrations) {
+          this.$set(next, String(registration.userId), registration.playerId ? Number(registration.playerId) : '');
+        }
+        this.drawAssignments = next;
+      } catch (e) {
+        console.error(e);
+        this.drawStatus = null;
+        this.drawRegistrations = [];
+        this.drawSlots = [];
+        this.drawAssignments = {};
+        this.drawError = (e.response && e.response.data && e.response.data.message)
+          ? e.response.data.message
+          : 'Could not load the manual player draw.';
+      } finally {
+        this.drawLoading = false;
+      }
+    },
+
+    drawSlotTakenByOther(playerId, userId) {
+      const target = Number(playerId);
+      const owner = Number(userId);
+      return Object.keys(this.drawAssignments).some(key => {
+        const selected = Number(this.drawAssignments[key]);
+        return Number(key) !== owner && selected > 0 && selected === target;
+      });
+    },
+
+    async savePlayerDraw() {
+      if (!this.currentTournamentId || !this.isTournamentAdmin || !this.drawStatus || !this.drawStatus.usePlayerDraw) return;
+
+      const assignments = [];
+      const seenPlayers = new Set();
+      for (const registration of this.drawRegistrations) {
+        const playerId = Number(this.drawAssignments[String(registration.userId)]);
+        if (!Number.isFinite(playerId) || playerId <= 0) continue;
+        if (seenPlayers.has(playerId)) {
+          this.drawError = 'The same Player:n place cannot be assigned to more than one registered player.';
+          return;
+        }
+        seenPlayers.add(playerId);
+        assignments.push({ userId: Number(registration.userId), playerId: playerId });
+      }
+
+      this.savingDraw = true;
+      this.drawError = '';
+      this.drawMessage = '';
+      try {
+        const res = await axios.post(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(this.currentTournamentId) + '/player-draw',
+          { assignments: assignments },
+          {
+            headers: Object.assign(
+              { 'Content-Type': 'application/json; charset=utf-8' },
+              this.authHeaders()
+            )
+          }
+        );
+
+        const savedMessage = res.data && res.data.message ? res.data.message : 'Manual draw saved.';
+
+        // Refresh the tree because Player:n names may now have changed to registered player names.
+        const selected = this.selectedMatchId;
+        await this.loadMatches(this.currentTournamentId, true);
+        if (selected) this.selectedMatchId = selected;
+        this.drawMessage = savedMessage;
+      } catch (e) {
+        console.error(e);
+        this.drawError = (e.response && e.response.data && e.response.data.message)
+          ? e.response.data.message
+          : 'Could not save the manual player draw.';
+      } finally {
+        this.savingDraw = false;
       }
     },
 
@@ -1095,6 +1742,7 @@ const matchesApp = new Vue({
         this.currentTournamentId = tid;
         this.selectedTournamentId = String(tid);
         await this.loadMatchEditAccess(tid);
+        await this.loadPlayerDraw(tid);
         await this.loadPoolSchedules(tid);
         await this.loadVenues(tid);
         if (!preserveSelection) {
@@ -1107,6 +1755,7 @@ const matchesApp = new Vue({
           this.resultError = '';
           this.resultMessage = '';
           this.lastAdvancement = null;
+          this.resetPoolMatrix();
         }
         this.expandAll();
         localStorage.setItem('lastTournamentId', String(tid));

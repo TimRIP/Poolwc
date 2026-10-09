@@ -931,3 +931,19 @@ BEGIN
     );
 END;
 GO
+
+IF COL_LENGTH('dbo.Tournament', 'UsePlayerDraw') IS NULL
+BEGIN
+    ALTER TABLE dbo.Tournament
+    ADD UsePlayerDraw BIT NOT NULL
+        CONSTRAINT DF_Tournament_UsePlayerDraw DEFAULT (0);
+END
+GO
+
+IF COL_LENGTH('dbo.Tournament', 'PlayerDrawCompleted') IS NULL
+BEGIN
+    ALTER TABLE dbo.Tournament
+    ADD PlayerDrawCompleted BIT NOT NULL
+        CONSTRAINT DF_Tournament_PlayerDrawCompleted DEFAULT (0);
+END
+GO

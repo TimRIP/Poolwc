@@ -98,12 +98,14 @@ namespace TournamentBackend
             public List<int> poolSizes = new List<int>();
             public string playstyle;
             public int BestOf;
+            public int PlayFrom;
+            public int PlayTo;
             public List<int> whereto = new List<int>();
             public List<Pulje> puljer = new List<Pulje>();
 
             public override string ToString()
             {
-                string str = "Runde:(" + name + ") NbPlayers:" + NbPlayers + " puljesize:" + puljesize + " playstyle:" + playstyle + " BestOf:" + BestOf + "\r\n";
+                string str = "Runde:(" + name + ") NbPlayers:" + NbPlayers + " puljesize:" + puljesize + " playstyle:" + playstyle + " BestOf:" + BestOf + " PlayFrom:" + PlayFrom + " PlayTo:" + PlayTo + "\r\n";
 
                 if (whereto != null)
                 {
@@ -346,6 +348,30 @@ namespace TournamentBackend
                     Best = Int32.Parse(item.GetValue("BestOf").ToString());
                 }
                 run.BestOf = Best;
+
+                // Match scoring is configured per stage. Older clients that do
+                // not send these values keep the original 70 -> 0 behaviour.
+                int playFrom = 70;
+                int playTo = 0;
+                JToken playFromToken = item.GetValue("PlayFrom");
+                JToken playToToken = item.GetValue("PlayTo");
+                int parsedPlayFrom;
+                int parsedPlayTo;
+                if (playFromToken != null && Int32.TryParse(playFromToken.ToString(), out parsedPlayFrom))
+                {
+                    playFrom = parsedPlayFrom;
+                }
+                if (playToToken != null && Int32.TryParse(playToToken.ToString(), out parsedPlayTo))
+                {
+                    playTo = parsedPlayTo;
+                }
+                if (playFrom < 0 || playTo < 0 || playFrom == playTo)
+                {
+                    throw new ArgumentException("Play from and Play to must be different non-negative whole numbers.");
+                }
+
+                run.PlayFrom = playFrom;
+                run.PlayTo = playTo;
                 run.NbPlayers = NbPlayers;
                 run.puljesize = puljesize;
 
@@ -418,7 +444,7 @@ namespace TournamentBackend
 
                     if (String.Compare(playstyle, "beerpot") == 0)
                     {
-                        MatchRuleId = ubo.SP_CreateMatchRule(3, 70, 0, null);
+                        MatchRuleId = ubo.SP_CreateMatchRule(3, playFrom, playTo, null);
                     }
                     else if (String.Compare(playstyle, "swiss") == 0)
                     {
@@ -439,13 +465,13 @@ namespace TournamentBackend
                         // databases and also gives the match editor a useful description.
                         MatchRuleId = ubo.SP_CreateMatchRule(
                             2,
-                            70,
-                            0,
+                            playFrom,
+                            playTo,
                             "Swiss system: " + swissRounds + " rounds");
                     }
                     else if (String.Compare(playstyle, "roundrobin") == 0)
                     {
-                        MatchRuleId = ubo.SP_CreateMatchRule(1, 70, 0, null);
+                        MatchRuleId = ubo.SP_CreateMatchRule(1, playFrom, playTo, null);
                     }
 
                     if (String.Compare(playstyle, "beerpot") == 0)

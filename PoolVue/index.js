@@ -118,6 +118,7 @@ var dash = new Vue({
       tournamentname: 'New tournament',
       tournamentplayers: 8,
       privateTournament: false,
+      manualPlayerDraw: false,
       rundearray: [
         {
           _key: 1,
@@ -125,6 +126,8 @@ var dash = new Vue({
           NbPlayers: 8,
           selected: 'pool',
           BestOf: 1,
+          PlayFrom: 70,
+          PlayTo: 0,
           puljesize: 4,
           distributeEvenly: true,
           poolSizes: [4, 4],
@@ -242,6 +245,8 @@ var dash = new Vue({
         NbPlayers: players,
         selected: 'pool',
         BestOf: 1,
+        PlayFrom: 70,
+        PlayTo: 0,
         puljesize: poolSize,
         distributeEvenly: true,
         poolSizes: this.calculateEvenPoolSizes(players, poolSize),
@@ -258,6 +263,8 @@ var dash = new Vue({
         NbPlayers: players,
         selected: 'knockout',
         BestOf: 1,
+        PlayFrom: 70,
+        PlayTo: 0,
         puljesize: 2,
         distributeEvenly: false,
         poolSizes: [],
@@ -370,6 +377,8 @@ var dash = new Vue({
             NbPlayers: players,
             selected: 'pool',
             BestOf: 1,
+            PlayFrom: 70,
+            PlayTo: 0,
             puljesize: Math.min(4, players),
             distributeEvenly: true,
             poolSizes: [],
@@ -406,6 +415,8 @@ var dash = new Vue({
         NbPlayers: 0,
         selected: 'knockout',
         BestOf: 1,
+        PlayFrom: previous && Number.isInteger(Number(previous.PlayFrom)) ? Number(previous.PlayFrom) : 70,
+        PlayTo: previous && Number.isInteger(Number(previous.PlayTo)) ? Number(previous.PlayTo) : 0,
         puljesize: 2,
         distributeEvenly: false,
         poolSizes: [],
@@ -597,6 +608,18 @@ var dash = new Vue({
           errors.push({ type: 'stage-players-' + i, description: label + ': fewer than 2 players are routed into this stage.' });
         }
 
+        var playFrom = Number(round.PlayFrom);
+        var playTo = Number(round.PlayTo);
+        if (!Number.isInteger(playFrom) || playFrom < 0) {
+          errors.push({ type: 'play-from-' + i, description: label + ': Play from must be a non-negative whole number.' });
+        }
+        if (!Number.isInteger(playTo) || playTo < 0) {
+          errors.push({ type: 'play-to-' + i, description: label + ': Play to must be a non-negative whole number.' });
+        }
+        if (Number.isInteger(playFrom) && Number.isInteger(playTo) && playFrom === playTo) {
+          errors.push({ type: 'play-range-' + i, description: label + ': Play from and Play to must be different.' });
+        }
+
         if (round.selected === 'pool') {
           var size = Number(round.puljesize);
           if (!Number.isInteger(size) || size < 2) {
@@ -721,10 +744,10 @@ var dash = new Vue({
         if (round.playstyle === 'swiss') {
           style += ' • ' + (Number(round.swissRounds) || this.recommendedSwissRounds(round.puljesize)) + ' rounds';
         }
-        return players + ' players • ' + this.groupSummary(round) + ' • ' + style;
+        return players + ' players • ' + this.groupSummary(round) + ' • ' + style + ' • ' + (Number(round.PlayFrom) || 0) + ' → ' + (Number(round.PlayTo) || 0);
       }
       if (round.selected === 'knockout') {
-        return players + ' players • Knockout • Best of ' + (round.BestOf || 1);
+        return players + ' players • Knockout • Best of ' + (round.BestOf || 1) + ' • ' + (Number(round.PlayFrom) || 0) + ' → ' + (Number(round.PlayTo) || 0);
       }
       return players + ' players • Format not selected';
     },
@@ -755,6 +778,9 @@ var dash = new Vue({
       if (this.formdata.privateTournament === undefined) {
         this.$set(this.formdata, 'privateTournament', false);
       }
+      if (this.formdata.manualPlayerDraw === undefined) {
+        this.$set(this.formdata, 'manualPlayerDraw', false);
+      }
       this.activePreset = 'custom';
       this.uiMessage = 'Saved draft loaded.';
 
@@ -764,6 +790,12 @@ var dash = new Vue({
         }
         if (this.formdata.rundearray[i].selected === 'pool' && this.formdata.rundearray[i].distributeEvenly === undefined) {
           this.$set(this.formdata.rundearray[i], 'distributeEvenly', true);
+        }
+        if (!Number.isInteger(Number(this.formdata.rundearray[i].PlayFrom))) {
+          this.$set(this.formdata.rundearray[i], 'PlayFrom', 70);
+        }
+        if (!Number.isInteger(Number(this.formdata.rundearray[i].PlayTo))) {
+          this.$set(this.formdata.rundearray[i], 'PlayTo', 0);
         }
         if (this.formdata.rundearray[i].playstyle === 'swiss') {
           this.$set(this.formdata.rundearray[i], 'BestOf', 1);
