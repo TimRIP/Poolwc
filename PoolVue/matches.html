@@ -66,6 +66,7 @@
           <div v-if="venueLoading" class="resultNote">Loading venues…</div>
 
           <template v-else-if="venueAdminAllowed">
+            <div class="resultNote editorPermissionNote">Venues are unique to this tournament. A venue created here is not shared with your other tournaments.</div>
             <form class="venueCreateForm" @submit.prevent="createVenue">
               <label>
                 <span>Venue name</span>

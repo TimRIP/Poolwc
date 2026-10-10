@@ -947,3 +947,96 @@ BEGIN
         CONSTRAINT DF_Tournament_PlayerDrawCompleted DEFAULT (0);
 END
 GO
+
+
+/*
+Tournament-scoped venues + automatic pool scheduling support.
+
+Run this once on an existing database before using the new tournament builder.
+It does not drop tournaments, matches, schedules, or facilities.
+*/
+
+IF COL_LENGTH('dbo.Facility', 'TournamentId') IS NULL
+BEGIN
+    ALTER TABLE dbo.Facility
+    ADD TournamentId INT NULL;
+END
+GO
+
+/*
+Backfill legacy venues when they are already used by exactly one tournament.
+A venue that was historically shared by several tournaments is left NULL so it
+is not silently claimed by the wrong tournament. Existing schedule rows keep
+working because they still reference the same Facility row.
+*/
+;WITH TournamentTree AS
+(
+    SELECT
+        T.Id AS TournamentId,
+        M.Id AS MatchId,
+        CAST('|' + CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX)) AS [Path]
+    FROM dbo.Tournament T
+    INNER JOIN dbo.[Match] M ON M.Id = T.MatchId
+
+    UNION ALL
+
+    SELECT
+        TT.TournamentId,
+        M.Id,
+        CAST(TT.[Path] + CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX))
+    FROM dbo.[Match] M
+    INNER JOIN TournamentTree TT ON M.ParentMatchId = TT.MatchId
+    WHERE CHARINDEX('|' + CAST(M.Id AS VARCHAR(20)) + '|', TT.[Path]) = 0
+),
+FacilityUsage AS
+(
+    SELECT DISTINCT
+        S.FacilityId,
+        TT.TournamentId
+    FROM TournamentTree TT
+    INNER JOIN dbo.[Match] M ON M.Id = TT.MatchId
+    INNER JOIN dbo.Schedule S ON S.Id = M.ScheduleId
+    WHERE S.FacilityId IS NOT NULL
+),
+SingleTournamentUsage AS
+(
+    SELECT
+        FacilityId,
+        MIN(TournamentId) AS TournamentId
+    FROM FacilityUsage
+    GROUP BY FacilityId
+    HAVING COUNT(*) = 1
+)
+UPDATE F
+SET TournamentId = U.TournamentId
+FROM dbo.Facility F
+INNER JOIN SingleTournamentUsage U ON U.FacilityId = F.Id
+WHERE F.TournamentId IS NULL
+OPTION (MAXRECURSION 0);
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = 'FK_Facility_TournamentId'
+)
+BEGIN
+    ALTER TABLE dbo.Facility
+    ADD CONSTRAINT FK_Facility_TournamentId
+        FOREIGN KEY (TournamentId)
+        REFERENCES dbo.Tournament(Id);
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.indexes
+    WHERE name = 'IX_Facility_TournamentId'
+      AND object_id = OBJECT_ID('dbo.Facility')
+)
+BEGIN
+    CREATE INDEX IX_Facility_TournamentId
+        ON dbo.Facility(TournamentId, Name);
+END
+GO
+

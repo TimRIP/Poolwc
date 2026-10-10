@@ -102,6 +102,32 @@ var match = new Vue({
 /* =========================
    Tournament builder
    ========================= */
+function defaultTournamentStart() {
+  var d = new Date();
+  d.setSeconds(0, 0);
+  var roundedMinutes = Math.ceil(d.getMinutes() / 15) * 15;
+  d.setMinutes(roundedMinutes);
+
+  function pad(value) {
+    return String(value).padStart(2, '0');
+  }
+
+  return d.getFullYear() + '-' +
+    pad(d.getMonth() + 1) + '-' +
+    pad(d.getDate()) + 'T' +
+    pad(d.getHours()) + ':' +
+    pad(d.getMinutes());
+}
+
+function timeValueToMinutes(value) {
+  if (typeof value !== 'string' || !/^\d{2}:\d{2}$/.test(value)) return null;
+  var parts = value.split(':');
+  var hours = Number(parts[0]);
+  var minutes = Number(parts[1]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
 var dash = new Vue({
   el: '#dashboard',
   data: {
@@ -119,6 +145,15 @@ var dash = new Vue({
       tournamentplayers: 8,
       privateTournament: false,
       manualPlayerDraw: false,
+      autoSchedule: true,
+      scheduleStart: defaultTournamentStart(),
+      gameLengthMinutes: 30,
+      venueOpenTime: '09:00',
+      venueCloseTime: '22:00',
+      venues: [
+        { name: 'Table 1', description: '' },
+        { name: 'Table 2', description: '' }
+      ],
       rundearray: [
         {
           _key: 1,
@@ -151,6 +186,17 @@ var dash = new Vue({
   methods: {
     newKey: function () {
       return this.nextKey++;
+    },
+
+    addVenue: function () {
+      this.formdata.venues.push({ name: 'Table ' + (this.formdata.venues.length + 1), description: '' });
+      this.recalculate();
+    },
+
+    removeVenue: function (index) {
+      if (!Array.isArray(this.formdata.venues) || this.formdata.venues.length <= 1) return;
+      this.formdata.venues.splice(index, 1);
+      this.recalculate();
     },
 
     isPowerOfTwo: function (value) {
@@ -590,6 +636,56 @@ var dash = new Vue({
       }
       if (!rounds.length) errors.push({ type: 'rounds', description: 'Add at least one stage.' });
 
+      var venues = Array.isArray(this.formdata.venues) ? this.formdata.venues : [];
+      var venueNames = venues
+        .map(function (venue) { return ((venue && venue.name) || '').trim(); })
+        .filter(function (venueName) { return venueName.length > 0; });
+
+      var seenVenueNames = {};
+      venueNames.forEach(function (venueName) {
+        var key = venueName.toLowerCase();
+        if (seenVenueNames[key]) {
+          errors.push({ type: 'venue-duplicate-' + key, description: 'Venue names must be unique inside the tournament: ' + venueName + '.' });
+        }
+        seenVenueNames[key] = true;
+      });
+
+      venues.forEach(function (venue, venueIndex) {
+        var venueName = ((venue && venue.name) || '').trim();
+        var venueDescription = ((venue && venue.description) || '').trim();
+        if (venueName.length > 255) {
+          errors.push({ type: 'venue-name-' + venueIndex, description: 'Venue ' + (venueIndex + 1) + ': name can be at most 255 characters.' });
+        }
+        if (venueDescription.length > 255) {
+          errors.push({ type: 'venue-description-' + venueIndex, description: 'Venue ' + (venueIndex + 1) + ': description can be at most 255 characters.' });
+        }
+      });
+
+      if (this.formdata.autoSchedule) {
+        if (!venueNames.length) {
+          errors.push({ type: 'auto-schedule-venues', description: 'Automatic scheduling needs at least one tournament venue.' });
+        }
+        if (!this.formdata.scheduleStart) {
+          errors.push({ type: 'auto-schedule-start', description: 'Automatic scheduling needs a tournament start date and time.' });
+        }
+        var gameLength = Number(this.formdata.gameLengthMinutes);
+        if (!Number.isInteger(gameLength) || gameLength < 1 || gameLength > 1440) {
+          errors.push({ type: 'auto-schedule-length', description: 'Game length must be a whole number from 1 to 1440 minutes.' });
+        }
+
+        var venueOpenMinutes = timeValueToMinutes(this.formdata.venueOpenTime);
+        var venueCloseMinutes = timeValueToMinutes(this.formdata.venueCloseTime);
+        if (venueOpenMinutes === null) {
+          errors.push({ type: 'venue-open-time', description: 'Set the daily venue opening time.' });
+        }
+        if (venueCloseMinutes === null) {
+          errors.push({ type: 'venue-close-time', description: 'Set the daily venue closing time.' });
+        }
+        if (venueOpenMinutes !== null && venueCloseMinutes !== null && venueCloseMinutes <= venueOpenMinutes) {
+          errors.push({ type: 'venue-hours', description: 'Venue closing time must be later than opening time.' });
+        }
+      }
+
       for (var i = 0; i < rounds.length; i++) {
         var round = rounds[i];
         var label = round.navn || ('Stage ' + (i + 1));
@@ -781,6 +877,27 @@ var dash = new Vue({
       if (this.formdata.manualPlayerDraw === undefined) {
         this.$set(this.formdata, 'manualPlayerDraw', false);
       }
+      if (this.formdata.autoSchedule === undefined) {
+        this.$set(this.formdata, 'autoSchedule', true);
+      }
+      if (!this.formdata.scheduleStart) {
+        this.$set(this.formdata, 'scheduleStart', defaultTournamentStart());
+      }
+      if (!Number.isInteger(Number(this.formdata.gameLengthMinutes)) || Number(this.formdata.gameLengthMinutes) < 1) {
+        this.$set(this.formdata, 'gameLengthMinutes', 30);
+      }
+      if (timeValueToMinutes(this.formdata.venueOpenTime) === null) {
+        this.$set(this.formdata, 'venueOpenTime', '09:00');
+      }
+      if (timeValueToMinutes(this.formdata.venueCloseTime) === null) {
+        this.$set(this.formdata, 'venueCloseTime', '22:00');
+      }
+      if (!Array.isArray(this.formdata.venues) || !this.formdata.venues.length) {
+        this.$set(this.formdata, 'venues', [
+          { name: 'Table 1', description: '' },
+          { name: 'Table 2', description: '' }
+        ]);
+      }
       this.activePreset = 'custom';
       this.uiMessage = 'Saved draft loaded.';
 
@@ -856,6 +973,16 @@ var dash = new Vue({
           localStorage.removeItem('lastTournamentJoinCode');
         }
         match.TurnamentId = id;
+
+        var scheduledPools = Number(response.data.scheduledPools || 0);
+        var venueCount = Number(response.data.venueCount || 0);
+        if (scheduledPools > 0) {
+          this.uiMessage = 'Tournament created. ' + scheduledPools + ' pools were automatically scheduled across ' + venueCount + ' venue' + (venueCount === 1 ? '' : 's') + '.';
+        } else if (venueCount > 0) {
+          this.uiMessage = 'Tournament created with ' + venueCount + ' tournament venue' + (venueCount === 1 ? '' : 's') + '.';
+        } else {
+          this.uiMessage = 'Tournament created.';
+        }
       }.bind(this))
       .catch(function (error) {
         if (error.response && error.response.status === 401) {

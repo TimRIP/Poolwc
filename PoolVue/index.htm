@@ -86,6 +86,71 @@
                 </div>
               </div>
 
+              <div class="access-area schedule-setup-area">
+                <div class="schedule-setup-heading">
+                  <div>
+                    <span class="small-label">Venues &amp; automatic schedule</span>
+                    <p>Venues belong only to this tournament. Pools are automatically placed on available venues in stage order.</p>
+                  </div>
+                  <label class="schedule-toggle">
+                    <input type="checkbox" v-model="formdata.autoSchedule" @change="recalculate">
+                    <span>Auto schedule</span>
+                  </label>
+                </div>
+
+                <div class="form-grid two-col schedule-settings">
+                  <label class="field">
+                    <span>Tournament starts</span>
+                    <input type="datetime-local" v-model="formdata.scheduleStart" @change="recalculate">
+                  </label>
+                  <label class="field">
+                    <span>Game length (minutes)</span>
+                    <input type="number" min="1" max="1440" step="1" v-model.number="formdata.gameLengthMinutes" @change="recalculate">
+                  </label>
+                  <label class="field">
+                    <span>Venues open each day</span>
+                    <input type="time" v-model="formdata.venueOpenTime" @change="recalculate">
+                  </label>
+                  <label class="field">
+                    <span>Venues close each day</span>
+                    <input type="time" v-model="formdata.venueCloseTime" @change="recalculate">
+                  </label>
+                </div>
+
+                <div class="venue-builder">
+                  <div class="venue-builder-heading">
+                    <div>
+                      <strong>Tournament venues</strong>
+                      <small>Examples: Table 1, Table 2, Main room.</small>
+                    </div>
+                    <button type="button" class="secondary-btn" @click="addVenue">
+                      <i class="fa fa-plus"></i> Add venue
+                    </button>
+                  </div>
+
+                  <div class="venue-builder-list">
+                    <div class="venue-builder-row" v-for="(venue, venueIndex) in formdata.venues" :key="'venue-' + venueIndex">
+                      <label class="field">
+                        <span>Venue {{ venueIndex + 1 }}</span>
+                        <input type="text" maxlength="255" v-model.trim="venue.name" @input="recalculate" placeholder="Table 1">
+                      </label>
+                      <label class="field venue-description-field">
+                        <span>Description (optional)</span>
+                        <input type="text" maxlength="255" v-model.trim="venue.description" placeholder="Main room">
+                      </label>
+                      <button type="button" class="icon-btn danger venue-remove-btn" @click="removeVenue(venueIndex)" :disabled="formdata.venues.length <= 1" title="Remove venue">
+                        <i class="fa fa-trash"></i>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="schedule-explanation" v-if="formdata.autoSchedule">
+                    <i class="fa fa-clock-o"></i>
+                    A pool uses one venue. Its estimated duration is the number of matches in the pool × game length. Pools in the same stage run in parallel where venues are available. When closing time is reached, scheduling pauses and continues from opening time the next day; the next stage starts after the previous stage is estimated to finish.
+                  </div>
+                </div>
+              </div>
+
               <div class="preset-area">
                 <span class="small-label">Quick setup</span>
                 <div class="preset-buttons">

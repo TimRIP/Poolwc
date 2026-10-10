@@ -550,3 +550,87 @@ input:disabled { color: #aeb9ca; background: rgba(255,255,255,.04); }
   .ruler-board-header { flex-direction: column; }
   .ruler-board-header .secondary-btn { width: 100%; }
 }
+
+/* ===== Tournament venues & automatic scheduling ===== */
+input[type="datetime-local"] {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(255,255,255,.18);
+  background: #111b29;
+  color: #fff;
+  border-radius: 10px;
+  padding: 9px 11px;
+  outline: none;
+  box-sizing: border-box;
+}
+input[type="datetime-local"]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(119,168,255,.14);
+}
+.schedule-setup-area {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.schedule-setup-heading,
+.venue-builder-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.schedule-setup-heading p {
+  margin: 5px 0 0;
+  font-size: 13px;
+}
+.schedule-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #151f2e;
+  color: #dfe8f7;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.schedule-settings { margin-top: 14px; }
+.venue-builder {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255,255,255,.025);
+}
+.venue-builder-heading strong { display: block; }
+.venue-builder-heading small { display: block; margin-top: 4px; color: var(--muted); }
+.venue-builder-list { margin-top: 12px; display: grid; gap: 10px; }
+.venue-builder-row {
+  display: grid;
+  grid-template-columns: minmax(160px, .8fr) minmax(180px, 1fr) 42px;
+  gap: 10px;
+  align-items: end;
+}
+.venue-remove-btn { margin-bottom: 2px; }
+.schedule-explanation {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(119,168,255,.08);
+  border: 1px solid rgba(119,168,255,.2);
+  color: #cbd9ee;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.schedule-explanation i { margin-right: 6px; color: var(--accent-2); }
+
+@media (max-width: 760px) {
+  .schedule-setup-heading,
+  .venue-builder-heading { flex-direction: column; }
+  .schedule-toggle { align-self: flex-start; }
+  .venue-builder-row { grid-template-columns: 1fr 42px; }
+  .venue-description-field { grid-column: 1 / 2; }
+  .venue-remove-btn { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+}
