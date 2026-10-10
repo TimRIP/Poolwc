@@ -1015,3 +1015,193 @@
     width: 100%;
   }
 }
+
+/* Player match finder ---------------------------------------------------- */
+.playerFinderSearchRow {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.playerFinderSearchField {
+  display: grid;
+  gap: 5px;
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.playerFinderSearchField span {
+  color: #91a5c2;
+  font-size: 12px;
+}
+
+.playerFinderSearchField input {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  padding: 8px 11px;
+  border: 1px solid #40536f;
+  border-radius: 8px;
+  background: #09121f;
+  color: #fff;
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.playerFinderSearchField input:focus {
+  outline: 2px solid #67a2ff;
+  outline-offset: 1px;
+}
+
+.playerFinderResults {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+  max-height: 330px;
+  overflow: auto;
+}
+
+.playerFinderResult {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #33445d;
+  border-radius: 9px;
+  background: #0f1a2a;
+  color: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.playerFinderResult:hover,
+.playerFinderResult:focus-visible {
+  border-color: #67a2ff;
+  background: #142238;
+}
+
+.playerFinderResult > span:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.playerFinderResult small,
+.playerMatchHeader span,
+.playerMatchCardTop span {
+  color: #91a5c2;
+}
+
+.playerFinderMmr {
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.playerFinderMmr.guest {
+  font-weight: 400;
+  color: #91a5c2;
+}
+
+.playerMatchList {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.playerMatchHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #33445d;
+}
+
+.playerMatchHeader > div {
+  display: grid;
+  gap: 2px;
+}
+
+.playerMatchCard {
+  width: 100%;
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid #33445d;
+  border-radius: 10px;
+  background: #0f1a2a;
+  color: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.playerMatchCard:hover,
+.playerMatchCard:focus-visible {
+  border-color: #67a2ff;
+  background: #142238;
+}
+
+.playerMatchCardTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 12px;
+}
+
+.playerMatchCardTop > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.playerMatchStatus {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.playerMatchStatus.played {
+  background: rgba(50, 180, 110, 0.16);
+  color: #83e3ad;
+  border: 1px solid rgba(50, 180, 110, 0.45);
+}
+
+.playerMatchStatus.pending {
+  background: rgba(225, 169, 60, 0.15);
+  color: #f0c86f;
+  border: 1px solid rgba(225, 169, 60, 0.42);
+}
+
+.playerMatchMeta {
+  display: flex;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+  color: #b7c5d9;
+  font-size: 13px;
+}
+
+.playerMatchMeta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 720px) {
+  .playerMatchCardTop,
+  .playerMatchHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .playerMatchStatus {
+    align-self: flex-start;
+  }
+}

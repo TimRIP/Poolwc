@@ -257,6 +257,84 @@
         </div>
       </details>
 
+      <details class="venueManager playerMatchFinder" v-if="currentTournamentId" open>
+        <summary>
+          <span><i class="fa fa-search"></i> Find player matches</span>
+          <span class="venueCount">{{ playerFinderPlayers.length }}</span>
+        </summary>
+
+        <div class="venueManagerBody">
+          <div class="playerFinderSearchRow">
+            <label class="playerFinderSearchField">
+              <span>Search player</span>
+              <input type="search"
+                     v-model.trim="playerFinderQuery"
+                     @input="onPlayerFinderQueryInput"
+                     placeholder="Type a player name…"
+                     autocomplete="off">
+            </label>
+            <button v-if="selectedFinderPlayer" type="button" class="miniBtn" @click="clearPlayerFinder">Clear</button>
+          </div>
+
+          <div v-if="playerFinderLoading" class="resultNote">Loading players…</div>
+          <div v-if="playerFinderError" class="resultMessage error">{{ playerFinderError }}</div>
+
+          <div class="playerFinderResults" v-if="playerFinderQuery && !selectedFinderPlayer && !playerFinderLoading">
+            <button type="button"
+                    class="playerFinderResult"
+                    v-for="player in filteredPlayerFinderPlayers"
+                    :key="player.playerId"
+                    @click="selectPlayerForMatches(player)">
+              <span>
+                <strong>{{ player.playerName }}</strong>
+                <small>Player #{{ player.playerId }}</small>
+              </span>
+              <span class="playerFinderMmr" v-if="player.mmr !== null && player.mmr !== undefined">{{ player.mmr }} MMR</span>
+              <span class="playerFinderMmr guest" v-else>Guest</span>
+            </button>
+            <div class="resultNote" v-if="!filteredPlayerFinderPlayers.length">No players match that search.</div>
+          </div>
+
+          <div class="playerMatchList" v-if="selectedFinderPlayer">
+            <div class="playerMatchHeader">
+              <div>
+                <strong>{{ selectedFinderPlayer.playerName }}</strong>
+                <span>Player #{{ selectedFinderPlayer.playerId }}</span>
+              </div>
+              <span class="pill" v-if="selectedFinderPlayer.mmr !== null && selectedFinderPlayer.mmr !== undefined">{{ selectedFinderPlayer.mmr }} MMR</span>
+            </div>
+
+            <div v-if="playerFinderMatchesLoading" class="resultNote">Loading matches…</div>
+            <div v-else-if="!playerFinderMatches.length" class="resultNote">No matches are assigned to this player yet.</div>
+
+            <button type="button"
+                    class="playerMatchCard"
+                    v-for="match in playerFinderMatches"
+                    :key="match.matchId"
+                    @click="openPlayerMatch(match)">
+              <div class="playerMatchCardTop">
+                <div>
+                  <strong>{{ match.matchName }}</strong>
+                  <span v-if="match.stageName || match.poolName">
+                    {{ match.stageName || 'Stage' }}<template v-if="match.poolName"> · {{ match.poolName }}</template>
+                  </span>
+                </div>
+                <span class="playerMatchStatus" :class="match.played ? 'played' : 'pending'">
+                  {{ match.played ? 'Played' : 'Pending' }}
+                </span>
+              </div>
+
+              <div class="playerMatchMeta">
+                <span><i class="fa fa-user"></i> vs {{ match.opponents }}</span>
+                <span><i class="fa fa-map-marker"></i> {{ match.venueName || 'Venue not set' }}</span>
+                <span><i class="fa fa-clock-o"></i> {{ playerMatchScheduleText(match) }}</span>
+                <span v-if="match.played"><i class="fa fa-trophy"></i> {{ match.result }}<template v-if="match.score"> · {{ match.score }}</template></span>
+              </div>
+            </button>
+          </div>
+        </div>
+      </details>
+
       <div class="matchWorkspace" v-if="roots.length">
         <div class="matchTreeColumn">
           <div class="treeWrap">

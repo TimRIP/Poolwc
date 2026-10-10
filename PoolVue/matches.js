@@ -194,6 +194,13 @@ const matchesApp = new Vue({
     playerNameError: '',
     playerNameMessage: '',
     savingPlayerNameId: null,
+    playerFinderQuery: '',
+    playerFinderPlayers: [],
+    playerFinderLoading: false,
+    playerFinderError: '',
+    selectedFinderPlayer: null,
+    playerFinderMatches: [],
+    playerFinderMatchesLoading: false,
     newVenueName: '',
     newVenueDescription: '',
     selectedVenueId: null,
@@ -351,6 +358,21 @@ const matchesApp = new Vue({
         if (winners === 1) complete++;
       }
       return complete;
+    },
+
+    filteredPlayerFinderPlayers() {
+      const q = (this.playerFinderQuery || '').trim().toLowerCase();
+      if (!q) return [];
+      return this.playerFinderPlayers
+        .filter(player => {
+          const hay = [
+            player.playerName || '',
+            player.playerId || '',
+            player.mmr === null || player.mmr === undefined ? '' : player.mmr
+          ].join(' ').toLowerCase();
+          return hay.includes(q);
+        })
+        .slice(0, 20);
     },
 
     poolMatrixDirtyCount() {
@@ -1191,6 +1213,122 @@ const matchesApp = new Vue({
       }
     },
 
+    async loadPlayerFinderPlayers(tournamentId, preserveSelection) {
+      const tid = Number(tournamentId);
+      if (!Number.isFinite(tid) || tid <= 0) {
+        this.playerFinderPlayers = [];
+        this.selectedFinderPlayer = null;
+        this.playerFinderMatches = [];
+        this.playerFinderError = '';
+        return;
+      }
+
+      this.playerFinderLoading = true;
+      this.playerFinderError = '';
+      try {
+        const res = await axios.get(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(tid) + '/player-match-search/players',
+          { headers: this.authHeaders() }
+        );
+        this.playerFinderPlayers = res.data && Array.isArray(res.data.players) ? res.data.players : [];
+
+        if (!preserveSelection) {
+          this.playerFinderQuery = '';
+          this.selectedFinderPlayer = null;
+          this.playerFinderMatches = [];
+        } else if (this.selectedFinderPlayer) {
+          const selectedId = Number(this.selectedFinderPlayer.playerId);
+          const refreshed = this.playerFinderPlayers.find(x => Number(x.playerId) === selectedId);
+          if (refreshed) {
+            this.selectedFinderPlayer = refreshed;
+            await this.loadSelectedPlayerMatches(refreshed);
+          } else {
+            this.selectedFinderPlayer = null;
+            this.playerFinderMatches = [];
+          }
+        }
+      } catch (e) {
+        console.error(e);
+        this.playerFinderPlayers = [];
+        this.playerFinderError = (e.response && e.response.data && e.response.data.message)
+          ? e.response.data.message
+          : 'Could not load players for match search.';
+      } finally {
+        this.playerFinderLoading = false;
+      }
+    },
+
+    onPlayerFinderQueryInput() {
+      if (!this.selectedFinderPlayer) return;
+      const query = (this.playerFinderQuery || '').trim().toLowerCase();
+      const selectedName = (this.selectedFinderPlayer.playerName || '').trim().toLowerCase();
+      if (query !== selectedName) {
+        this.selectedFinderPlayer = null;
+        this.playerFinderMatches = [];
+      }
+    },
+
+    async selectPlayerForMatches(player) {
+      if (!player || !player.playerId) return;
+      this.selectedFinderPlayer = player;
+      this.playerFinderQuery = player.playerName || ('Player #' + player.playerId);
+      await this.loadSelectedPlayerMatches(player);
+    },
+
+    async loadSelectedPlayerMatches(player) {
+      const tid = Number(this.currentTournamentId);
+      const playerId = Number(player && player.playerId);
+      if (!Number.isFinite(tid) || !Number.isFinite(playerId)) return;
+
+      this.playerFinderMatchesLoading = true;
+      this.playerFinderError = '';
+      try {
+        const res = await axios.get(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(tid) +
+            '/player-match-search/players/' + encodeURIComponent(playerId) + '/matches',
+          { headers: this.authHeaders() }
+        );
+        this.playerFinderMatches = res.data && Array.isArray(res.data.matches) ? res.data.matches : [];
+      } catch (e) {
+        console.error(e);
+        this.playerFinderMatches = [];
+        this.playerFinderError = (e.response && e.response.data && e.response.data.message)
+          ? e.response.data.message
+          : "Could not load the player's matches.";
+      } finally {
+        this.playerFinderMatchesLoading = false;
+      }
+    },
+
+    clearPlayerFinder() {
+      this.playerFinderQuery = '';
+      this.selectedFinderPlayer = null;
+      this.playerFinderMatches = [];
+      this.playerFinderError = '';
+    },
+
+    playerMatchScheduleText(match) {
+      if (!match || !match.fromTime) return 'Time not set';
+      const date = this.formatDateDisplay(match.fromTime);
+      const time = this.formatTimeDisplay(match.fromTime);
+      if (date && time) return date + ' · ' + time;
+      return date || time || 'Time not set';
+    },
+
+    async openPlayerMatch(match) {
+      if (!match || !match.matchId) return;
+      const node = this.findTreeNodeById(Number(match.matchId));
+      if (!node) {
+        this.playerFinderError = 'This match is not currently available in the tournament tree.';
+        return;
+      }
+      await this.selectMatch(node);
+      const panel = document.querySelector('.matchResultPanel');
+      if (panel && typeof panel.scrollIntoView === 'function') {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    },
+
     async loadTournamentPlayers(tournamentId) {
       const tid = Number(tournamentId);
       if (!Number.isFinite(tid) || tid <= 0 || !this.isTournamentAdmin) {
@@ -1852,6 +1990,7 @@ const matchesApp = new Vue({
         this.selectedTournamentId = String(tid);
         await this.loadMatchEditAccess(tid);
         await this.loadTournamentPlayers(tid);
+        await this.loadPlayerFinderPlayers(tid, !!preserveSelection);
         await this.loadPlayerDraw(tid);
         await this.loadPoolSchedules(tid);
         await this.loadVenues(tid);
