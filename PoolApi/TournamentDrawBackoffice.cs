@@ -462,7 +462,7 @@ SELECT
     SP.Id AS PlayerId,
     COALESCE(
         NULLIF(LTRIM(RTRIM(CurrentRegistration.OriginalPlayerName)), ''),
-        CASE WHEN SP.Name LIKE 'Player:%' THEN SP.Name ELSE 'Player:' + CAST(SP.Id AS NVARCHAR(20)) END
+        SP.Name
     ) AS OriginalPlayerName
 FROM SlotPlayers SP
 OUTER APPLY

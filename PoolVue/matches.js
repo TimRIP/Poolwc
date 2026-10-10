@@ -189,6 +189,11 @@ const matchesApp = new Vue({
     drawError: '',
     drawMessage: '',
     savingDraw: false,
+    playerNamesLoading: false,
+    tournamentPlayers: [],
+    playerNameError: '',
+    playerNameMessage: '',
+    savingPlayerNameId: null,
     newVenueName: '',
     newVenueDescription: '',
     selectedVenueId: null,
@@ -1186,6 +1191,110 @@ const matchesApp = new Vue({
       }
     },
 
+    async loadTournamentPlayers(tournamentId) {
+      const tid = Number(tournamentId);
+      if (!Number.isFinite(tid) || tid <= 0 || !this.isTournamentAdmin) {
+        this.tournamentPlayers = [];
+        this.playerNameError = '';
+        this.playerNameMessage = '';
+        return;
+      }
+
+      this.playerNamesLoading = true;
+      this.playerNameError = '';
+      try {
+        const res = await axios.get(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(tid) + '/players',
+          { headers: this.authHeaders() }
+        );
+
+        const players = res.data && Array.isArray(res.data.players) ? res.data.players : [];
+        this.tournamentPlayers = players.map(player => ({
+          playerId: Number(player.playerId),
+          playerName: player.playerName || ('Player #' + player.playerId),
+          editName: player.playerName || ('Player #' + player.playerId)
+        }));
+      } catch (e) {
+        console.error(e);
+        this.tournamentPlayers = [];
+        this.playerNameError = (e.response && e.response.data && e.response.data.message)
+          ? e.response.data.message
+          : 'Could not load unregistered players.';
+      } finally {
+        this.playerNamesLoading = false;
+      }
+    },
+
+    playerNameChanged(player) {
+      if (!player) return false;
+      const next = (player.editName || '').trim();
+      const current = (player.playerName || '').trim();
+      return next.length > 0 && next !== current;
+    },
+
+    async renameTournamentPlayer(player) {
+      if (!player || !this.currentTournamentId || !this.isTournamentAdmin) return;
+
+      const name = (player.editName || '').trim();
+      if (!name) {
+        this.playerNameError = 'Player name cannot be empty.';
+        this.playerNameMessage = '';
+        return;
+      }
+      if (name.length > 255) {
+        this.playerNameError = 'Player name cannot be longer than 255 characters.';
+        this.playerNameMessage = '';
+        return;
+      }
+      if (!this.playerNameChanged(player)) return;
+
+      const playerId = Number(player.playerId);
+      const selected = this.selectedMatchId;
+      this.savingPlayerNameId = playerId;
+      this.playerNameError = '';
+      this.playerNameMessage = '';
+
+      try {
+        const res = await axios.put(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(this.currentTournamentId) +
+            '/players/' + encodeURIComponent(playerId) + '/name',
+          { name: name },
+          {
+            headers: Object.assign(
+              { 'Content-Type': 'application/json; charset=utf-8' },
+              this.authHeaders()
+            )
+          }
+        );
+
+        const message = res.data && res.data.message ? res.data.message : 'Player name saved.';
+
+        // Refresh every view that displays Player.Name: tree, pool matrix, match details and draw list.
+        await this.loadMatches(this.currentTournamentId, true);
+
+        if (selected) {
+          const freshNode = this.findTreeNodeById(selected);
+          if (freshNode) {
+            this.selectedNode = freshNode;
+            this.selectedMatchId = selected;
+            await this.loadMatchDetails(selected);
+            if (this.selectedIsPool) {
+              await this.loadPoolMatrix(freshNode);
+            }
+          }
+        }
+
+        this.playerNameMessage = message;
+      } catch (e) {
+        console.error(e);
+        this.playerNameError = (e.response && e.response.data && e.response.data.message)
+          ? e.response.data.message
+          : 'Could not save the player name.';
+      } finally {
+        this.savingPlayerNameId = null;
+      }
+    },
+
     async loadPlayerDraw(tournamentId) {
       const tid = Number(tournamentId);
       if (!Number.isFinite(tid) || tid <= 0 || !this.isTournamentAdmin) {
@@ -1742,6 +1851,7 @@ const matchesApp = new Vue({
         this.currentTournamentId = tid;
         this.selectedTournamentId = String(tid);
         await this.loadMatchEditAccess(tid);
+        await this.loadTournamentPlayers(tid);
         await this.loadPlayerDraw(tid);
         await this.loadPoolSchedules(tid);
         await this.loadVenues(tid);

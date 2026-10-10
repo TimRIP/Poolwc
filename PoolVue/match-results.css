@@ -940,3 +940,78 @@
     flex: 1 1 150px;
   }
 }
+
+/* Unregistered player names ---------------------------------------------- */
+.playerRenameList {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.playerRenameRow {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(220px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid #33445d;
+  border-radius: 10px;
+  background: #0f1a2a;
+}
+
+.playerRenameIdentity {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.playerRenameIdentity strong {
+  overflow-wrap: anywhere;
+}
+
+.playerRenameIdentity span,
+.playerRenameField span {
+  color: #91a5c2;
+  font-size: 12px;
+}
+
+.playerRenameField {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.playerRenameField input {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 7px 10px;
+  border: 1px solid #40536f;
+  border-radius: 8px;
+  background: #09121f;
+  color: #fff;
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.playerRenameField input:focus {
+  outline: 2px solid #67a2ff;
+  outline-offset: 1px;
+}
+
+.playerRenameSave {
+  min-width: 92px;
+  height: 40px;
+}
+
+@media (max-width: 760px) {
+  .playerRenameRow {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .playerRenameSave {
+    width: 100%;
+  }
+}

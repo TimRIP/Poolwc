@@ -211,6 +211,52 @@
         </div>
       </details>
 
+      <details class="venueManager playerNameManager" v-if="currentTournamentId && isTournamentAdmin">
+        <summary>
+          <span><i class="fa fa-user"></i> Player names</span>
+          <span class="venueCount">{{ tournamentPlayers.length }}</span>
+        </summary>
+
+        <div class="venueManagerBody">
+          <div class="resultNote editorPermissionNote">
+            Rename players that are not linked to a registered user account. The new name is used everywhere this Player appears in the tournament.
+          </div>
+
+          <div v-if="playerNamesLoading" class="resultNote">Loading unregistered players…</div>
+          <div v-else-if="!tournamentPlayers.length" class="resultNote">There are no unregistered players to rename.</div>
+
+          <div v-else class="playerRenameList">
+            <div class="playerRenameRow" v-for="player in tournamentPlayers" :key="player.playerId">
+              <div class="playerRenameIdentity">
+                <strong>{{ player.playerName }}</strong>
+                <span>Player #{{ player.playerId }}</span>
+              </div>
+
+              <label class="playerRenameField">
+                <span>Name</span>
+                <input type="text"
+                       maxlength="255"
+                       v-model="player.editName"
+                       :disabled="savingPlayerNameId === player.playerId"
+                       @keyup.enter="renameTournamentPlayer(player)"
+                       placeholder="Player name">
+              </label>
+
+              <button type="button"
+                      class="saveResultBtn playerRenameSave"
+                      @click="renameTournamentPlayer(player)"
+                      :disabled="savingPlayerNameId === player.playerId || !playerNameChanged(player)">
+                <i class="fa" :class="savingPlayerNameId === player.playerId ? 'fa-circle-o-notch fa-spin' : 'fa-save'"></i>
+                {{ savingPlayerNameId === player.playerId ? 'Saving…' : 'Save' }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="playerNameMessage" class="resultMessage success">{{ playerNameMessage }}</div>
+          <div v-if="playerNameError" class="resultMessage error">{{ playerNameError }}</div>
+        </div>
+      </details>
+
       <div class="matchWorkspace" v-if="roots.length">
         <div class="matchTreeColumn">
           <div class="treeWrap">
