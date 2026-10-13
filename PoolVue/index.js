@@ -167,6 +167,7 @@ var dash = new Vue({
           distributeEvenly: true,
           poolSizes: [4, 4],
           valsArray: [-1, -1, -1, -1],
+          poolAdvancementRoutes: [],
           playstyle: 'roundrobin',
           swissRounds: 2
         }
@@ -279,6 +280,190 @@ var dash = new Vue({
       }
     },
 
+
+    stagePoolSizes: function (round) {
+      if (!round) return [];
+
+      if (round.selected === 'pool') {
+        return this.getPoolSizes(round);
+      }
+
+      if (round.selected === 'knockout') {
+        var players = Number(round.NbPlayers);
+        if (!Number.isInteger(players) || players < 2 || players % 2 !== 0) return [];
+        var sizes = [];
+        for (var i = 0; i < players / 2; i++) sizes.push(2);
+        return sizes;
+      }
+
+      return [];
+    },
+
+    destinationPoolCount: function (stageIndex) {
+      stageIndex = Number(stageIndex);
+      if (!Number.isInteger(stageIndex) || stageIndex < 0 || stageIndex >= this.formdata.rundearray.length) return 0;
+      return this.stagePoolSizes(this.formdata.rundearray[stageIndex]).length;
+    },
+
+    destinationPoolCapacity: function (stageIndex, poolIndex) {
+      stageIndex = Number(stageIndex);
+      poolIndex = Number(poolIndex);
+      if (!Number.isInteger(stageIndex) || !Number.isInteger(poolIndex)) return 0;
+      if (stageIndex < 0 || stageIndex >= this.formdata.rundearray.length) return 0;
+      var sizes = this.stagePoolSizes(this.formdata.rundearray[stageIndex]);
+      return poolIndex >= 0 && poolIndex < sizes.length ? Number(sizes[poolIndex]) || 0 : 0;
+    },
+
+    destinationPoolAssignedCount: function (stageIndex, poolIndex) {
+      stageIndex = Number(stageIndex);
+      poolIndex = Number(poolIndex);
+      var count = 0;
+      var rounds = this.formdata.rundearray;
+
+      for (var i = 0; i < rounds.length; i++) {
+        var routes = Array.isArray(rounds[i].poolAdvancementRoutes) ? rounds[i].poolAdvancementRoutes : [];
+        for (var r = 0; r < routes.length; r++) {
+          if (Number(routes[r].destinationStage) === stageIndex && Number(routes[r].destinationPool) === poolIndex) count++;
+        }
+      }
+
+      return count;
+    },
+
+    sourceRouteLabel: function (round, place) {
+      place = Number(place);
+      if (round && round.selected === 'knockout') return place === 1 ? 'Winner' : 'Loser';
+      return this.placeLabel(place);
+    },
+
+    hasPoolAdvancementRoutes: function () {
+      return this.formdata.rundearray.some(function (round) {
+        return Array.isArray(round.poolAdvancementRoutes) && round.poolAdvancementRoutes.length > 0;
+      });
+    },
+
+    rebuildPoolAdvancementRoutes: function (resetAssignments) {
+      var rounds = this.formdata.rundearray;
+      var existing = {};
+
+      if (!resetAssignments) {
+        for (var oldStage = 0; oldStage < rounds.length; oldStage++) {
+          var oldRoutes = Array.isArray(rounds[oldStage].poolAdvancementRoutes) ? rounds[oldStage].poolAdvancementRoutes : [];
+          for (var oldIndex = 0; oldIndex < oldRoutes.length; oldIndex++) {
+            var oldRoute = oldRoutes[oldIndex];
+            var oldKey = oldStage + '|' + Number(oldRoute.sourcePool) + '|' + Number(oldRoute.place) + '|' + Number(oldRoute.destinationStage);
+            existing[oldKey] = Number(oldRoute.destinationPool);
+          }
+        }
+      }
+
+      var specs = [];
+      var usage = {};
+
+      for (var sourceStage = 0; sourceStage < rounds.length; sourceStage++) {
+        var sourceRound = rounds[sourceStage];
+        var sourcePoolSizes = this.stagePoolSizes(sourceRound);
+
+        for (var sourcePool = 0; sourcePool < sourcePoolSizes.length; sourcePool++) {
+          for (var place = 1; place <= sourcePoolSizes[sourcePool]; place++) {
+            var destinationStage = Array.isArray(sourceRound.valsArray)
+              ? Number(sourceRound.valsArray[place - 1])
+              : -1;
+
+            if (!Number.isInteger(destinationStage) || destinationStage <= sourceStage || destinationStage >= rounds.length) continue;
+
+            var targetSizes = this.stagePoolSizes(rounds[destinationStage]);
+            if (!targetSizes.length) continue;
+
+            if (!usage[destinationStage]) usage[destinationStage] = new Array(targetSizes.length).fill(0);
+
+            var key = sourceStage + '|' + sourcePool + '|' + place + '|' + destinationStage;
+            var preserved = existing.hasOwnProperty(key) ? Number(existing[key]) : -1;
+            var validPreserved = Number.isInteger(preserved) && preserved >= 0 && preserved < targetSizes.length;
+
+            specs.push({
+              sourceStage: sourceStage,
+              sourcePool: sourcePool,
+              place: place,
+              destinationStage: destinationStage,
+              destinationPool: validPreserved ? preserved : -1,
+              targetSizes: targetSizes
+            });
+
+            if (validPreserved) usage[destinationStage][preserved]++;
+          }
+        }
+      }
+
+      // Fill only routes that do not already have a valid manual selection.
+      // Prefer pools with free capacity, then the least-filled pool. When
+      // possible, keep two qualifiers from the same source pool apart.
+      for (var s = 0; s < specs.length; s++) {
+        var spec = specs[s];
+        if (spec.destinationPool >= 0) continue;
+
+        var targetUsage = usage[spec.destinationStage];
+        var sameSourcePools = {};
+        for (var earlier = 0; earlier < specs.length; earlier++) {
+          var other = specs[earlier];
+          if (other === spec || other.destinationPool < 0) continue;
+          if (other.destinationStage === spec.destinationStage && other.sourceStage === spec.sourceStage && other.sourcePool === spec.sourcePool) {
+            sameSourcePools[other.destinationPool] = true;
+          }
+        }
+
+        var bestPool = -1;
+        var bestConflict = 2;
+        var bestFill = Number.POSITIVE_INFINITY;
+        for (var p = 0; p < spec.targetSizes.length; p++) {
+          var capacity = Number(spec.targetSizes[p]) || 0;
+          if (capacity <= 0 || targetUsage[p] >= capacity) continue;
+          var conflict = sameSourcePools[p] ? 1 : 0;
+          var fill = targetUsage[p] / capacity;
+          if (conflict < bestConflict || (conflict === bestConflict && fill < bestFill)) {
+            bestPool = p;
+            bestConflict = conflict;
+            bestFill = fill;
+          }
+        }
+
+        // Validation will report an impossible/overfilled setup. This fallback
+        // keeps the UI editable instead of dropping the route.
+        if (bestPool < 0) {
+          bestPool = 0;
+          for (var fallback = 1; fallback < targetUsage.length; fallback++) {
+            if (targetUsage[fallback] < targetUsage[bestPool]) bestPool = fallback;
+          }
+        }
+
+        spec.destinationPool = bestPool;
+        targetUsage[bestPool]++;
+      }
+
+      var routesPerSource = new Array(rounds.length);
+      for (var ri = 0; ri < routesPerSource.length; ri++) routesPerSource[ri] = [];
+
+      for (var x = 0; x < specs.length; x++) {
+        var item = specs[x];
+        routesPerSource[item.sourceStage].push({
+          sourcePool: item.sourcePool,
+          place: item.place,
+          destinationStage: item.destinationStage,
+          destinationPool: item.destinationPool
+        });
+      }
+
+      for (var setStage = 0; setStage < rounds.length; setStage++) {
+        this.$set(rounds[setStage], 'poolAdvancementRoutes', routesPerSource[setStage]);
+      }
+    },
+
+    autoAssignPoolAdvancementRoutes: function () {
+      this.rebuildPoolAdvancementRoutes(true);
+      this.validate();
+      this.uiMessage = 'Pool advancement routes were filled automatically. You can change every destination pool before creating the tournament.';
+    },
+
     createPoolStage: function (name, players, poolSize, destinationIndex, qualifiersPerPool) {
       var routes = [];
       for (var i = 0; i < poolSize; i++) {
@@ -297,6 +482,7 @@ var dash = new Vue({
         distributeEvenly: true,
         poolSizes: this.calculateEvenPoolSizes(players, poolSize),
         valsArray: routes,
+        poolAdvancementRoutes: [],
         playstyle: 'roundrobin',
         swissRounds: this.recommendedSwissRounds(poolSize)
       };
@@ -315,6 +501,7 @@ var dash = new Vue({
         distributeEvenly: false,
         poolSizes: [],
         valsArray: [hasNextStage ? stageIndex + 1 : 0, -1],
+        poolAdvancementRoutes: [],
         playstyle: 'roundrobin',
         swissRounds: 1
       };
@@ -429,6 +616,7 @@ var dash = new Vue({
             distributeEvenly: true,
             poolSizes: [],
             valsArray: [],
+            poolAdvancementRoutes: [],
             playstyle: 'roundrobin',
             swissRounds: this.recommendedSwissRounds(Math.min(4, players))
           }
@@ -467,6 +655,7 @@ var dash = new Vue({
         distributeEvenly: false,
         poolSizes: [],
         valsArray: [0, -1],
+        poolAdvancementRoutes: [],
         playstyle: 'roundrobin',
         swissRounds: 1
       };
@@ -768,6 +957,66 @@ var dash = new Vue({
         }
       }
 
+
+      // Exact pool-to-pool routing. Stage-level routes decide who advances;
+      // these assignments decide which destination pool receives each player.
+      var targetAssignments = {};
+      for (var sourceStageIndex = 0; sourceStageIndex < rounds.length; sourceStageIndex++) {
+        var sourceStageRound = rounds[sourceStageIndex];
+        var explicitRoutes = Array.isArray(sourceStageRound.poolAdvancementRoutes) ? sourceStageRound.poolAdvancementRoutes : [];
+
+        for (var er = 0; er < explicitRoutes.length; er++) {
+          var route = explicitRoutes[er];
+          var destinationStageIndex = Number(route.destinationStage);
+          var destinationPoolIndex = Number(route.destinationPool);
+          var routePlace = Number(route.place);
+          var routeSourcePool = Number(route.sourcePool);
+          var sourcePoolSizes = this.stagePoolSizes(sourceStageRound);
+
+          if (!Number.isInteger(routeSourcePool) || routeSourcePool < 0 || routeSourcePool >= sourcePoolSizes.length || routePlace < 1 || routePlace > sourcePoolSizes[routeSourcePool]) {
+            errors.push({ type: 'pool-route-source-' + sourceStageIndex + '-' + er, description: (sourceStageRound.navn || ('Stage ' + (sourceStageIndex + 1))) + ': invalid source pool advancement route.' });
+            continue;
+          }
+
+          if (!Number.isInteger(destinationStageIndex) || destinationStageIndex <= sourceStageIndex || destinationStageIndex >= rounds.length) {
+            errors.push({ type: 'pool-route-stage-' + sourceStageIndex + '-' + er, description: (sourceStageRound.navn || ('Stage ' + (sourceStageIndex + 1))) + ': invalid destination stage in pool advancement routing.' });
+            continue;
+          }
+
+          if (!Array.isArray(sourceStageRound.valsArray) || Number(sourceStageRound.valsArray[routePlace - 1]) !== destinationStageIndex) {
+            errors.push({ type: 'pool-route-mismatch-' + sourceStageIndex + '-' + er, description: (sourceStageRound.navn || ('Stage ' + (sourceStageIndex + 1))) + ': a pool route does not match its finishing-position stage route.' });
+            continue;
+          }
+
+          var targetSizes = this.stagePoolSizes(rounds[destinationStageIndex]);
+          if (!Number.isInteger(destinationPoolIndex) || destinationPoolIndex < 0 || destinationPoolIndex >= targetSizes.length) {
+            errors.push({ type: 'pool-route-destination-' + sourceStageIndex + '-' + er, description: (sourceStageRound.navn || ('Stage ' + (sourceStageIndex + 1))) + ': choose a valid destination pool.' });
+            continue;
+          }
+
+          if (!targetAssignments[destinationStageIndex]) targetAssignments[destinationStageIndex] = new Array(targetSizes.length).fill(0);
+          targetAssignments[destinationStageIndex][destinationPoolIndex]++;
+        }
+      }
+
+      for (var targetStageIndex = 1; targetStageIndex < rounds.length; targetStageIndex++) {
+        var targetStageSizes = this.stagePoolSizes(rounds[targetStageIndex]);
+        if (!targetStageSizes.length) continue;
+        var assigned = targetAssignments[targetStageIndex] || new Array(targetStageSizes.length).fill(0);
+        var mismatches = [];
+        for (var tp = 0; tp < targetStageSizes.length; tp++) {
+          if (Number(assigned[tp] || 0) !== Number(targetStageSizes[tp] || 0)) {
+            mismatches.push('pulje ' + (tp + 1) + ': ' + Number(assigned[tp] || 0) + '/' + Number(targetStageSizes[tp] || 0));
+          }
+        }
+        if (mismatches.length) {
+          errors.push({
+            type: 'pool-route-capacity-' + targetStageIndex,
+            description: (rounds[targetStageIndex].navn || ('Stage ' + (targetStageIndex + 1))) + ': assign advancing players so every destination pool is filled exactly (' + mismatches.join(', ') + ').'
+          });
+        }
+      }
+
       // The routes should ultimately produce exactly one tournament winner.
       var winnerCount = 0;
       for (var w = 0; w < rounds.length; w++) {
@@ -807,6 +1056,7 @@ var dash = new Vue({
       for (var i = 0; i < this.formdata.rundearray.length; i++) {
         this.updatePoolSizes(this.formdata.rundearray[i]);
       }
+      this.rebuildPoolAdvancementRoutes(false);
       this.validate();
     },
 

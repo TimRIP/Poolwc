@@ -634,3 +634,74 @@ input[type="datetime-local"]:focus {
   .venue-description-field { grid-column: 1 / 2; }
   .venue-remove-btn { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
 }
+
+
+/* Exact pool advancement routing ---------------------------------------- */
+.advancement-map-section { margin-top: 18px; }
+.advancement-map-heading { gap: 18px; }
+.advancement-help {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 11px 13px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(119,168,255,.28);
+  border-radius: 10px;
+  background: rgba(119,168,255,.07);
+  color: var(--muted);
+  line-height: 1.45;
+}
+.advancement-help i { margin-top: 2px; color: #8bb8ff; }
+.advancement-stage-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.advancement-stage-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 15px;
+  border-bottom: 1px solid var(--border);
+}
+.advancement-stage-header strong { display: block; margin-top: 3px; }
+.advancement-stage-header > span { color: var(--muted); font-size: 12px; }
+.advancement-route-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+.advancement-route-row {
+  display: grid;
+  grid-template-columns: minmax(110px, .75fr) 24px minmax(180px, 1.25fr);
+  align-items: center;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: rgba(255,255,255,.018);
+}
+.advancement-source strong,
+.destination-stage-name { display: block; }
+.advancement-source span,
+.advancement-destination small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.advancement-arrow { color: #718096; text-align: center; }
+.advancement-destination select { width: 100%; margin-top: 6px; }
+@media (max-width: 1100px) {
+  .advancement-route-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .advancement-stage-header { align-items: flex-start; flex-direction: column; }
+  .advancement-route-row { grid-template-columns: 1fr; }
+  .advancement-arrow { transform: rotate(90deg); justify-self: start; }
+}

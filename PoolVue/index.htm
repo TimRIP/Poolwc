@@ -331,6 +331,62 @@
                 <span>Add another stage</span>
               </button>
             </section>
+
+            <section class="stages-section advancement-map-section" v-if="hasPoolAdvancementRoutes()">
+              <div class="section-heading advancement-map-heading">
+                <div>
+                  <h2>3. Advance to pool</h2>
+                  <p>The finishing position decides who advances. Here you choose the exact pool that each qualified player will enter when the tournament is created.</p>
+                </div>
+                <button type="button" class="secondary-btn" @click="autoAssignPoolAdvancementRoutes">
+                  <i class="fa fa-random"></i> Auto-fill balanced
+                </button>
+              </div>
+
+              <div class="advancement-help">
+                <i class="fa fa-info-circle"></i>
+                These routes become the automatic <strong>AutoSelect</strong> routes in the match tree. You can set all of them now and still change them later from the Matches page.
+              </div>
+
+              <article class="advancement-stage-card"
+                       v-for="(runde, sourceIndex) in formdata.rundearray"
+                       v-if="Array.isArray(runde.poolAdvancementRoutes) && runde.poolAdvancementRoutes.length"
+                       :key="'advance-stage-' + sourceIndex">
+                <div class="advancement-stage-header">
+                  <div>
+                    <span class="stage-kicker">From stage {{ sourceIndex + 1 }}</span>
+                    <strong>{{ runde.navn || ('Stage ' + (sourceIndex + 1)) }}</strong>
+                  </div>
+                  <span>{{ runde.poolAdvancementRoutes.length }} advancing route{{ runde.poolAdvancementRoutes.length === 1 ? '' : 's' }}</span>
+                </div>
+
+                <div class="advancement-route-grid">
+                  <div class="advancement-route-row" v-for="route in runde.poolAdvancementRoutes"
+                       :key="'advance-' + sourceIndex + '-' + route.sourcePool + '-' + route.place + '-' + route.destinationStage">
+                    <div class="advancement-source">
+                      <strong>pulje {{ route.sourcePool + 1 }}</strong>
+                      <span>{{ sourceRouteLabel(runde, route.place) }}</span>
+                    </div>
+
+                    <i class="fa fa-long-arrow-right advancement-arrow"></i>
+
+                    <div class="advancement-destination">
+                      <span class="destination-stage-name">{{ formdata.rundearray[route.destinationStage].navn || ('Stage ' + (route.destinationStage + 1)) }}</span>
+                      <select v-model.number="route.destinationPool" @change="recalculate">
+                        <option v-for="poolNumber in destinationPoolCount(route.destinationStage)"
+                                :key="'dest-' + route.destinationStage + '-' + poolNumber"
+                                :value="poolNumber - 1">
+                          pulje {{ poolNumber }}
+                        </option>
+                      </select>
+                      <small>
+                        {{ destinationPoolAssignedCount(route.destinationStage, route.destinationPool) }} / {{ destinationPoolCapacity(route.destinationStage, route.destinationPool) }} advancing players assigned to this pool
+                      </small>
+                    </div>
+                  </div>
+                </div>
+              </article>
+            </section>
           </main>
 
           <aside class="builder-side">

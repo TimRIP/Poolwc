@@ -303,6 +303,148 @@ namespace TournamentBackend
                 && sizes.Sum() == nbPlayers;
         }
 
+
+        private class ExplicitPoolAdvancementRoute
+        {
+            public int SourceStage { get; set; }
+            public int SourcePool { get; set; }
+            public int Place { get; set; }
+            public int DestinationStage { get; set; }
+            public int DestinationPool { get; set; }
+        }
+
+        private static void ApplyExplicitPoolAdvancementRoutes(Tournament turn, JArray roundJson, UserBackoffice ubo)
+        {
+            var routesByDestinationStage = new Dictionary<int, List<ExplicitPoolAdvancementRoute>>();
+            var seenSourceRoutes = new HashSet<string>();
+            bool hasExplicitRoutes = false;
+
+            for (int sourceStage = 0; sourceStage < roundJson.Count; sourceStage++)
+            {
+                JObject sourceJson = roundJson[sourceStage] as JObject;
+                if (sourceJson == null) continue;
+
+                JToken routesToken = sourceJson.GetValue("poolAdvancementRoutes");
+                if (routesToken == null || routesToken.Type != JTokenType.Array) continue;
+
+                foreach (JObject routeJson in (JArray)routesToken)
+                {
+                    if (routeJson == null) continue;
+
+                    int? sourcePool = routeJson.Value<int?>("sourcePool");
+                    int? place = routeJson.Value<int?>("place");
+                    int? destinationStage = routeJson.Value<int?>("destinationStage");
+                    int? destinationPool = routeJson.Value<int?>("destinationPool");
+
+                    if (!sourcePool.HasValue || !place.HasValue || !destinationStage.HasValue || !destinationPool.HasValue)
+                    {
+                        throw new ArgumentException("A pool advancement route is incomplete.");
+                    }
+
+                    if (sourceStage < 0 || sourceStage >= turn.runder.Count ||
+                        sourcePool.Value < 0 || sourcePool.Value >= turn.runder[sourceStage].puljer.Count)
+                    {
+                        throw new ArgumentException("A pool advancement route has an invalid source pool.");
+                    }
+
+                    Tournament.Pulje sourcePulje = turn.runder[sourceStage].puljer[sourcePool.Value];
+                    int sourcePoolSize = sourcePulje.PuljeMatch.seats.Count;
+                    if (place.Value < 1 || place.Value > sourcePoolSize)
+                    {
+                        throw new ArgumentException("A pool advancement route has an invalid finishing place.");
+                    }
+
+                    if (destinationStage.Value <= sourceStage || destinationStage.Value >= turn.runder.Count ||
+                        destinationPool.Value < 0 || destinationPool.Value >= turn.runder[destinationStage.Value].puljer.Count)
+                    {
+                        throw new ArgumentException("A pool advancement route has an invalid destination pool.");
+                    }
+
+                    if (turn.runder[sourceStage].whereto == null ||
+                        place.Value > turn.runder[sourceStage].whereto.Count ||
+                        turn.runder[sourceStage].whereto[place.Value - 1] != destinationStage.Value)
+                    {
+                        throw new ArgumentException("A pool advancement route does not match the stage route for that finishing place.");
+                    }
+
+                    string sourceKey = sourceStage + "|" + sourcePool.Value + "|" + place.Value;
+                    if (!seenSourceRoutes.Add(sourceKey))
+                    {
+                        throw new ArgumentException("The same source pool/place is routed more than once.");
+                    }
+
+                    var route = new ExplicitPoolAdvancementRoute
+                    {
+                        SourceStage = sourceStage,
+                        SourcePool = sourcePool.Value,
+                        Place = place.Value,
+                        DestinationStage = destinationStage.Value,
+                        DestinationPool = destinationPool.Value
+                    };
+
+                    if (!routesByDestinationStage.ContainsKey(route.DestinationStage))
+                    {
+                        routesByDestinationStage[route.DestinationStage] = new List<ExplicitPoolAdvancementRoute>();
+                    }
+
+                    routesByDestinationStage[route.DestinationStage].Add(route);
+                    hasExplicitRoutes = true;
+                }
+            }
+
+            if (!hasExplicitRoutes) return; // Backward compatibility with older clients/drafts.
+
+            foreach (var destinationEntry in routesByDestinationStage)
+            {
+                int destinationStage = destinationEntry.Key;
+                Tournament.Runde destinationRound = turn.runder[destinationStage];
+                List<ExplicitPoolAdvancementRoute> routes = destinationEntry.Value;
+                int destinationSeatCount = destinationRound.puljer.Sum(p => p.PuljeMatch.seats.Count);
+
+                // Once a stage uses explicit pool routing, every seat in that
+                // stage must have one explicit source. This prevents stale
+                // generic AutoSelect routes from creating duplicate players.
+                if (routes.Count != destinationSeatCount)
+                {
+                    throw new ArgumentException(
+                        "Explicit pool advancement for stage '" + destinationRound.name +
+                        "' contains " + routes.Count + " routes but the stage has " +
+                        destinationSeatCount + " seats.");
+                }
+
+                for (int destinationPool = 0; destinationPool < destinationRound.puljer.Count; destinationPool++)
+                {
+                    Tournament.Pulje destinationPulje = destinationRound.puljer[destinationPool];
+                    List<ExplicitPoolAdvancementRoute> poolRoutes = routes
+                        .Where(r => r.DestinationPool == destinationPool)
+                        .OrderBy(r => r.SourceStage)
+                        .ThenBy(r => r.SourcePool)
+                        .ThenBy(r => r.Place)
+                        .ToList();
+
+                    if (poolRoutes.Count != destinationPulje.PuljeMatch.seats.Count)
+                    {
+                        throw new ArgumentException(
+                            "Destination pulje " + (destinationPool + 1) + " in stage '" +
+                            destinationRound.name + "' needs " + destinationPulje.PuljeMatch.seats.Count +
+                            " advancing players but " + poolRoutes.Count + " were assigned.");
+                    }
+
+                    for (int seatIndex = 0; seatIndex < destinationPulje.PuljeMatch.seats.Count; seatIndex++)
+                    {
+                        ExplicitPoolAdvancementRoute route = poolRoutes[seatIndex];
+                        Tournament.Pulje sourcePulje = turn.runder[route.SourceStage].puljer[route.SourcePool];
+                        Tournament.Seat destinationSeat = destinationPulje.PuljeMatch.seats[seatIndex];
+
+                        ubo.SP_SetSeatAutoPlace(
+                            destinationSeat.SeatId,
+                            sourcePulje.PuljeMatch.MatchId,
+                            route.Place);
+                    }
+                }
+            }
+        }
+
         public int CreateTournamentFromString(string jsontext)
         {
             UserBackoffice ubo = new UserBackoffice();
@@ -673,6 +815,10 @@ namespace TournamentBackend
                 rundeindex++;
 
             }
+
+            // If the tournament builder supplied exact pool-to-pool routes,
+            // overwrite the generic balancing routes with those choices.
+            ApplyExplicitPoolAdvancementRoutes(turn, runder, ubo);
 
             foreach (SavedVariabels va in saved)
             {
