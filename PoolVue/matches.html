@@ -650,6 +650,82 @@
                   </button>
                 </div>
               </template>
+
+              <div class="manualAdvancePanel">
+                <div class="manualAdvanceHeader">
+                  <div>
+                    <div class="manualAdvanceTitle">Choose destination pools</div>
+                    <div class="manualAdvanceSub">
+                      The standings decide who advances. You choose which pool each qualified player goes to in the next stage.
+                    </div>
+                  </div>
+                  <button type="button"
+                          class="miniBtn"
+                          @click="loadManualAdvancement(selectedMatchId)"
+                          :disabled="manualAdvanceLoading || savingManualAdvance">
+                    <i class="fa" :class="manualAdvanceLoading ? 'fa-circle-o-notch fa-spin' : 'fa-refresh'"></i>
+                    Refresh
+                  </button>
+                </div>
+
+                <div v-if="manualAdvanceLoading" class="resultNote">
+                  <i class="fa fa-circle-o-notch fa-spin"></i> Loading destination pools…
+                </div>
+
+                <div v-else-if="manualAdvanceState">
+                  <div v-if="!manualAdvanceState.stageComplete" class="resultMessage warning manualAdvanceWarning">
+                    Finish all matches in this pool first. The qualified players are determined from the final standings.
+                  </div>
+
+                  <div v-if="manualAdvanceState.stageComplete && manualAdvanceEligiblePlayers().length" class="manualAdvanceRoutes">
+                    <div v-for="player in manualAdvanceEligiblePlayers()"
+                         :key="'advance-player-' + player.playerId"
+                         class="manualAdvanceRoute playerPoolRoute">
+                      <div class="manualAdvanceDestination advancingPlayerInfo">
+                        <strong>{{ player.playerName || ('Player #' + player.playerId) }}</strong>
+                        <span>{{ manualAdvancePlayerPlaceLabel(player) }}</span>
+                      </div>
+
+                      <label class="manualAdvanceSelect">
+                        <span>Advance to pool</span>
+                        <select :value="manualAdvanceAssignments[player.playerId]"
+                                @change="setManualAdvanceDestination(player.playerId, $event.target.value)"
+                                :disabled="!matchEditAllowed || savingManualAdvance">
+                          <option :value="null" disabled>— Choose pool —</option>
+                          <option v-for="destination in manualAdvancePoolOptions(player)"
+                                  :key="'advance-pool-' + player.playerId + '-' + destination.seatId"
+                                  :value="destination.seatId">
+                            {{ manualAdvanceDestinationLabel(destination) }}
+                          </option>
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div v-else-if="manualAdvanceState.stageComplete && manualAdvanceState.destinations && manualAdvanceState.destinations.length" class="resultNote">
+                    The next-stage seats exist, but the qualifying places have not been resolved yet.
+                  </div>
+
+                  <div v-else-if="manualAdvanceState.stageComplete" class="resultNote">
+                    This pool has no configured next-stage pools. Add advancement routes in the tournament structure first.
+                  </div>
+
+                  <div v-if="manualAdvanceError" class="resultMessage error">{{ manualAdvanceError }}</div>
+                  <div v-if="manualAdvanceMessage" class="resultMessage success">{{ manualAdvanceMessage }}</div>
+
+                  <div v-if="manualAdvanceState.stageComplete && manualAdvanceEligiblePlayers().length" class="resultActions manualAdvanceActions">
+                    <button type="button"
+                            class="saveResultBtn"
+                            @click="saveManualAdvancement"
+                            :disabled="!matchEditAllowed || savingManualAdvance">
+                      <i class="fa" :class="savingManualAdvance ? 'fa-circle-o-notch fa-spin' : 'fa-random'"></i>
+                      {{ savingManualAdvance ? 'Saving…' : 'Save destination pools' }}
+                    </button>
+                  </div>
+                </div>
+
+                <div v-else-if="manualAdvanceError" class="resultMessage error">{{ manualAdvanceError }}</div>
+              </div>
             </section>
 
             <section class="resultSection" v-else>

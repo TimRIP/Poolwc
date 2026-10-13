@@ -219,7 +219,13 @@ const matchesApp = new Vue({
     poolMatrixPlayers: [],
     poolMatrixMatches: [],
     poolMatrixCells: {},
-    savingPoolMatrix: false
+    savingPoolMatrix: false,
+    manualAdvanceLoading: false,
+    manualAdvanceState: null,
+    manualAdvanceAssignments: {},
+    manualAdvanceError: '',
+    manualAdvanceMessage: '',
+    savingManualAdvance: false
   },
 
   computed: {
@@ -544,6 +550,270 @@ const matchesApp = new Vue({
       this.poolMatrixMatches = [];
       this.poolMatrixCells = {};
       this.savingPoolMatrix = false;
+    },
+
+    resetManualAdvancement() {
+      this.manualAdvanceLoading = false;
+      this.manualAdvanceState = null;
+      this.manualAdvanceAssignments = {};
+      this.manualAdvanceError = '';
+      this.manualAdvanceMessage = '';
+      this.savingManualAdvance = false;
+    },
+
+    manualAdvancePlayerPlaceLabel(player) {
+      if (!player) return '';
+      const standing = this.poolMatrixStanding(player.playerId);
+      if (standing && standing.placeLabel && standing.placeLabel !== '–') {
+        return 'place ' + standing.placeLabel;
+      }
+      if (player.place !== null && player.place !== undefined) {
+        return 'place ' + player.place;
+      }
+      return '';
+    },
+
+    manualAdvanceOptionLabel(player) {
+      if (!player) return 'Player';
+      const name = player.playerName || ('Player #' + player.playerId);
+      const place = this.manualAdvancePlayerPlaceLabel(player);
+      return place ? name + ' · ' + place : name;
+    },
+
+    manualAdvanceEligiblePlayers() {
+      const state = this.manualAdvanceState;
+      if (!state || !Array.isArray(state.players) || !Array.isArray(state.destinations)) return [];
+
+      const advancingPlaces = new Set(
+        state.destinations
+          .map(destination => Number(destination.autoSelectPlace))
+          .filter(place => Number.isInteger(place) && place > 0)
+      );
+
+      return state.players
+        .filter(player => player && player.place !== null && player.place !== undefined && advancingPlaces.has(Number(player.place)))
+        .slice()
+        .sort((a, b) => Number(a.place) - Number(b.place) || Number(a.playerId) - Number(b.playerId));
+    },
+
+    manualAdvanceDestinationLabel(destination) {
+      if (!destination) return 'Next pool';
+      const parent = destination.parentMatchName || '';
+      const match = destination.matchName || ('Pool #' + destination.matchId);
+      return parent && parent !== match ? parent + ' · ' + match : match;
+    },
+
+    manualAdvanceTargetStageKey(destination) {
+      if (!destination) return null;
+      if (destination.parentMatchId !== null && destination.parentMatchId !== undefined) {
+        return Number(destination.parentMatchId);
+      }
+      return Number(destination.matchId);
+    },
+
+    manualAdvancePoolOptions(player) {
+      const state = this.manualAdvanceState;
+      if (!state || !player || !Array.isArray(state.destinations)) return [];
+
+      // A player's configured finishing place determines the next stage.
+      // Within that stage the administrator may choose which pool receives the player.
+      const automaticDestination = state.destinations.find(destination =>
+        Number(destination.autoSelectPlace) === Number(player.place)
+      );
+
+      if (!automaticDestination) return [];
+      const targetStage = this.manualAdvanceTargetStageKey(automaticDestination);
+
+      return state.destinations.filter(destination =>
+        this.manualAdvanceTargetStageKey(destination) === targetStage
+      );
+    },
+
+    setManualAdvanceDestination(playerId, destinationSeatId) {
+      const playerKey = String(playerId);
+      const newSeatId = Number(destinationSeatId);
+      if (!Number.isFinite(newSeatId)) return;
+
+      const oldValue = this.manualAdvanceAssignments[playerKey];
+      const oldSeatId = oldValue === null || oldValue === undefined || oldValue === ''
+        ? null
+        : Number(oldValue);
+
+      // If another qualified player currently occupies the selected destination,
+      // swap the two destinations. This makes a two-pool setup editable in one
+      // action instead of disabling both alternatives because each is occupied.
+      const otherPlayerKey = Object.keys(this.manualAdvanceAssignments).find(otherKey => {
+        if (String(otherKey) === playerKey) return false;
+        const selected = this.manualAdvanceAssignments[otherKey];
+        return selected !== null && selected !== undefined && selected !== '' && Number(selected) === newSeatId;
+      });
+
+      if (otherPlayerKey !== undefined) {
+        this.$set(this.manualAdvanceAssignments, otherPlayerKey, oldSeatId);
+      }
+
+      this.$set(this.manualAdvanceAssignments, playerKey, newSeatId);
+      this.manualAdvanceError = '';
+      this.manualAdvanceMessage = '';
+    },
+
+    applyManualAdvancementState(state) {
+      this.manualAdvanceState = state || null;
+      this.manualAdvanceAssignments = {};
+      if (!state || !Array.isArray(state.destinations) || !Array.isArray(state.players)) return;
+
+      const eligiblePlayers = this.manualAdvanceEligiblePlayers();
+      for (const player of eligiblePlayers) {
+        let destination = state.destinations.find(item =>
+          item.playerId !== null && item.playerId !== undefined && Number(item.playerId) === Number(player.playerId)
+        );
+
+        // If automatic advancement has not populated the target yet, default to
+        // the seat originally configured for this finishing place.
+        if (!destination) {
+          destination = state.destinations.find(item =>
+            Number(item.autoSelectPlace) === Number(player.place)
+          );
+        }
+
+        this.$set(
+          this.manualAdvanceAssignments,
+          String(player.playerId),
+          destination ? Number(destination.seatId) : null
+        );
+      }
+    },
+
+    async loadManualAdvancement(stageMatchId) {
+      this.manualAdvanceLoading = true;
+      this.manualAdvanceError = '';
+      this.manualAdvanceMessage = '';
+
+      try {
+        const res = await axios.get(
+          'http://localhost:5000/api/match/' + encodeURIComponent(stageMatchId) + '/advancement',
+          { headers: this.authHeaders() }
+        );
+        this.applyManualAdvancementState(res.data);
+      } catch (e) {
+        console.error(e);
+        this.manualAdvanceState = null;
+        this.manualAdvanceAssignments = {};
+        if (e.response && e.response.status === 401) {
+          this.manualAdvanceError = 'You are not logged in, or your login has expired.';
+        } else if (e.response && e.response.status === 403) {
+          this.manualAdvanceError = 'You do not have permission to manage advancement for this tournament.';
+        } else if (e.response && e.response.status === 404) {
+          this.manualAdvanceError = 'The advancement API endpoint was not found. Update MatchResultController.cs and restart PoolApi.';
+        } else if (e.response && e.response.data && e.response.data.message) {
+          this.manualAdvanceError = e.response.data.message;
+        } else {
+          this.manualAdvanceError = 'Could not load destination pools.';
+        }
+      } finally {
+        this.manualAdvanceLoading = false;
+      }
+    },
+
+    async saveManualAdvancement() {
+      if (!this.matchEditAllowed || !this.selectedIsPool || !this.manualAdvanceState || this.savingManualAdvance) return;
+      if (!this.manualAdvanceState.stageComplete) {
+        this.manualAdvanceError = 'Finish all matches in this pool before choosing the destination pools.';
+        return;
+      }
+
+      const destinations = Array.isArray(this.manualAdvanceState.destinations)
+        ? this.manualAdvanceState.destinations
+        : [];
+      const advancingPlayers = this.manualAdvanceEligiblePlayers();
+      if (!destinations.length) {
+        this.manualAdvanceError = 'No next-stage pools are configured for this pool.';
+        return;
+      }
+      if (!advancingPlayers.length) {
+        this.manualAdvanceError = 'The advancing players could not be determined yet.';
+        return;
+      }
+
+      const destinationToPlayer = {};
+      for (const player of advancingPlayers) {
+        const selectedSeatId = this.manualAdvanceAssignments[String(player.playerId)];
+        if (selectedSeatId === null || selectedSeatId === undefined || selectedSeatId === '') {
+          this.manualAdvanceError = 'Choose a destination pool for every advancing player.';
+          return;
+        }
+
+        const seatId = Number(selectedSeatId);
+        const allowed = this.manualAdvancePoolOptions(player).some(destination => Number(destination.seatId) === seatId);
+        if (!allowed) {
+          this.manualAdvanceError = 'One of the selected pools is not valid for that player’s next stage.';
+          return;
+        }
+        if (destinationToPlayer[String(seatId)] !== undefined) {
+          this.manualAdvanceError = 'Two players cannot use the same destination seat.';
+          return;
+        }
+        destinationToPlayer[String(seatId)] = Number(player.playerId);
+      }
+
+      const assignments = destinations.map(destination => ({
+        destinationSeatId: Number(destination.seatId),
+        playerId: destinationToPlayer[String(destination.seatId)] !== undefined
+          ? destinationToPlayer[String(destination.seatId)]
+          : null
+      }));
+
+      this.savingManualAdvance = true;
+      this.manualAdvanceError = '';
+      this.manualAdvanceMessage = '';
+      const sourcePoolId = Number(this.selectedMatchId);
+
+      try {
+        const res = await axios.post(
+          'http://localhost:5000/api/match/' + encodeURIComponent(sourcePoolId) + '/advancement/manual',
+          { assignments: assignments },
+          {
+            headers: Object.assign(
+              { 'Content-Type': 'application/json; charset=utf-8' },
+              this.authHeaders()
+            )
+          }
+        );
+
+        if (res.data && res.data.state) {
+          this.applyManualAdvancementState(res.data.state);
+        } else {
+          await this.loadManualAdvancement(sourcePoolId);
+        }
+
+        if (this.currentTournamentId) {
+          await this.loadMatches(this.currentTournamentId, true);
+          const freshNode = this.findTreeNodeById(sourcePoolId);
+          if (freshNode) {
+            this.selectedNode = freshNode;
+            this.selectedMatchId = sourcePoolId;
+            await this.loadMatchDetails(sourcePoolId);
+            await this.loadPoolMatrix(freshNode);
+          }
+        }
+
+        this.manualAdvanceMessage = res.data && res.data.message
+          ? res.data.message
+          : 'Destination pools saved.';
+      } catch (e) {
+        console.error(e);
+        if (e.response && e.response.status === 401) {
+          this.manualAdvanceError = 'You are not logged in, or your login has expired.';
+        } else if (e.response && e.response.status === 403) {
+          this.manualAdvanceError = 'You do not have permission to manage advancement for this tournament.';
+        } else if (e.response && e.response.data && e.response.data.message) {
+          this.manualAdvanceError = e.response.data.message;
+        } else {
+          this.manualAdvanceError = 'Could not save destination pools.';
+        }
+      } finally {
+        this.savingManualAdvance = false;
+      }
     },
 
     poolMatrixPairKey(playerA, playerB, ownerPlayerId) {
@@ -879,6 +1149,7 @@ const matchesApp = new Vue({
           this.selectedMatchId = poolMatchId;
           await this.loadMatchDetails(poolMatchId);
           await this.loadPoolMatrix(freshNode);
+          await this.loadManualAdvancement(poolMatchId);
         }
 
         this.lastAdvancement = latestAdvancement;
@@ -974,9 +1245,11 @@ const matchesApp = new Vue({
       this.venueError = '';
       this.venueMessage = '';
       this.resetPoolMatrix();
+      this.resetManualAdvancement();
       await this.loadMatchDetails(node.matchId);
       if (this.selectedIsPool) {
         await this.loadPoolMatrix(node);
+        await this.loadManualAdvancement(node.matchId);
       }
     },
 

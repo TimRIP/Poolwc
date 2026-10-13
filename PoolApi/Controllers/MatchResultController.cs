@@ -14,6 +14,11 @@ namespace TournamentBackend.Controllers
         public List<MatchResultUpdate> Results { get; set; }
     }
 
+    public class ManualAdvancementRequest
+    {
+        public List<ManualAdvancementAssignment> Assignments { get; set; }
+    }
+
     [Authorize]
     [ApiController]
     [Route("api/match")]
@@ -164,6 +169,79 @@ namespace TournamentBackend.Controllers
             {
                 Console.WriteLine(ex);
                 return StatusCode(500, new { message = "The match result could not be cleared." });
+            }
+        }
+
+        [HttpGet("{stageMatchId:int}/advancement")]
+        public IActionResult GetManualAdvancement(int stageMatchId)
+        {
+            if (!TryGetUserId(out int userId))
+            {
+                return Unauthorized();
+            }
+
+            MatchResultBackoffice backoffice = new MatchResultBackoffice();
+            if (!backoffice.CanEditMatchResults(stageMatchId, userId))
+            {
+                return StatusCode(403, new { message = "You do not have permission to manage advancement for this tournament." });
+            }
+
+            try
+            {
+                ManualAdvancementState state = backoffice.GetManualAdvancement(stageMatchId);
+                if (state == null)
+                {
+                    return NotFound(new { message = "The pool was not found." });
+                }
+
+                return Ok(state);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                return StatusCode(500, new { message = "Could not load manual advancement." });
+            }
+        }
+
+        [HttpPost("{stageMatchId:int}/advancement/manual")]
+        public IActionResult SaveManualAdvancement(
+            int stageMatchId,
+            [FromBody] ManualAdvancementRequest model)
+        {
+            if (!TryGetUserId(out int userId))
+            {
+                return Unauthorized();
+            }
+
+            if (model == null || model.Assignments == null)
+            {
+                return BadRequest(new { message = "Advancement assignments are required." });
+            }
+
+            MatchResultBackoffice backoffice = new MatchResultBackoffice();
+            if (!backoffice.CanEditMatchResults(stageMatchId, userId))
+            {
+                return StatusCode(403, new { message = "You do not have permission to manage advancement for this tournament." });
+            }
+
+            try
+            {
+                ManualAdvancementSaveResult result =
+                    backoffice.SaveManualAdvancement(stageMatchId, model.Assignments);
+                return Ok(result);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                return StatusCode(500, new { message = "Could not save manual advancement." });
             }
         }
 

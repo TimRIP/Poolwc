@@ -142,6 +142,47 @@ namespace DrukDatabaseLayer
         public int? PlayerId { get; set; }
     }
 
+    public class ManualAdvancementPlayerDetails
+    {
+        public int PlayerId { get; set; }
+        public string PlayerName { get; set; }
+        public int? Place { get; set; }
+    }
+
+    public class ManualAdvancementDestinationDetails
+    {
+        public int SeatId { get; set; }
+        public int MatchId { get; set; }
+        public string MatchName { get; set; }
+        public int? ParentMatchId { get; set; }
+        public string ParentMatchName { get; set; }
+        public int? AutoSelectPlace { get; set; }
+        public int? PlayerId { get; set; }
+        public string PlayerName { get; set; }
+    }
+
+    public class ManualAdvancementState
+    {
+        public int SourceStageMatchId { get; set; }
+        public string SourceStageName { get; set; }
+        public bool StageComplete { get; set; }
+        public List<ManualAdvancementPlayerDetails> Players { get; set; } = new List<ManualAdvancementPlayerDetails>();
+        public List<ManualAdvancementDestinationDetails> Destinations { get; set; } = new List<ManualAdvancementDestinationDetails>();
+    }
+
+    public class ManualAdvancementAssignment
+    {
+        public int DestinationSeatId { get; set; }
+        public int? PlayerId { get; set; }
+    }
+
+    public class ManualAdvancementSaveResult
+    {
+        public bool Saved { get; set; }
+        public string Message { get; set; }
+        public ManualAdvancementState State { get; set; }
+    }
+
     public class MatchResultBackoffice
     {
         private readonly IConfigurationRoot _configuration;
@@ -243,6 +284,248 @@ OPTION (MAXRECURSION 1000);";
             }
         }
 
+
+        public ManualAdvancementState GetManualAdvancement(int sourceStageMatchId)
+        {
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            {
+                conn.Open();
+                using (SqlTransaction transaction = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        string stageName = GetMatchName(conn, transaction, sourceStageMatchId);
+                        if (stageName == null)
+                        {
+                            transaction.Rollback();
+                            return null;
+                        }
+
+                        ManualAdvancementState state = new ManualAdvancementState
+                        {
+                            SourceStageMatchId = sourceStageMatchId,
+                            SourceStageName = stageName,
+                            StageComplete = IsStageCompleteForManualAdvancement(conn, transaction, sourceStageMatchId),
+                            Players = GetManualAdvancementPlayers(conn, transaction, sourceStageMatchId),
+                            Destinations = GetManualAdvancementDestinations(conn, transaction, sourceStageMatchId)
+                        };
+
+                        transaction.Commit();
+                        return state;
+                    }
+                    catch
+                    {
+                        transaction.Rollback();
+                        throw;
+                    }
+                }
+            }
+        }
+
+        public ManualAdvancementSaveResult SaveManualAdvancement(
+            int sourceStageMatchId,
+            IList<ManualAdvancementAssignment> assignments)
+        {
+            if (assignments == null)
+            {
+                throw new ArgumentException("Manual advancement assignments are required.");
+            }
+
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            {
+                conn.Open();
+                using (SqlTransaction transaction = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        string stageName = GetMatchName(conn, transaction, sourceStageMatchId);
+                        if (stageName == null)
+                        {
+                            throw new InvalidOperationException("The source pool was not found.");
+                        }
+
+                        if (!IsStageCompleteForManualAdvancement(conn, transaction, sourceStageMatchId))
+                        {
+                            throw new InvalidOperationException("Finish all matches in this pool before choosing the destination pools.");
+                        }
+
+                        List<ManualAdvancementPlayerDetails> players =
+                            GetManualAdvancementPlayers(conn, transaction, sourceStageMatchId);
+                        List<ManualAdvancementDestinationDetails> destinations =
+                            GetManualAdvancementDestinations(conn, transaction, sourceStageMatchId);
+
+                        if (destinations.Count == 0)
+                        {
+                            throw new InvalidOperationException("No next-stage seats are configured to receive players from this pool.");
+                        }
+
+                        if (assignments.Select(x => x.DestinationSeatId).Distinct().Count() != assignments.Count)
+                        {
+                            throw new InvalidOperationException("The same destination seat was submitted more than once.");
+                        }
+
+                        HashSet<int> validDestinationSeatIds =
+                            new HashSet<int>(destinations.Select(x => x.SeatId));
+                        if (assignments.Any(x => !validDestinationSeatIds.Contains(x.DestinationSeatId)))
+                        {
+                            throw new InvalidOperationException("One or more destination seats do not belong to this pool's advancement routes.");
+                        }
+
+                        if (assignments.Count != destinations.Count ||
+                            destinations.Any(d => !assignments.Any(a => a.DestinationSeatId == d.SeatId)))
+                        {
+                            throw new InvalidOperationException("Submit an assignment for every configured destination seat.");
+                        }
+
+                        List<int> selectedPlayerIds = assignments
+                            .Where(x => x.PlayerId.HasValue)
+                            .Select(x => x.PlayerId.Value)
+                            .ToList();
+
+                        if (selectedPlayerIds.Distinct().Count() != selectedPlayerIds.Count)
+                        {
+                            throw new InvalidOperationException("A player can only be advanced to one destination seat from this pool.");
+                        }
+
+                        HashSet<int> validPlayerIds = new HashSet<int>(players.Select(x => x.PlayerId));
+                        if (selectedPlayerIds.Any(x => !validPlayerIds.Contains(x)))
+                        {
+                            throw new InvalidOperationException("One or more selected players do not belong to this pool.");
+                        }
+
+                        // Manual routing chooses the destination pool, not who qualifies.
+                        // The final standings and the configured advancement places decide
+                        // which players are allowed to advance.
+                        HashSet<int> advancingPlaces = new HashSet<int>(
+                            destinations
+                                .Where(x => x.AutoSelectPlace.HasValue && x.AutoSelectPlace.Value > 0)
+                                .Select(x => x.AutoSelectPlace.Value));
+
+                        HashSet<int> requiredPlayerIds = new HashSet<int>(
+                            players
+                                .Where(x => x.Place.HasValue && advancingPlaces.Contains(x.Place.Value))
+                                .Select(x => x.PlayerId));
+
+                        HashSet<int> submittedPlayerIds = new HashSet<int>(selectedPlayerIds);
+                        if (!requiredPlayerIds.SetEquals(submittedPlayerIds))
+                        {
+                            throw new InvalidOperationException(
+                                "The standings decide who advances. Choose a destination pool for every qualified player without replacing them with another player.");
+                        }
+
+                        Dictionary<int, ManualAdvancementAssignment> assignmentBySeat =
+                            assignments.ToDictionary(x => x.DestinationSeatId);
+
+                        foreach (ManualAdvancementPlayerDetails player in players.Where(x => requiredPlayerIds.Contains(x.PlayerId)))
+                        {
+                            HashSet<int> allowedTargetStages = new HashSet<int>(
+                                destinations
+                                    .Where(x => x.AutoSelectPlace == player.Place)
+                                    .Select(x => x.ParentMatchId ?? x.MatchId));
+
+                            ManualAdvancementDestinationDetails chosenDestination = destinations.FirstOrDefault(
+                                x => assignmentBySeat[x.SeatId].PlayerId == player.PlayerId);
+
+                            if (chosenDestination == null ||
+                                !allowedTargetStages.Contains(chosenDestination.ParentMatchId ?? chosenDestination.MatchId))
+                            {
+                                throw new InvalidOperationException(
+                                    "A qualified player may be moved between pools in the configured next stage, but not to a different stage.");
+                            }
+                        }
+
+                        List<ManualAdvancementDestinationDetails> changed = destinations
+                            .Where(d =>
+                            {
+                                int? wanted = assignmentBySeat[d.SeatId].PlayerId;
+                                return wanted != d.PlayerId;
+                            })
+                            .ToList();
+
+                        if (changed.Count == 0)
+                        {
+                            ManualAdvancementState unchangedState = new ManualAdvancementState
+                            {
+                                SourceStageMatchId = sourceStageMatchId,
+                                SourceStageName = stageName,
+                                StageComplete = true,
+                                Players = players,
+                                Destinations = destinations
+                            };
+
+                            transaction.Commit();
+                            return new ManualAdvancementSaveResult
+                            {
+                                Saved = true,
+                                Message = "The destination pools are already set that way.",
+                                State = unchangedState
+                            };
+                        }
+
+                        // If a player is changed in a later pool, results already entered in that
+                        // destination pool can no longer be trusted. Clear that stage and everything
+                        // downstream before replacing the player. This also reverses any affected MMR.
+                        HashSet<int> invalidatedDestinationStages = new HashSet<int>();
+                        foreach (int destinationStageId in changed.Select(x => x.MatchId).Distinct())
+                        {
+                            if (invalidatedDestinationStages.Add(destinationStageId))
+                            {
+                                ClearStageOutcomeAndDestinations(
+                                    conn,
+                                    transaction,
+                                    destinationStageId,
+                                    true,
+                                    new HashSet<int>());
+                            }
+                        }
+
+                        foreach (ManualAdvancementDestinationDetails destination in changed)
+                        {
+                            int? playerId = assignmentBySeat[destination.SeatId].PlayerId;
+                            if (playerId.HasValue)
+                            {
+                                SetPlayerOnSeatAndChildren(
+                                    conn,
+                                    transaction,
+                                    destination.SeatId,
+                                    playerId.Value);
+                            }
+                            else
+                            {
+                                ClearPlayerFromSeatAndChildren(
+                                    conn,
+                                    transaction,
+                                    destination.SeatId);
+                            }
+                        }
+
+                        ManualAdvancementState updatedState = new ManualAdvancementState
+                        {
+                            SourceStageMatchId = sourceStageMatchId,
+                            SourceStageName = stageName,
+                            StageComplete = true,
+                            Players = GetManualAdvancementPlayers(conn, transaction, sourceStageMatchId),
+                            Destinations = GetManualAdvancementDestinations(conn, transaction, sourceStageMatchId)
+                        };
+
+                        transaction.Commit();
+                        return new ManualAdvancementSaveResult
+                        {
+                            Saved = true,
+                            Message = changed.Count + " destination pool assignment" +
+                                (changed.Count == 1 ? " was" : "s were") +
+                                " updated.",
+                            State = updatedState
+                        };
+                    }
+                    catch
+                    {
+                        transaction.Rollback();
+                        throw;
+                    }
+                }
+            }
+        }
 
         public MatchDetails GetMatchDetails(int matchId)
         {
@@ -2454,6 +2737,132 @@ ORDER BY S.MatchId, S.Id;", conn, transaction))
                     }
                 }
             }
+            return result;
+        }
+
+        private static bool IsStageCompleteForManualAdvancement(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int sourceStageMatchId)
+        {
+            List<int> childMatchIds = GetChildMatchIds(conn, transaction, sourceStageMatchId);
+            if (childMatchIds.Count == 0)
+            {
+                return false;
+            }
+
+            List<ChildSeatResult> childResults = GetChildResults(conn, transaction, sourceStageMatchId);
+            foreach (int childMatchId in childMatchIds)
+            {
+                List<ChildSeatResult> seats = childResults
+                    .Where(x => x.MatchId == childMatchId && x.PlayerId > 0)
+                    .ToList();
+
+                // One assigned seat is valid for an automatic Swiss bye. Normal
+                // two-player and multi-player matches simply have more seats here.
+                if (seats.Count == 0 || seats.Any(x => !x.ResultMatchPlace.HasValue))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static List<ManualAdvancementPlayerDetails> GetManualAdvancementPlayers(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int sourceStageMatchId)
+        {
+            List<ManualAdvancementPlayerDetails> result = new List<ManualAdvancementPlayerDetails>();
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT
+    S.PlayerId,
+    P.Name AS PlayerName,
+    S.ResultMatchPlace
+FROM Seat S
+LEFT JOIN Player P ON P.Id = S.PlayerId
+WHERE S.MatchId = @SourceStageMatchId
+  AND S.PlayerId IS NOT NULL
+ORDER BY
+    CASE WHEN S.ResultMatchPlace IS NULL THEN 1 ELSE 0 END,
+    S.ResultMatchPlace,
+    S.Id;", conn, transaction))
+            {
+                cmd.Parameters.Add("@SourceStageMatchId", SqlDbType.Int).Value = sourceStageMatchId;
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        int playerId = Convert.ToInt32(reader["PlayerId"]);
+                        result.Add(new ManualAdvancementPlayerDetails
+                        {
+                            PlayerId = playerId,
+                            PlayerName = reader["PlayerName"] == DBNull.Value
+                                ? "Player #" + playerId
+                                : Convert.ToString(reader["PlayerName"]),
+                            Place = ToNullableInt(reader["ResultMatchPlace"])
+                        });
+                    }
+                }
+            }
+            return result;
+        }
+
+        private static List<ManualAdvancementDestinationDetails> GetManualAdvancementDestinations(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int sourceStageMatchId)
+        {
+            List<ManualAdvancementDestinationDetails> result =
+                new List<ManualAdvancementDestinationDetails>();
+
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT
+    S.Id AS SeatId,
+    S.MatchId,
+    M.Name AS MatchName,
+    M.ParentMatchId,
+    PM.Name AS ParentMatchName,
+    S.AutoSelectlPlace,
+    S.PlayerId,
+    P.Name AS PlayerName
+FROM Seat S
+INNER JOIN [Match] M ON M.Id = S.MatchId
+LEFT JOIN [Match] PM ON PM.Id = M.ParentMatchId
+LEFT JOIN Player P ON P.Id = S.PlayerId
+WHERE S.AutoSelectMatchId = @SourceStageMatchId
+ORDER BY
+    ISNULL(M.ParentMatchId, 0),
+    M.Id,
+    S.Id;", conn, transaction))
+            {
+                cmd.Parameters.Add("@SourceStageMatchId", SqlDbType.Int).Value = sourceStageMatchId;
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        result.Add(new ManualAdvancementDestinationDetails
+                        {
+                            SeatId = Convert.ToInt32(reader["SeatId"]),
+                            MatchId = Convert.ToInt32(reader["MatchId"]),
+                            MatchName = reader["MatchName"] == DBNull.Value
+                                ? null
+                                : Convert.ToString(reader["MatchName"]),
+                            ParentMatchId = ToNullableInt(reader["ParentMatchId"]),
+                            ParentMatchName = reader["ParentMatchName"] == DBNull.Value
+                                ? null
+                                : Convert.ToString(reader["ParentMatchName"]),
+                            AutoSelectPlace = ToNullableInt(reader["AutoSelectlPlace"]),
+                            PlayerId = ToNullableInt(reader["PlayerId"]),
+                            PlayerName = reader["PlayerName"] == DBNull.Value
+                                ? null
+                                : Convert.ToString(reader["PlayerName"])
+                        });
+                    }
+                }
+            }
+
             return result;
         }
 
