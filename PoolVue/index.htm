@@ -146,7 +146,7 @@
 
                   <div class="schedule-explanation" v-if="formdata.autoSchedule">
                     <i class="fa fa-clock-o"></i>
-                    A pool uses one venue. Its estimated duration is the number of matches in the pool × game length. Pools in the same stage run in parallel where venues are available. When closing time is reached, scheduling pauses and continues from opening time the next day; the next stage starts after the previous stage is estimated to finish.
+                    A pool uses one venue. Its estimated duration is the number of matches in the pool × game length. Pools in the same stage run in parallel where venues are available. For later stages, the scheduler prefers a venue that the incoming players have not already used, based on the configured advancement routes. When closing time is reached, scheduling pauses and continues from opening time the next day; the next stage starts after the previous stage is estimated to finish.
                   </div>
                 </div>
               </div>
@@ -339,13 +339,13 @@
                   <p>The finishing position decides who advances. Here you choose the exact pool that each qualified player will enter when the tournament is created.</p>
                 </div>
                 <button type="button" class="secondary-btn" @click="autoAssignPoolAdvancementRoutes">
-                  <i class="fa fa-random"></i> Auto-fill balanced
+                  <i class="fa fa-random"></i> Auto-fill 1st vs 2nd
                 </button>
               </div>
 
               <div class="advancement-help">
                 <i class="fa fa-info-circle"></i>
-                These routes become the automatic <strong>AutoSelect</strong> routes in the match tree. You can set all of them now and still change them later from the Matches page.
+                Auto-fill pairs <strong>1st-place finishers with 2nd-place finishers</strong> where possible and keeps players from the same source pool apart. These routes become the automatic <strong>AutoSelect</strong> routes in the match tree and can still be changed manually.
               </div>
 
               <article class="advancement-stage-card"

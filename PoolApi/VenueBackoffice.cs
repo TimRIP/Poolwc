@@ -41,6 +41,7 @@ namespace DrukDatabaseLayer
         public int PlayerCount { get; set; }
         public int? PlayStyleId { get; set; }
         public string RuleDescription { get; set; }
+        public List<int> SourcePoolMatchIds { get; set; } = new List<int>();
     }
 
     internal class VenueScheduleSlot
@@ -390,6 +391,8 @@ WHERE Id = @FacilityId
                         if (autoSchedule)
                         {
                             List<PoolScheduleWorkItem> pools = GetPoolScheduleWorkItems(conn, transaction, tournamentId);
+                            var assignedVenueByPool = new Dictionary<int, int>();
+                            var poolsById = pools.ToDictionary(p => p.PoolMatchId);
                             DateTime stageStart = MoveIntoVenueHours(normalizedStart.Value, venueOpenTime, venueCloseTime);
 
                             foreach (IGrouping<int, PoolScheduleWorkItem> stage in pools
@@ -403,8 +406,20 @@ WHERE Id = @FacilityId
 
                                 foreach (PoolScheduleWorkItem pool in stage.OrderBy(p => p.PoolMatchId))
                                 {
+                                    Dictionary<int, int> venueRepeatPenalty = BuildVenueRepeatPenalty(
+                                        pool,
+                                        poolsById,
+                                        assignedVenueByPool);
+
+                                    // Prefer a venue that none of the players feeding this pool are
+                                    // expected to have used before. If every venue has been used on
+                                    // one or more possible incoming paths, choose the venue with the
+                                    // smallest repeat penalty. Availability/time breaks ties.
                                     VenueScheduleSlot slot = slots
-                                        .OrderBy(v => v.AvailableAt)
+                                        .OrderBy(v => venueRepeatPenalty.ContainsKey(v.FacilityId)
+                                            ? venueRepeatPenalty[v.FacilityId]
+                                            : 0)
+                                        .ThenBy(v => v.AvailableAt)
                                         .ThenBy(v => v.FacilityId)
                                         .First();
 
@@ -426,6 +441,7 @@ WHERE Id = @FacilityId
                                     }
 
                                     slot.AvailableAt = poolFinish;
+                                    assignedVenueByPool[pool.PoolMatchId] = slot.FacilityId;
                                     result.ScheduledPools++;
                                 }
 
@@ -608,7 +624,81 @@ OPTION (MAXRECURSION 1000);";
                 }
             }
 
+            foreach (PoolScheduleWorkItem pool in result)
+            {
+                pool.SourcePoolMatchIds = GetSourcePoolMatchIds(conn, transaction, pool.PoolMatchId);
+            }
+
             return result;
+        }
+
+        private static List<int> GetSourcePoolMatchIds(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int destinationPoolMatchId)
+        {
+            const string sql = @"
+SELECT DISTINCT S.AutoSelectMatchId
+FROM Seat S
+WHERE S.MatchId = @DestinationPoolMatchId
+  AND S.AutoSelectMatchId IS NOT NULL
+ORDER BY S.AutoSelectMatchId;";
+
+            var result = new List<int>();
+            using (SqlCommand cmd = new SqlCommand(sql, conn, transaction))
+            {
+                cmd.Parameters.Add("@DestinationPoolMatchId", SqlDbType.Int).Value = destinationPoolMatchId;
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        result.Add(Convert.ToInt32(reader["AutoSelectMatchId"]));
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private static Dictionary<int, int> BuildVenueRepeatPenalty(
+            PoolScheduleWorkItem pool,
+            IDictionary<int, PoolScheduleWorkItem> poolsById,
+            IDictionary<int, int> assignedVenueByPool)
+        {
+            var penalty = new Dictionary<int, int>();
+            var visitedPools = new HashSet<int>();
+            var pending = new Stack<int>((pool.SourcePoolMatchIds ?? new List<int>()).Distinct());
+
+            while (pending.Count > 0)
+            {
+                int sourcePoolId = pending.Pop();
+                if (!visitedPools.Add(sourcePoolId))
+                {
+                    continue;
+                }
+
+                int venueId;
+                if (assignedVenueByPool.TryGetValue(sourcePoolId, out venueId))
+                {
+                    int current;
+                    penalty.TryGetValue(venueId, out current);
+                    penalty[venueId] = current + 1;
+                }
+
+                PoolScheduleWorkItem sourcePool;
+                if (poolsById.TryGetValue(sourcePoolId, out sourcePool) && sourcePool.SourcePoolMatchIds != null)
+                {
+                    foreach (int earlierPoolId in sourcePool.SourcePoolMatchIds)
+                    {
+                        if (!visitedPools.Contains(earlierPoolId))
+                        {
+                            pending.Push(earlierPoolId);
+                        }
+                    }
+                }
+            }
+
+            return penalty;
         }
 
         private static int GetScheduleMatchUnits(PoolScheduleWorkItem pool)

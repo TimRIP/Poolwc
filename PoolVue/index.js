@@ -396,33 +396,62 @@ var dash = new Vue({
       }
 
       // Fill only routes that do not already have a valid manual selection.
-      // Prefer pools with free capacity, then the least-filled pool. When
-      // possible, keep two qualifiers from the same source pool apart.
+      // The main pairing rule is: when 1st and 2nd places advance to the same
+      // stage, try to put one 1st-place finisher together with one 2nd-place
+      // finisher in each destination pool. We still keep qualifiers from the
+      // same source pool apart whenever possible and respect pool capacity.
       for (var s = 0; s < specs.length; s++) {
         var spec = specs[s];
         if (spec.destinationPool >= 0) continue;
 
         var targetUsage = usage[spec.destinationStage];
-        var sameSourcePools = {};
-        for (var earlier = 0; earlier < specs.length; earlier++) {
-          var other = specs[earlier];
-          if (other === spec || other.destinationPool < 0) continue;
-          if (other.destinationStage === spec.destinationStage && other.sourceStage === spec.sourceStage && other.sourcePool === spec.sourcePool) {
-            sameSourcePools[other.destinationPool] = true;
-          }
-        }
-
         var bestPool = -1;
-        var bestConflict = 2;
+        var bestSourceConflict = 2;
+        var bestPlacementBalance = Number.POSITIVE_INFINITY;
+        var bestSamePlaceCount = Number.POSITIVE_INFINITY;
         var bestFill = Number.POSITIVE_INFINITY;
+
         for (var p = 0; p < spec.targetSizes.length; p++) {
           var capacity = Number(spec.targetSizes[p]) || 0;
           if (capacity <= 0 || targetUsage[p] >= capacity) continue;
-          var conflict = sameSourcePools[p] ? 1 : 0;
+
+          var sourceConflict = 0;
+          var firstCount = 0;
+          var secondCount = 0;
+          var samePlaceCount = 0;
+
+          for (var earlier = 0; earlier < specs.length; earlier++) {
+            var other = specs[earlier];
+            if (other === spec || other.destinationPool !== p || other.destinationStage !== spec.destinationStage) continue;
+
+            if (other.sourceStage === spec.sourceStage && other.sourcePool === spec.sourcePool) sourceConflict = 1;
+            if (Number(other.place) === 1) firstCount++;
+            if (Number(other.place) === 2) secondCount++;
+            if (Number(other.place) === Number(spec.place)) samePlaceCount++;
+          }
+
+          // For first/second-place qualifiers, minimize the imbalance that
+          // would exist after adding this player. This makes 1st + 2nd the
+          // natural pairing before creating 1st + 1st or 2nd + 2nd pools.
+          var placementBalance;
+          if (Number(spec.place) === 1 || Number(spec.place) === 2) {
+            var firstAfter = firstCount + (Number(spec.place) === 1 ? 1 : 0);
+            var secondAfter = secondCount + (Number(spec.place) === 2 ? 1 : 0);
+            placementBalance = Math.abs(firstAfter - secondAfter);
+          } else {
+            placementBalance = samePlaceCount;
+          }
+
           var fill = targetUsage[p] / capacity;
-          if (conflict < bestConflict || (conflict === bestConflict && fill < bestFill)) {
+
+          if (sourceConflict < bestSourceConflict ||
+              (sourceConflict === bestSourceConflict && placementBalance < bestPlacementBalance) ||
+              (sourceConflict === bestSourceConflict && placementBalance === bestPlacementBalance && samePlaceCount < bestSamePlaceCount) ||
+              (sourceConflict === bestSourceConflict && placementBalance === bestPlacementBalance && samePlaceCount === bestSamePlaceCount && fill < bestFill)) {
             bestPool = p;
-            bestConflict = conflict;
+            bestSourceConflict = sourceConflict;
+            bestPlacementBalance = placementBalance;
+            bestSamePlaceCount = samePlaceCount;
             bestFill = fill;
           }
         }
@@ -461,7 +490,7 @@ var dash = new Vue({
     autoAssignPoolAdvancementRoutes: function () {
       this.rebuildPoolAdvancementRoutes(true);
       this.validate();
-      this.uiMessage = 'Pool advancement routes were filled automatically. You can change every destination pool before creating the tournament.';
+      this.uiMessage = 'Pool advancement routes were auto-filled so 1st-place finishers are paired with 2nd-place finishers where possible. You can change every destination pool before creating the tournament.';
     },
 
     createPoolStage: function (name, players, poolSize, destinationIndex, qualifiersPerPool) {
