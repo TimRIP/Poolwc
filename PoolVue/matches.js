@@ -600,7 +600,11 @@ const matchesApp = new Vue({
       if (!destination) return 'Next pool';
       const parent = destination.parentMatchName || '';
       const match = destination.matchName || ('Pool #' + destination.matchId);
-      return parent && parent !== match ? parent + ' · ' + match : match;
+      const base = parent && parent !== match ? parent + ' · ' + match : match;
+      if (destination.requiresPlayerSwap && destination.playerName) {
+        return base + ' (swap with ' + destination.playerName + ')';
+      }
+      return base;
     },
 
     manualAdvanceTargetStageKey(destination) {
@@ -615,18 +619,17 @@ const matchesApp = new Vue({
       const state = this.manualAdvanceState;
       if (!state || !player || !Array.isArray(state.destinations)) return [];
 
-      // A player's configured finishing place determines the next stage.
-      // Within that stage the administrator may choose which pool receives the player.
-      const automaticDestination = state.destinations.find(destination =>
+      const options = state.destinations.filter(destination =>
         Number(destination.autoSelectPlace) === Number(player.place)
       );
 
-      if (!automaticDestination) return [];
-      const targetStage = this.manualAdvanceTargetStageKey(automaticDestination);
-
-      return state.destinations.filter(destination =>
-        this.manualAdvanceTargetStageKey(destination) === targetStage
-      );
+      const seenPools = new Set();
+      return options.filter(destination => {
+        const poolKey = Number(destination.matchId);
+        if (seenPools.has(poolKey)) return false;
+        seenPools.add(poolKey);
+        return true;
+      });
     },
 
     setManualAdvanceDestination(playerId, destinationSeatId) {
@@ -756,11 +759,9 @@ const matchesApp = new Vue({
         destinationToPlayer[String(seatId)] = Number(player.playerId);
       }
 
-      const assignments = destinations.map(destination => ({
-        destinationSeatId: Number(destination.seatId),
-        playerId: destinationToPlayer[String(destination.seatId)] !== undefined
-          ? destinationToPlayer[String(destination.seatId)]
-          : null
+      const assignments = advancingPlayers.map(player => ({
+        destinationSeatId: Number(this.manualAdvanceAssignments[String(player.playerId)]),
+        playerId: Number(player.playerId)
       }));
 
       this.savingManualAdvance = true;

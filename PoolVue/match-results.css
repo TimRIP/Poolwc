@@ -10,8 +10,8 @@
 .matchTreeColumn { min-width: 0; }
 
 .matchResultPanel {
-  position: sticky;
-  top: 18px;
+  position: static;
+  top: auto;
   min-width: 0;
   border: 1px solid rgba(255,255,255,.12);
   border-radius: 16px;
@@ -1306,5 +1306,54 @@
 
   .manualAdvanceRoute {
     grid-template-columns: 1fr;
+  }
+}
+
+
+/* Independent desktop scrolling -------------------------------------------
+   The tournament tree and the result/matrix panel each get their own
+   vertical scrollbar. Mouse-wheel scrolling is consumed immediately by
+   whichever side the pointer is over. */
+@media (min-width: 1501px) {
+  .matchWorkspace {
+    align-items: stretch;
+    height: calc(100vh - 32px);
+    min-height: 520px;
+  }
+
+  .matchTreeColumn,
+  .matchResultPanel {
+    box-sizing: border-box;
+    height: 100%;
+    min-height: 0;
+    overflow-y: scroll;
+    overflow-x: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+
+  .matchTreeColumn {
+    padding-right: 8px;
+  }
+
+  .matchResultPanel {
+    position: static;
+    top: auto;
+  }
+}
+
+/* When the layout stacks, return to normal page scrolling. */
+@media (max-width: 1500px) {
+  .matchWorkspace {
+    height: auto;
+    min-height: 0;
+  }
+
+  .matchTreeColumn,
+  .matchResultPanel {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    scrollbar-gutter: auto;
   }
 }
