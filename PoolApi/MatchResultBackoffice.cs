@@ -207,6 +207,107 @@ namespace DrukDatabaseLayer
         public ManualAdvancementState State { get; set; }
     }
 
+    public class StageManualAdvancementPlayerDetails
+    {
+        public int PlayerId { get; set; }
+        public string PlayerName { get; set; }
+        public int SourcePoolMatchId { get; set; }
+        public string SourcePoolName { get; set; }
+        public int Place { get; set; }
+        public int SourcePoolPlayerCount { get; set; }
+        public int TargetStageMatchId { get; set; }
+        public string TargetStageName { get; set; }
+        public int CurrentDestinationPoolMatchId { get; set; }
+        public string CurrentDestinationPoolName { get; set; }
+    }
+
+    public class StageManualAdvancementPoolDetails
+    {
+        public int MatchId { get; set; }
+        public string MatchName { get; set; }
+        public int TargetStageMatchId { get; set; }
+        public string TargetStageName { get; set; }
+        public int Capacity { get; set; }
+        public int CurrentAssignedCount { get; set; }
+        public int WildcardCapacity { get; set; }
+        public int WildcardAssignedCount { get; set; }
+    }
+
+    public class StageManualWildcardSlotDetails
+    {
+        public int SeatId { get; set; }
+        public int TargetStageMatchId { get; set; }
+        public string TargetStageName { get; set; }
+        public int DestinationPoolMatchId { get; set; }
+        public string DestinationPoolName { get; set; }
+        public int? PlayerId { get; set; }
+        public string PlayerName { get; set; }
+    }
+
+    public class StageManualWildcardCandidateDetails
+    {
+        public int PlayerId { get; set; }
+        public string PlayerName { get; set; }
+        public int SourcePoolMatchId { get; set; }
+        public string SourcePoolName { get; set; }
+        public int Place { get; set; }
+        public int SourcePoolPlayerCount { get; set; }
+    }
+
+    public class StageManualAdvancementState
+    {
+        public int SourceStageMatchId { get; set; }
+        public string SourceStageName { get; set; }
+        public bool StageComplete { get; set; }
+        public List<StageManualAdvancementPlayerDetails> Players { get; set; } = new List<StageManualAdvancementPlayerDetails>();
+        public List<StageManualAdvancementPoolDetails> Pools { get; set; } = new List<StageManualAdvancementPoolDetails>();
+        public List<StageManualWildcardSlotDetails> WildcardSlots { get; set; } = new List<StageManualWildcardSlotDetails>();
+        public List<StageManualWildcardCandidateDetails> WildcardCandidates { get; set; } = new List<StageManualWildcardCandidateDetails>();
+    }
+
+    public class StageManualAdvancementAssignment
+    {
+        public int PlayerId { get; set; }
+        public int DestinationPoolMatchId { get; set; }
+    }
+
+    public class StageManualWildcardAssignment
+    {
+        public int SeatId { get; set; }
+        public int PlayerId { get; set; }
+    }
+
+    public class StageManualAdvancementSaveResult
+    {
+        public bool Saved { get; set; }
+        public string Message { get; set; }
+        public StageManualAdvancementState State { get; set; }
+    }
+
+    internal class StageManualRouteRecord
+    {
+        public int SeatId { get; set; }
+        public int SourcePoolMatchId { get; set; }
+        public string SourcePoolName { get; set; }
+        public int Place { get; set; }
+        public int TargetStageMatchId { get; set; }
+        public string TargetStageName { get; set; }
+        public int DestinationPoolMatchId { get; set; }
+        public string DestinationPoolName { get; set; }
+        public int? PlayerId { get; set; }
+        public string PlayerName { get; set; }
+    }
+
+    internal class StageManualCandidateSeat
+    {
+        public int SeatId { get; set; }
+        public int MatchId { get; set; }
+        public int TargetStageMatchId { get; set; }
+        public int? AutoSelectMatchId { get; set; }
+        public int? AutoSelectPlace { get; set; }
+        public int? PlayerId { get; set; }
+    }
+
     public class MatchResultBackoffice
     {
         private readonly IConfigurationRoot _configuration;
@@ -608,6 +709,359 @@ OPTION (MAXRECURSION 1000);";
                                 (changedCount == 1 ? " was" : "s were") +
                                 " updated.",
                             State = updatedState
+                        };
+                    }
+                    catch
+                    {
+                        transaction.Rollback();
+                        throw;
+                    }
+                }
+            }
+        }
+
+        public StageManualAdvancementState GetStageManualAdvancement(int sourceStageMatchId)
+        {
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            {
+                conn.Open();
+                using (SqlTransaction transaction = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        StageManualAdvancementState state =
+                            BuildStageManualAdvancementState(conn, transaction, sourceStageMatchId);
+                        transaction.Commit();
+                        return state;
+                    }
+                    catch
+                    {
+                        transaction.Rollback();
+                        throw;
+                    }
+                }
+            }
+        }
+
+        public StageManualAdvancementSaveResult SaveStageManualAdvancement(
+            int sourceStageMatchId,
+            IList<StageManualAdvancementAssignment> assignments,
+            IList<StageManualWildcardAssignment> wildcardAssignments)
+        {
+            assignments = assignments ?? new List<StageManualAdvancementAssignment>();
+            wildcardAssignments = wildcardAssignments ?? new List<StageManualWildcardAssignment>();
+
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            {
+                conn.Open();
+                using (SqlTransaction transaction = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        StageManualAdvancementState state =
+                            BuildStageManualAdvancementState(conn, transaction, sourceStageMatchId);
+
+                        if (state == null)
+                        {
+                            throw new InvalidOperationException("The stage was not found.");
+                        }
+
+                        if (!state.StageComplete)
+                        {
+                            throw new InvalidOperationException(
+                                "Finish every pool in this stage before assigning the advancing and wildcard players.");
+                        }
+
+                        List<StageManualRouteRecord> routes =
+                            GetStageManualRouteRecords(conn, transaction, sourceStageMatchId);
+                        List<StageManualWildcardSlotDetails> wildcardSlots =
+                            GetStageWildcardSlots(conn, transaction, sourceStageMatchId);
+
+                        if (routes.Count == 0 && wildcardSlots.Count == 0)
+                        {
+                            throw new InvalidOperationException(
+                                "This stage has no configured advancement or wildcard routes.");
+                        }
+
+                        if (routes.Any(x => !x.PlayerId.HasValue))
+                        {
+                            throw new InvalidOperationException(
+                                "One or more pool placements are still unresolved. Resolve the standings before assigning destination pools.");
+                        }
+
+                        List<int> requiredPlayerIds = routes
+                            .Select(x => x.PlayerId.Value)
+                            .Distinct()
+                            .OrderBy(x => x)
+                            .ToList();
+
+                        if (assignments.Count != requiredPlayerIds.Count ||
+                            assignments.Select(x => x.PlayerId).Distinct().Count() != assignments.Count ||
+                            !new HashSet<int>(assignments.Select(x => x.PlayerId))
+                                .SetEquals(requiredPlayerIds))
+                        {
+                            throw new InvalidOperationException(
+                                "Choose one destination pool for every player who qualified normally.");
+                        }
+
+                        Dictionary<int, StageManualRouteRecord> routeByPlayer = routes
+                            .Where(x => x.PlayerId.HasValue)
+                            .GroupBy(x => x.PlayerId.Value)
+                            .ToDictionary(x => x.Key, x => x.First());
+
+                        Dictionary<int, StageManualAdvancementPoolDetails> poolById = state.Pools
+                            .GroupBy(x => x.MatchId)
+                            .ToDictionary(x => x.Key, x => x.First());
+
+                        foreach (StageManualAdvancementAssignment assignment in assignments)
+                        {
+                            StageManualRouteRecord route;
+                            StageManualAdvancementPoolDetails pool;
+
+                            if (!routeByPlayer.TryGetValue(assignment.PlayerId, out route) ||
+                                !poolById.TryGetValue(assignment.DestinationPoolMatchId, out pool))
+                            {
+                                throw new InvalidOperationException(
+                                    "One of the selected players or destination pools is no longer available.");
+                            }
+
+                            if (pool.TargetStageMatchId != route.TargetStageMatchId)
+                            {
+                                throw new InvalidOperationException(
+                                    "A player can only be moved between pools in the stage they qualified for.");
+                            }
+                        }
+
+                        Dictionary<int, StageManualAdvancementAssignment> assignmentByPlayer =
+                            assignments.ToDictionary(x => x.PlayerId, x => x);
+
+                        Dictionary<int, int> destinationCount = assignments
+                            .GroupBy(x => x.DestinationPoolMatchId)
+                            .ToDictionary(x => x.Key, x => x.Count());
+
+                        List<StageManualCandidateSeat> candidates =
+                            GetStageManualCandidateSeats(conn, transaction, sourceStageMatchId);
+
+                        foreach (KeyValuePair<int, int> item in destinationCount)
+                        {
+                            int capacity = candidates.Count(x => x.MatchId == item.Key);
+                            if (item.Value > capacity)
+                            {
+                                StageManualAdvancementPoolDetails pool = poolById[item.Key];
+                                throw new InvalidOperationException(
+                                    (pool.MatchName ?? "The selected pool") +
+                                    " only has room for " + capacity +
+                                    " normal advancing player" + (capacity == 1 ? "." : "s."));
+                            }
+                        }
+
+                        Dictionary<int, int> destinationSeatByPlayer = new Dictionary<int, int>();
+                        HashSet<int> usedSeatIds = new HashSet<int>();
+
+                        // Preserve an existing route when the player stays in the same pool.
+                        foreach (StageManualRouteRecord route in routes.Where(x => x.PlayerId.HasValue))
+                        {
+                            int chosenPoolId = assignmentByPlayer[route.PlayerId.Value].DestinationPoolMatchId;
+                            if (chosenPoolId == route.DestinationPoolMatchId &&
+                                candidates.Any(x => x.SeatId == route.SeatId))
+                            {
+                                destinationSeatByPlayer[route.PlayerId.Value] = route.SeatId;
+                                usedSeatIds.Add(route.SeatId);
+                            }
+                        }
+
+                        // Allocate moved normal qualifiers only among normal route seats.
+                        // Wildcard seats are explicitly marked with place 0 and are not
+                        // part of GetStageManualCandidateSeats.
+                        foreach (StageManualRouteRecord route in routes
+                            .Where(x => x.PlayerId.HasValue && !destinationSeatByPlayer.ContainsKey(x.PlayerId.Value))
+                            .OrderBy(x => x.TargetStageMatchId)
+                            .ThenBy(x => assignmentByPlayer[x.PlayerId.Value].DestinationPoolMatchId)
+                            .ThenBy(x => x.Place)
+                            .ThenBy(x => x.SourcePoolMatchId))
+                        {
+                            int chosenPoolId = assignmentByPlayer[route.PlayerId.Value].DestinationPoolMatchId;
+                            StageManualCandidateSeat seat = candidates
+                                .Where(x => x.MatchId == chosenPoolId && !usedSeatIds.Contains(x.SeatId))
+                                .OrderByDescending(x => x.AutoSelectMatchId.HasValue)
+                                .ThenBy(x => x.SeatId)
+                                .FirstOrDefault();
+
+                            if (seat == null)
+                            {
+                                throw new InvalidOperationException(
+                                    "There is not enough normal qualification room in one of the selected destination pools.");
+                            }
+
+                            destinationSeatByPlayer[route.PlayerId.Value] = seat.SeatId;
+                            usedSeatIds.Add(seat.SeatId);
+                        }
+
+                        bool normalChanged = routes
+                            .Where(x => x.PlayerId.HasValue)
+                            .Any(x => destinationSeatByPlayer[x.PlayerId.Value] != x.SeatId);
+
+                        // Validate the wildcard selections. A wildcard may only be given
+                        // to a player with no normal progression route from this stage.
+                        List<StageManualWildcardCandidateDetails> wildcardCandidates =
+                            GetStageWildcardCandidates(conn, transaction, sourceStageMatchId);
+                        Dictionary<int, StageManualWildcardCandidateDetails> wildcardCandidateByPlayer =
+                            wildcardCandidates
+                                .GroupBy(x => x.PlayerId)
+                                .ToDictionary(x => x.Key, x => x.First());
+                        Dictionary<int, StageManualWildcardSlotDetails> wildcardSlotBySeat =
+                            wildcardSlots.ToDictionary(x => x.SeatId, x => x);
+
+                        if (wildcardAssignments.Count != wildcardSlots.Count ||
+                            wildcardAssignments.Select(x => x.SeatId).Distinct().Count() != wildcardAssignments.Count ||
+                            wildcardAssignments.Select(x => x.PlayerId).Distinct().Count() != wildcardAssignments.Count ||
+                            !new HashSet<int>(wildcardAssignments.Select(x => x.SeatId))
+                                .SetEquals(wildcardSlots.Select(x => x.SeatId)))
+                        {
+                            throw new InvalidOperationException(
+                                "Choose one different eliminated player for every wildcard place.");
+                        }
+
+                        foreach (StageManualWildcardAssignment assignment in wildcardAssignments)
+                        {
+                            if (!wildcardSlotBySeat.ContainsKey(assignment.SeatId) ||
+                                !wildcardCandidateByPlayer.ContainsKey(assignment.PlayerId) ||
+                                requiredPlayerIds.Contains(assignment.PlayerId))
+                            {
+                                throw new InvalidOperationException(
+                                    "A wildcard must be assigned to an eliminated player from this stage.");
+                            }
+                        }
+
+                        Dictionary<int, StageManualWildcardAssignment> wildcardAssignmentBySeat =
+                            wildcardAssignments.ToDictionary(x => x.SeatId, x => x);
+                        bool wildcardChanged = wildcardSlots.Any(slot =>
+                            !slot.PlayerId.HasValue ||
+                            slot.PlayerId.Value != wildcardAssignmentBySeat[slot.SeatId].PlayerId);
+
+                        if (!normalChanged && !wildcardChanged)
+                        {
+                            transaction.Commit();
+                            return new StageManualAdvancementSaveResult
+                            {
+                                Saved = true,
+                                Message = "The normal advancement and wildcard selections are already set that way.",
+                                State = state
+                            };
+                        }
+
+                        HashSet<int> affectedPools = new HashSet<int>();
+                        foreach (StageManualRouteRecord route in routes.Where(x => x.PlayerId.HasValue))
+                        {
+                            int newSeatId = destinationSeatByPlayer[route.PlayerId.Value];
+                            if (newSeatId == route.SeatId)
+                            {
+                                continue;
+                            }
+
+                            affectedPools.Add(route.DestinationPoolMatchId);
+                            StageManualCandidateSeat target = candidates.First(x => x.SeatId == newSeatId);
+                            affectedPools.Add(target.MatchId);
+                        }
+
+                        foreach (StageManualWildcardSlotDetails slot in wildcardSlots)
+                        {
+                            StageManualWildcardAssignment assignment = wildcardAssignmentBySeat[slot.SeatId];
+                            if (!slot.PlayerId.HasValue || slot.PlayerId.Value != assignment.PlayerId)
+                            {
+                                affectedPools.Add(slot.DestinationPoolMatchId);
+                            }
+                        }
+
+                        HashSet<int> visited = new HashSet<int>();
+                        foreach (int poolId in affectedPools)
+                        {
+                            ClearStageOutcomeAndDestinations(
+                                conn,
+                                transaction,
+                                poolId,
+                                true,
+                                visited);
+                        }
+
+                        List<StageManualRouteRecord> changedRoutes = routes
+                            .Where(x =>
+                                x.PlayerId.HasValue &&
+                                destinationSeatByPlayer[x.PlayerId.Value] != x.SeatId)
+                            .ToList();
+
+                        HashSet<int> touchedSeatIds = new HashSet<int>(
+                            changedRoutes.Select(x => x.SeatId));
+                        foreach (StageManualRouteRecord route in changedRoutes)
+                        {
+                            touchedSeatIds.Add(destinationSeatByPlayer[route.PlayerId.Value]);
+                        }
+
+                        // Clear only normal route slots participating in a rearrangement.
+                        foreach (int seatId in touchedSeatIds)
+                        {
+                            ClearPlayerFromSeatAndChildren(conn, transaction, seatId);
+                            using (SqlCommand cmd = new SqlCommand(@"
+UPDATE Seat
+SET AutoSelectMatchId = NULL,
+    AutoSelectlPlace = NULL
+WHERE Id = @SeatId;", conn, transaction))
+                            {
+                                cmd.Parameters.Add("@SeatId", SqlDbType.Int).Value = seatId;
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
+
+                        foreach (StageManualRouteRecord route in changedRoutes)
+                        {
+                            int targetSeatId = destinationSeatByPlayer[route.PlayerId.Value];
+
+                            using (SqlCommand cmd = new SqlCommand(@"
+UPDATE Seat
+SET AutoSelectMatchId = @SourcePoolMatchId,
+    AutoSelectlPlace = @Place
+WHERE Id = @SeatId;", conn, transaction))
+                            {
+                                cmd.Parameters.Add("@SourcePoolMatchId", SqlDbType.Int).Value = route.SourcePoolMatchId;
+                                cmd.Parameters.Add("@Place", SqlDbType.Int).Value = route.Place;
+                                cmd.Parameters.Add("@SeatId", SqlDbType.Int).Value = targetSeatId;
+                                cmd.ExecuteNonQuery();
+                            }
+
+                            SetPlayerOnSeatAndChildren(
+                                conn,
+                                transaction,
+                                targetSeatId,
+                                route.PlayerId.Value);
+                        }
+
+                        // Wildcard route metadata never changes: source stage + place 0.
+                        // Only the chosen player is placed into the reserved seat.
+                        foreach (StageManualWildcardSlotDetails slot in wildcardSlots)
+                        {
+                            int playerId = wildcardAssignmentBySeat[slot.SeatId].PlayerId;
+                            if (!slot.PlayerId.HasValue || slot.PlayerId.Value != playerId)
+                            {
+                                SetPlayerOnSeatAndChildren(
+                                    conn,
+                                    transaction,
+                                    slot.SeatId,
+                                    playerId);
+                            }
+                        }
+
+                        StageManualAdvancementState updated =
+                            BuildStageManualAdvancementState(conn, transaction, sourceStageMatchId);
+
+                        transaction.Commit();
+                        return new StageManualAdvancementSaveResult
+                        {
+                            Saved = true,
+                            Message = "Saved " + requiredPlayerIds.Count + " normal qualifier" +
+                                (requiredPlayerIds.Count == 1 ? "" : "s") + " and " +
+                                wildcardSlots.Count + " wildcard" +
+                                (wildcardSlots.Count == 1 ? "" : "s") + ".",
+                            State = updated
                         };
                     }
                     catch
@@ -2832,6 +3286,495 @@ ORDER BY S.MatchId, S.Id;", conn, transaction))
             return result;
         }
 
+        private static List<int> GetStageSourcePoolIds(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int sourceStageMatchId)
+        {
+            List<int> result = new List<int>();
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT M.Id
+FROM [Match] M
+WHERE M.ParentMatchId = @SourceStageMatchId
+  AND ISNULL(M.IndividualMatch, 0) = 0
+  AND (
+        EXISTS (
+            SELECT 1
+            FROM [Match] C
+            WHERE C.ParentMatchId = M.Id
+              AND ISNULL(C.IndividualMatch, 0) = 1
+        )
+        OR EXISTS (
+            SELECT 1
+            FROM Seat S
+            WHERE S.MatchId = M.Id
+              AND S.PlayerId IS NOT NULL
+        )
+      )
+ORDER BY M.Id;", conn, transaction))
+            {
+                cmd.Parameters.Add("@SourceStageMatchId", SqlDbType.Int).Value = sourceStageMatchId;
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        result.Add(Convert.ToInt32(reader["Id"]));
+                    }
+                }
+            }
+            return result;
+        }
+
+        private static List<StageManualRouteRecord> GetStageManualRouteRecords(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int sourceStageMatchId)
+        {
+            List<StageManualRouteRecord> routes = new List<StageManualRouteRecord>();
+
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT
+    R.Id AS SeatId,
+    R.AutoSelectMatchId AS SourcePoolMatchId,
+    SP.Name AS SourcePoolName,
+    R.AutoSelectlPlace AS Place,
+    R.MatchId AS DestinationPoolMatchId,
+    DP.Name AS DestinationPoolName,
+    DP.ParentMatchId AS TargetStageMatchId,
+    TS.Name AS TargetStageName
+FROM Seat R
+INNER JOIN [Match] SP ON SP.Id = R.AutoSelectMatchId
+INNER JOIN [Match] DP ON DP.Id = R.MatchId
+LEFT JOIN [Match] TS ON TS.Id = DP.ParentMatchId
+WHERE SP.ParentMatchId = @SourceStageMatchId
+  AND ISNULL(SP.IndividualMatch, 0) = 0
+  AND R.AutoSelectlPlace IS NOT NULL
+  AND R.AutoSelectlPlace > 0
+ORDER BY R.AutoSelectMatchId, R.AutoSelectlPlace, R.Id;", conn, transaction))
+            {
+                cmd.Parameters.Add("@SourceStageMatchId", SqlDbType.Int).Value = sourceStageMatchId;
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        int destinationPoolId = Convert.ToInt32(reader["DestinationPoolMatchId"]);
+                        int? parentStageId = ToNullableInt(reader["TargetStageMatchId"]);
+                        routes.Add(new StageManualRouteRecord
+                        {
+                            SeatId = Convert.ToInt32(reader["SeatId"]),
+                            SourcePoolMatchId = Convert.ToInt32(reader["SourcePoolMatchId"]),
+                            SourcePoolName = ToNullableString(reader["SourcePoolName"]),
+                            Place = Convert.ToInt32(reader["Place"]),
+                            TargetStageMatchId = parentStageId ?? destinationPoolId,
+                            TargetStageName = parentStageId.HasValue
+                                ? ToNullableString(reader["TargetStageName"])
+                                : ToNullableString(reader["DestinationPoolName"]),
+                            DestinationPoolMatchId = destinationPoolId,
+                            DestinationPoolName = ToNullableString(reader["DestinationPoolName"])
+                        });
+                    }
+                }
+            }
+
+            foreach (StageManualRouteRecord route in routes)
+            {
+                List<Tuple<int, string>> matchingPlayers = new List<Tuple<int, string>>();
+                using (SqlCommand cmd = new SqlCommand(@"
+SELECT S.PlayerId, P.Name AS PlayerName
+FROM Seat S
+LEFT JOIN Player P ON P.Id = S.PlayerId
+WHERE S.MatchId = @SourcePoolMatchId
+  AND S.ResultMatchPlace = @Place
+  AND S.PlayerId IS NOT NULL
+ORDER BY S.Id;", conn, transaction))
+                {
+                    cmd.Parameters.Add("@SourcePoolMatchId", SqlDbType.Int).Value = route.SourcePoolMatchId;
+                    cmd.Parameters.Add("@Place", SqlDbType.Int).Value = route.Place;
+                    using (SqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            int playerId = Convert.ToInt32(reader["PlayerId"]);
+                            matchingPlayers.Add(Tuple.Create(
+                                playerId,
+                                reader["PlayerName"] == DBNull.Value
+                                    ? "Player #" + playerId
+                                    : Convert.ToString(reader["PlayerName"])));
+                        }
+                    }
+                }
+
+                // A unique placement must identify exactly one player. If two
+                // players still share the same placement, the stage is not ready
+                // for manual routing yet.
+                if (matchingPlayers.Count == 1)
+                {
+                    route.PlayerId = matchingPlayers[0].Item1;
+                    route.PlayerName = matchingPlayers[0].Item2;
+                }
+            }
+
+            return routes;
+        }
+
+        private static List<StageManualCandidateSeat> GetStageManualCandidateSeats(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int sourceStageMatchId)
+        {
+            List<StageManualRouteRecord> routes =
+                GetStageManualRouteRecords(conn, transaction, sourceStageMatchId);
+            List<StageManualCandidateSeat> result = new List<StageManualCandidateSeat>();
+
+            foreach (int targetStageId in routes.Select(x => x.TargetStageMatchId).Distinct())
+            {
+                using (SqlCommand cmd = new SqlCommand(@"
+SELECT
+    S.Id AS SeatId,
+    S.MatchId,
+    M.ParentMatchId AS TargetStageMatchId,
+    S.AutoSelectMatchId,
+    S.AutoSelectlPlace,
+    S.PlayerId
+FROM Seat S
+INNER JOIN [Match] M ON M.Id = S.MatchId
+LEFT JOIN [Match] SourcePool ON SourcePool.Id = S.AutoSelectMatchId
+WHERE (M.ParentMatchId = @TargetStageMatchId OR M.Id = @TargetStageMatchId)
+  AND ISNULL(M.IndividualMatch, 0) = 0
+  AND (
+        SourcePool.ParentMatchId = @SourceStageMatchId
+        OR (S.AutoSelectMatchId IS NULL AND S.PlayerId IS NULL)
+      )
+ORDER BY M.Id, S.Id;", conn, transaction))
+                {
+                    cmd.Parameters.Add("@TargetStageMatchId", SqlDbType.Int).Value = targetStageId;
+                    cmd.Parameters.Add("@SourceStageMatchId", SqlDbType.Int).Value = sourceStageMatchId;
+                    using (SqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            int matchId = Convert.ToInt32(reader["MatchId"]);
+                            int? parent = ToNullableInt(reader["TargetStageMatchId"]);
+                            result.Add(new StageManualCandidateSeat
+                            {
+                                SeatId = Convert.ToInt32(reader["SeatId"]),
+                                MatchId = matchId,
+                                TargetStageMatchId = parent ?? matchId,
+                                AutoSelectMatchId = ToNullableInt(reader["AutoSelectMatchId"]),
+                                AutoSelectPlace = ToNullableInt(reader["AutoSelectlPlace"]),
+                                PlayerId = ToNullableInt(reader["PlayerId"])
+                            });
+                        }
+                    }
+                }
+            }
+
+            return result
+                .GroupBy(x => x.SeatId)
+                .Select(x => x.First())
+                .ToList();
+        }
+
+        private static List<StageManualWildcardSlotDetails> GetStageWildcardSlots(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int sourceStageMatchId)
+        {
+            List<StageManualWildcardSlotDetails> result = new List<StageManualWildcardSlotDetails>();
+
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT
+    S.Id AS SeatId,
+    S.MatchId AS DestinationPoolMatchId,
+    DP.Name AS DestinationPoolName,
+    DP.ParentMatchId AS TargetStageMatchId,
+    TS.Name AS TargetStageName,
+    S.PlayerId,
+    P.Name AS PlayerName
+FROM Seat S
+INNER JOIN [Match] DP ON DP.Id = S.MatchId
+LEFT JOIN [Match] TS ON TS.Id = DP.ParentMatchId
+LEFT JOIN Player P ON P.Id = S.PlayerId
+WHERE S.AutoSelectMatchId = @SourceStageMatchId
+  AND S.AutoSelectlPlace = 0
+ORDER BY DP.Id, S.Id;", conn, transaction))
+            {
+                cmd.Parameters.Add("@SourceStageMatchId", SqlDbType.Int).Value = sourceStageMatchId;
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        int destinationPoolId = Convert.ToInt32(reader["DestinationPoolMatchId"]);
+                        int? targetStageId = ToNullableInt(reader["TargetStageMatchId"]);
+                        result.Add(new StageManualWildcardSlotDetails
+                        {
+                            SeatId = Convert.ToInt32(reader["SeatId"]),
+                            DestinationPoolMatchId = destinationPoolId,
+                            DestinationPoolName = ToNullableString(reader["DestinationPoolName"]),
+                            TargetStageMatchId = targetStageId ?? destinationPoolId,
+                            TargetStageName = targetStageId.HasValue
+                                ? ToNullableString(reader["TargetStageName"])
+                                : ToNullableString(reader["DestinationPoolName"]),
+                            PlayerId = ToNullableInt(reader["PlayerId"]),
+                            PlayerName = ToNullableString(reader["PlayerName"])
+                        });
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private static List<StageManualWildcardCandidateDetails> GetStageWildcardCandidates(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int sourceStageMatchId)
+        {
+            List<StageManualWildcardCandidateDetails> result = new List<StageManualWildcardCandidateDetails>();
+
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT
+    SS.PlayerId,
+    P.Name AS PlayerName,
+    SP.Id AS SourcePoolMatchId,
+    SP.Name AS SourcePoolName,
+    SS.ResultMatchPlace AS Place
+FROM [Match] SP
+INNER JOIN Seat SS ON SS.MatchId = SP.Id
+LEFT JOIN Player P ON P.Id = SS.PlayerId
+WHERE SP.ParentMatchId = @SourceStageMatchId
+  AND ISNULL(SP.IndividualMatch, 0) = 0
+  AND SS.PlayerId IS NOT NULL
+  AND SS.ResultMatchPlace IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1
+      FROM Seat D
+      WHERE D.AutoSelectMatchId = SP.Id
+        AND D.AutoSelectlPlace = SS.ResultMatchPlace
+  )
+ORDER BY SP.Id, SS.ResultMatchPlace, SS.Id;", conn, transaction))
+            {
+                cmd.Parameters.Add("@SourceStageMatchId", SqlDbType.Int).Value = sourceStageMatchId;
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        int sourcePoolMatchId = Convert.ToInt32(reader["SourcePoolMatchId"]);
+                        int playerId = Convert.ToInt32(reader["PlayerId"]);
+                        result.Add(new StageManualWildcardCandidateDetails
+                        {
+                            PlayerId = playerId,
+                            PlayerName = reader["PlayerName"] == DBNull.Value
+                                ? "Player #" + playerId
+                                : Convert.ToString(reader["PlayerName"]),
+                            SourcePoolMatchId = sourcePoolMatchId,
+                            SourcePoolName = ToNullableString(reader["SourcePoolName"]),
+                            Place = Convert.ToInt32(reader["Place"]),
+                            SourcePoolPlayerCount = 0
+                        });
+                    }
+                }
+            }
+
+            // Do these count queries only after the candidate reader has been
+            // closed. SQL Server otherwise rejects a second command on the same
+            // connection when MultipleActiveResultSets is not enabled.
+            Dictionary<int, int> playerCountsByPool = result
+                .Select(x => x.SourcePoolMatchId)
+                .Distinct()
+                .ToDictionary(
+                    poolMatchId => poolMatchId,
+                    poolMatchId => GetPoolPlayerCount(conn, transaction, poolMatchId));
+
+            foreach (StageManualWildcardCandidateDetails candidate in result)
+            {
+                candidate.SourcePoolPlayerCount = playerCountsByPool[candidate.SourcePoolMatchId];
+            }
+
+            return result
+                .GroupBy(x => x.PlayerId)
+                .Select(x => x.First())
+                .ToList();
+        }
+
+        private static int GetPoolPlayerCount(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int poolMatchId)
+        {
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT COUNT(DISTINCT X.PlayerId)
+FROM (
+    SELECT S.PlayerId
+    FROM Seat S
+    WHERE S.MatchId = @PoolMatchId
+      AND S.PlayerId IS NOT NULL
+
+    UNION ALL
+
+    SELECT S.PlayerId
+    FROM [Match] C
+    INNER JOIN Seat S ON S.MatchId = C.Id
+    WHERE C.ParentMatchId = @PoolMatchId
+      AND S.PlayerId IS NOT NULL
+) X;", conn, transaction))
+            {
+                cmd.Parameters.Add("@PoolMatchId", SqlDbType.Int).Value = poolMatchId;
+                object value = cmd.ExecuteScalar();
+                return value == null || value == DBNull.Value ? 0 : Convert.ToInt32(value);
+            }
+        }
+
+        private static StageManualAdvancementState BuildStageManualAdvancementState(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            int sourceStageMatchId)
+        {
+            string sourceStageName = GetMatchName(conn, transaction, sourceStageMatchId);
+            if (sourceStageName == null)
+            {
+                return null;
+            }
+
+            List<int> sourcePoolIds =
+                GetStageSourcePoolIds(conn, transaction, sourceStageMatchId);
+            if (sourcePoolIds.Count == 0)
+            {
+                return new StageManualAdvancementState
+                {
+                    SourceStageMatchId = sourceStageMatchId,
+                    SourceStageName = sourceStageName,
+                    StageComplete = false
+                };
+            }
+
+            bool matchesComplete = sourcePoolIds.All(poolId =>
+                IsStageCompleteForManualAdvancement(conn, transaction, poolId));
+
+            List<StageManualRouteRecord> routes =
+                GetStageManualRouteRecords(conn, transaction, sourceStageMatchId);
+            List<StageManualWildcardSlotDetails> wildcardSlots =
+                GetStageWildcardSlots(conn, transaction, sourceStageMatchId);
+
+            bool placementsResolved = routes.All(x => x.PlayerId.HasValue) &&
+                routes.Where(x => x.PlayerId.HasValue)
+                    .Select(x => x.PlayerId.Value)
+                    .Distinct()
+                    .Count() == routes.Count;
+
+            List<StageManualAdvancementPlayerDetails> players = routes
+                .Where(x => x.PlayerId.HasValue)
+                .Select(x => new StageManualAdvancementPlayerDetails
+                {
+                    PlayerId = x.PlayerId.Value,
+                    PlayerName = x.PlayerName,
+                    SourcePoolMatchId = x.SourcePoolMatchId,
+                    SourcePoolName = x.SourcePoolName,
+                    Place = x.Place,
+                    SourcePoolPlayerCount = GetPoolPlayerCount(conn, transaction, x.SourcePoolMatchId),
+                    TargetStageMatchId = x.TargetStageMatchId,
+                    TargetStageName = x.TargetStageName,
+                    CurrentDestinationPoolMatchId = x.DestinationPoolMatchId,
+                    CurrentDestinationPoolName = x.DestinationPoolName
+                })
+                .OrderBy(x => x.TargetStageMatchId)
+                .ThenBy(x => x.Place)
+                .ThenBy(x => x.SourcePoolMatchId)
+                .ToList();
+
+            List<StageManualWildcardCandidateDetails> wildcardCandidates = matchesComplete
+                ? GetStageWildcardCandidates(conn, transaction, sourceStageMatchId)
+                : new List<StageManualWildcardCandidateDetails>();
+
+            List<StageManualCandidateSeat> candidateSeats =
+                GetStageManualCandidateSeats(conn, transaction, sourceStageMatchId);
+            List<StageManualAdvancementPoolDetails> pools = new List<StageManualAdvancementPoolDetails>();
+
+            HashSet<int> targetStageIds = new HashSet<int>(routes.Select(x => x.TargetStageMatchId));
+            targetStageIds.UnionWith(wildcardSlots.Select(x => x.TargetStageMatchId));
+
+            foreach (int targetStageId in targetStageIds.OrderBy(x => x))
+            {
+                string targetStageName = routes
+                    .Where(x => x.TargetStageMatchId == targetStageId)
+                    .Select(x => x.TargetStageName)
+                    .Concat(wildcardSlots
+                        .Where(x => x.TargetStageMatchId == targetStageId)
+                        .Select(x => x.TargetStageName))
+                    .FirstOrDefault(x => !String.IsNullOrWhiteSpace(x));
+
+                List<Tuple<int, string>> stagePools = new List<Tuple<int, string>>();
+                using (SqlCommand cmd = new SqlCommand(@"
+SELECT Id, Name
+FROM [Match]
+WHERE ParentMatchId = @TargetStageMatchId
+  AND ISNULL(IndividualMatch, 0) = 0
+ORDER BY Id;", conn, transaction))
+                {
+                    cmd.Parameters.Add("@TargetStageMatchId", SqlDbType.Int).Value = targetStageId;
+                    using (SqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            stagePools.Add(Tuple.Create(
+                                Convert.ToInt32(reader["Id"]),
+                                ToNullableString(reader["Name"])));
+                        }
+                    }
+                }
+
+                if (stagePools.Count == 0)
+                {
+                    stagePools = routes
+                        .Where(x => x.TargetStageMatchId == targetStageId)
+                        .Select(x => Tuple.Create(x.DestinationPoolMatchId, x.DestinationPoolName))
+                        .Concat(wildcardSlots
+                            .Where(x => x.TargetStageMatchId == targetStageId)
+                            .Select(x => Tuple.Create(x.DestinationPoolMatchId, x.DestinationPoolName)))
+                        .GroupBy(x => x.Item1)
+                        .Select(x => x.First())
+                        .ToList();
+                }
+
+                foreach (Tuple<int, string> pool in stagePools)
+                {
+                    int capacity = candidateSeats.Count(x => x.MatchId == pool.Item1);
+                    int wildcardCapacity = wildcardSlots.Count(x => x.DestinationPoolMatchId == pool.Item1);
+                    if (capacity == 0 && wildcardCapacity == 0)
+                    {
+                        continue;
+                    }
+
+                    pools.Add(new StageManualAdvancementPoolDetails
+                    {
+                        MatchId = pool.Item1,
+                        MatchName = pool.Item2,
+                        TargetStageMatchId = targetStageId,
+                        TargetStageName = targetStageName,
+                        Capacity = capacity,
+                        CurrentAssignedCount = routes.Count(x => x.DestinationPoolMatchId == pool.Item1),
+                        WildcardCapacity = wildcardCapacity,
+                        WildcardAssignedCount = wildcardSlots.Count(x =>
+                            x.DestinationPoolMatchId == pool.Item1 && x.PlayerId.HasValue)
+                    });
+                }
+            }
+
+            return new StageManualAdvancementState
+            {
+                SourceStageMatchId = sourceStageMatchId,
+                SourceStageName = sourceStageName,
+                StageComplete = matchesComplete && placementsResolved,
+                Players = players,
+                Pools = pools
+                    .OrderBy(x => x.TargetStageMatchId)
+                    .ThenBy(x => x.MatchId)
+                    .ToList(),
+                WildcardSlots = wildcardSlots,
+                WildcardCandidates = wildcardCandidates
+            };
+        }
+
         private static bool IsStageCompleteForManualAdvancement(
             SqlConnection conn,
             SqlTransaction transaction,
@@ -3281,10 +4224,16 @@ ORDER BY S.Id;", conn, transaction))
         {
             List<DestinationSeat> result = new List<DestinationSeat>();
             using (SqlCommand cmd = new SqlCommand(@"
-SELECT S.Id, S.MatchId, S.PlayerId, M.Name AS MatchName
+SELECT DISTINCT S.Id, S.MatchId, S.PlayerId, M.Name AS MatchName
 FROM Seat S
 INNER JOIN [Match] M ON M.Id = S.MatchId
 WHERE S.AutoSelectMatchId = @SourceStageMatchId
+   OR (
+        S.AutoSelectlPlace = 0
+        AND S.AutoSelectMatchId = (
+            SELECT ParentMatchId FROM [Match] WHERE Id = @SourceStageMatchId
+        )
+      )
 ORDER BY S.Id;", conn, transaction))
             {
                 cmd.Parameters.Add("@SourceStageMatchId", SqlDbType.Int).Value = sourceStageMatchId;

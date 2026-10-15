@@ -168,6 +168,8 @@ var dash = new Vue({
           poolSizes: [4, 4],
           valsArray: [-1, -1, -1, -1],
           poolAdvancementRoutes: [],
+          wildcardCount: 0,
+          wildcardRoutes: [],
           playstyle: 'roundrobin',
           swissRounds: 2
         }
@@ -325,6 +327,31 @@ var dash = new Vue({
         for (var r = 0; r < routes.length; r++) {
           if (Number(routes[r].destinationStage) === stageIndex && Number(routes[r].destinationPool) === poolIndex) count++;
         }
+
+        var wildcardRoutes = Array.isArray(rounds[i].wildcardRoutes) ? rounds[i].wildcardRoutes : [];
+        for (var w = 0; w < wildcardRoutes.length; w++) {
+          if (Number(wildcardRoutes[w].destinationStage) === stageIndex && Number(wildcardRoutes[w].destinationPool) === poolIndex) count++;
+        }
+      }
+
+      return count;
+    },
+
+    wildcardEligibleCount: function (round) {
+      if (!round || !Array.isArray(round.valsArray)) return 0;
+      var count = 0;
+
+      if (round.selected === 'pool') {
+        for (var place = 0; place < round.valsArray.length; place++) {
+          if (Number(round.valsArray[place]) === -1) {
+            count += this.playersAtPlace(round, place + 1);
+          }
+        }
+      } else if (round.selected === 'knockout') {
+        var players = Number(round.NbPlayers) || 0;
+        var half = Math.floor(players / 2);
+        if (Number(round.valsArray[0]) === -1) count += half;
+        if (Number(round.valsArray[1]) === -1) count += half;
       }
 
       return count;
@@ -338,7 +365,8 @@ var dash = new Vue({
 
     hasPoolAdvancementRoutes: function () {
       return this.formdata.rundearray.some(function (round) {
-        return Array.isArray(round.poolAdvancementRoutes) && round.poolAdvancementRoutes.length > 0;
+        return (Array.isArray(round.poolAdvancementRoutes) && round.poolAdvancementRoutes.length > 0) ||
+          (Array.isArray(round.wildcardRoutes) && round.wildcardRoutes.length > 0);
       });
     },
 
@@ -396,62 +424,105 @@ var dash = new Vue({
       }
 
       // Fill only routes that do not already have a valid manual selection.
-      // The main pairing rule is: when 1st and 2nd places advance to the same
-      // stage, try to put one 1st-place finisher together with one 2nd-place
-      // finisher in each destination pool. We still keep qualifiers from the
-      // same source pool apart whenever possible and respect pool capacity.
-      for (var s = 0; s < specs.length; s++) {
-        var spec = specs[s];
-        if (spec.destinationPool >= 0) continue;
+      // Auto-fill is done in adjacent placement pairs: 1st with 2nd, 3rd with
+      // 4th, 5th with 6th, and so on. We assign the lower placement of each
+      // pair first, then deliberately place the matching higher placement into
+      // a pool that already contains the opposite placement from a DIFFERENT
+      // source pool whenever possible. This makes 3rd-vs-4th just as strict as
+      // 1st-vs-2nd instead of merely "balancing" counts.
+      var pendingGroups = {};
 
+      for (var pendingIndex = 0; pendingIndex < specs.length; pendingIndex++) {
+        var pendingSpec = specs[pendingIndex];
+        if (pendingSpec.destinationPool >= 0) continue;
+
+        var pendingPlace = Number(pendingSpec.place);
+        var pendingPairLow = pendingPlace % 2 === 1 ? pendingPlace : pendingPlace - 1;
+        var pendingKey = pendingSpec.destinationStage + '|' + pendingPairLow;
+
+        if (!pendingGroups[pendingKey]) {
+          pendingGroups[pendingKey] = {
+            destinationStage: pendingSpec.destinationStage,
+            pairLow: pendingPairLow,
+            pairHigh: pendingPairLow + 1,
+            specs: []
+          };
+        }
+        pendingGroups[pendingKey].specs.push(pendingSpec);
+      }
+
+      function assignedSpecsForPool(destinationStage, poolIndex) {
+        var assigned = [];
+        for (var ai = 0; ai < specs.length; ai++) {
+          var assignedSpec = specs[ai];
+          if (assignedSpec.destinationStage === destinationStage && assignedSpec.destinationPool === poolIndex) {
+            assigned.push(assignedSpec);
+          }
+        }
+        return assigned;
+      }
+
+      function assignSpecToBestPool(spec, group, preferOppositePlacement) {
         var targetUsage = usage[spec.destinationStage];
         var bestPool = -1;
-        var bestSourceConflict = 2;
-        var bestPlacementBalance = Number.POSITIVE_INFINITY;
+        var bestOppositePenalty = Number.POSITIVE_INFINITY;
+        var bestSourceConflict = Number.POSITIVE_INFINITY;
         var bestSamePlaceCount = Number.POSITIVE_INFINITY;
+        var bestPairImbalance = Number.POSITIVE_INFINITY;
         var bestFill = Number.POSITIVE_INFINITY;
 
         for (var p = 0; p < spec.targetSizes.length; p++) {
           var capacity = Number(spec.targetSizes[p]) || 0;
           if (capacity <= 0 || targetUsage[p] >= capacity) continue;
 
+          var assignedHere = assignedSpecsForPool(spec.destinationStage, p);
           var sourceConflict = 0;
-          var firstCount = 0;
-          var secondCount = 0;
           var samePlaceCount = 0;
+          var pairLowCount = 0;
+          var pairHighCount = 0;
+          var oppositeFromDifferentSource = 0;
+          var placeNumber = Number(spec.place);
+          var oppositePlace = placeNumber === group.pairLow ? group.pairHigh : group.pairLow;
 
-          for (var earlier = 0; earlier < specs.length; earlier++) {
-            var other = specs[earlier];
-            if (other === spec || other.destinationPool !== p || other.destinationStage !== spec.destinationStage) continue;
+          for (var a = 0; a < assignedHere.length; a++) {
+            var other = assignedHere[a];
+            var otherPlace = Number(other.place);
 
-            if (other.sourceStage === spec.sourceStage && other.sourcePool === spec.sourcePool) sourceConflict = 1;
-            if (Number(other.place) === 1) firstCount++;
-            if (Number(other.place) === 2) secondCount++;
-            if (Number(other.place) === Number(spec.place)) samePlaceCount++;
+            if (other.sourceStage === spec.sourceStage && other.sourcePool === spec.sourcePool) {
+              sourceConflict = 1;
+            }
+            if (otherPlace === placeNumber) samePlaceCount++;
+            if (otherPlace === group.pairLow) pairLowCount++;
+            if (otherPlace === group.pairHigh) pairHighCount++;
+            if (otherPlace === oppositePlace &&
+                !(other.sourceStage === spec.sourceStage && other.sourcePool === spec.sourcePool)) {
+              oppositeFromDifferentSource++;
+            }
           }
 
-          // For first/second-place qualifiers, minimize the imbalance that
-          // would exist after adding this player. This makes 1st + 2nd the
-          // natural pairing before creating 1st + 1st or 2nd + 2nd pools.
-          var placementBalance;
-          if (Number(spec.place) === 1 || Number(spec.place) === 2) {
-            var firstAfter = firstCount + (Number(spec.place) === 1 ? 1 : 0);
-            var secondAfter = secondCount + (Number(spec.place) === 2 ? 1 : 0);
-            placementBalance = Math.abs(firstAfter - secondAfter);
-          } else {
-            placementBalance = samePlaceCount;
-          }
+          // For the second half of a placement pair, a pool that already has
+          // the opposite placement from another source pool is always preferred.
+          // This is the key that guarantees 3rd-vs-4th (and 1st-vs-2nd) when
+          // the destination structure has room for it.
+          var oppositePenalty = preferOppositePlacement
+            ? (oppositeFromDifferentSource > 0 ? 0 : 1)
+            : 0;
 
+          var lowAfter = pairLowCount + (placeNumber === group.pairLow ? 1 : 0);
+          var highAfter = pairHighCount + (placeNumber === group.pairHigh ? 1 : 0);
+          var pairImbalance = Math.abs(lowAfter - highAfter);
           var fill = targetUsage[p] / capacity;
 
-          if (sourceConflict < bestSourceConflict ||
-              (sourceConflict === bestSourceConflict && placementBalance < bestPlacementBalance) ||
-              (sourceConflict === bestSourceConflict && placementBalance === bestPlacementBalance && samePlaceCount < bestSamePlaceCount) ||
-              (sourceConflict === bestSourceConflict && placementBalance === bestPlacementBalance && samePlaceCount === bestSamePlaceCount && fill < bestFill)) {
+          if (oppositePenalty < bestOppositePenalty ||
+              (oppositePenalty === bestOppositePenalty && sourceConflict < bestSourceConflict) ||
+              (oppositePenalty === bestOppositePenalty && sourceConflict === bestSourceConflict && samePlaceCount < bestSamePlaceCount) ||
+              (oppositePenalty === bestOppositePenalty && sourceConflict === bestSourceConflict && samePlaceCount === bestSamePlaceCount && pairImbalance < bestPairImbalance) ||
+              (oppositePenalty === bestOppositePenalty && sourceConflict === bestSourceConflict && samePlaceCount === bestSamePlaceCount && pairImbalance === bestPairImbalance && fill < bestFill)) {
             bestPool = p;
+            bestOppositePenalty = oppositePenalty;
             bestSourceConflict = sourceConflict;
-            bestPlacementBalance = placementBalance;
             bestSamePlaceCount = samePlaceCount;
+            bestPairImbalance = pairImbalance;
             bestFill = fill;
           }
         }
@@ -468,6 +539,38 @@ var dash = new Vue({
         spec.destinationPool = bestPool;
         targetUsage[bestPool]++;
       }
+
+      Object.keys(pendingGroups).sort().forEach(function (groupKey) {
+        var group = pendingGroups[groupKey];
+        var lower = group.specs.filter(function (item) { return Number(item.place) === group.pairLow; });
+        var higher = group.specs.filter(function (item) { return Number(item.place) === group.pairHigh; });
+        var unusual = group.specs.filter(function (item) {
+          var placeNumber = Number(item.place);
+          return placeNumber !== group.pairLow && placeNumber !== group.pairHigh;
+        });
+
+        lower.sort(function (a, b) {
+          return a.sourceStage - b.sourceStage || a.sourcePool - b.sourcePool;
+        });
+        higher.sort(function (a, b) {
+          return a.sourceStage - b.sourceStage || a.sourcePool - b.sourcePool;
+        });
+
+        // Seed one side of the pair across the destination pools first.
+        lower.forEach(function (item) {
+          assignSpecToBestPool(item, group, false);
+        });
+
+        // Then cross-seed the partner placement into pools containing the
+        // opposite placement from another source pool.
+        higher.forEach(function (item) {
+          assignSpecToBestPool(item, group, true);
+        });
+
+        unusual.forEach(function (item) {
+          assignSpecToBestPool(item, group, false);
+        });
+      });
 
       var routesPerSource = new Array(rounds.length);
       for (var ri = 0; ri < routesPerSource.length; ri++) routesPerSource[ri] = [];
@@ -487,10 +590,77 @@ var dash = new Vue({
       }
     },
 
+    rebuildWildcardRoutes: function (resetAssignments) {
+      var rounds = this.formdata.rundearray;
+
+      for (var sourceStage = 0; sourceStage < rounds.length; sourceStage++) {
+        var round = rounds[sourceStage];
+        var count = sourceStage < rounds.length - 1
+          ? Math.max(0, Math.floor(Number(round.wildcardCount) || 0))
+          : 0;
+        var destinationStage = sourceStage + 1;
+        var targetSizes = destinationStage < rounds.length ? this.stagePoolSizes(rounds[destinationStage]) : [];
+        var existing = Array.isArray(round.wildcardRoutes) ? round.wildcardRoutes : [];
+        var normalRoutes = [];
+
+        for (var rs = 0; rs < rounds.length; rs++) {
+          var sourceRoutes = Array.isArray(rounds[rs].poolAdvancementRoutes) ? rounds[rs].poolAdvancementRoutes : [];
+          for (var nr = 0; nr < sourceRoutes.length; nr++) {
+            if (Number(sourceRoutes[nr].destinationStage) === destinationStage) normalRoutes.push(sourceRoutes[nr]);
+          }
+        }
+
+        var usage = new Array(targetSizes.length).fill(0);
+        for (var n = 0; n < normalRoutes.length; n++) {
+          var normalPool = Number(normalRoutes[n].destinationPool);
+          if (Number.isInteger(normalPool) && normalPool >= 0 && normalPool < usage.length) usage[normalPool]++;
+        }
+
+        var routes = [];
+        for (var wildcardIndex = 0; wildcardIndex < count; wildcardIndex++) {
+          var preserved = -1;
+          if (!resetAssignments) {
+            var oldRoute = existing.find(function (item) {
+              return Number(item.wildcardIndex) === wildcardIndex && Number(item.destinationStage) === destinationStage;
+            });
+            if (oldRoute) preserved = Number(oldRoute.destinationPool);
+          }
+
+          var chosen = -1;
+          if (Number.isInteger(preserved) && preserved >= 0 && preserved < targetSizes.length && usage[preserved] < Number(targetSizes[preserved] || 0)) {
+            chosen = preserved;
+          } else {
+            var bestFill = Number.POSITIVE_INFINITY;
+            for (var poolIndex = 0; poolIndex < targetSizes.length; poolIndex++) {
+              var capacity = Number(targetSizes[poolIndex]) || 0;
+              if (capacity <= 0 || usage[poolIndex] >= capacity) continue;
+              var fill = usage[poolIndex] / capacity;
+              if (fill < bestFill) {
+                bestFill = fill;
+                chosen = poolIndex;
+              }
+            }
+          }
+
+          if (chosen < 0 && targetSizes.length) chosen = 0;
+          if (chosen >= 0 && chosen < usage.length) usage[chosen]++;
+
+          routes.push({
+            wildcardIndex: wildcardIndex,
+            destinationStage: destinationStage,
+            destinationPool: chosen
+          });
+        }
+
+        this.$set(round, 'wildcardRoutes', routes);
+      }
+    },
+
     autoAssignPoolAdvancementRoutes: function () {
       this.rebuildPoolAdvancementRoutes(true);
+      this.rebuildWildcardRoutes(true);
       this.validate();
-      this.uiMessage = 'Pool advancement routes were auto-filled so 1st-place finishers are paired with 2nd-place finishers where possible. You can change every destination pool before creating the tournament.';
+      this.uiMessage = 'Pool advancement routes and wildcard slots were auto-filled. Normal placements are paired where possible, and wildcard places fill the remaining destination-pool capacity.';
     },
 
     createPoolStage: function (name, players, poolSize, destinationIndex, qualifiersPerPool) {
@@ -512,6 +682,8 @@ var dash = new Vue({
         poolSizes: this.calculateEvenPoolSizes(players, poolSize),
         valsArray: routes,
         poolAdvancementRoutes: [],
+        wildcardCount: 0,
+        wildcardRoutes: [],
         playstyle: 'roundrobin',
         swissRounds: this.recommendedSwissRounds(poolSize)
       };
@@ -531,6 +703,8 @@ var dash = new Vue({
         poolSizes: [],
         valsArray: [hasNextStage ? stageIndex + 1 : 0, -1],
         poolAdvancementRoutes: [],
+        wildcardCount: 0,
+        wildcardRoutes: [],
         playstyle: 'roundrobin',
         swissRounds: 1
       };
@@ -646,6 +820,8 @@ var dash = new Vue({
             poolSizes: [],
             valsArray: [],
             poolAdvancementRoutes: [],
+            wildcardCount: 0,
+            wildcardRoutes: [],
             playstyle: 'roundrobin',
             swissRounds: this.recommendedSwissRounds(Math.min(4, players))
           }
@@ -685,6 +861,8 @@ var dash = new Vue({
         poolSizes: [],
         valsArray: [0, -1],
         poolAdvancementRoutes: [],
+        wildcardCount: 0,
+        wildcardRoutes: [],
         playstyle: 'roundrobin',
         swissRounds: 1
       };
@@ -724,6 +902,12 @@ var dash = new Vue({
             this.$set(round.valsArray, p, -1);
           }
         }
+      }
+
+      if (this.formdata.rundearray.length) {
+        var lastRound = this.formdata.rundearray[this.formdata.rundearray.length - 1];
+        this.$set(lastRound, 'wildcardCount', 0);
+        this.$set(lastRound, 'wildcardRoutes', []);
       }
 
       this.recalculate();
@@ -804,6 +988,15 @@ var dash = new Vue({
       this.recalculate();
     },
 
+    onWildcardCountChange: function (index) {
+      this.activePreset = 'custom';
+      var round = this.formdata.rundearray[index];
+      if (!round) return;
+      var count = Math.max(0, Math.floor(Number(round.wildcardCount) || 0));
+      this.$set(round, 'wildcardCount', count);
+      this.recalculate();
+    },
+
     calculatePlayerCounts: function () {
       var rounds = this.formdata.rundearray;
       if (!rounds.length) return;
@@ -834,6 +1027,13 @@ var dash = new Vue({
             if (Number(round.valsArray[0]) === target) count += half;
             if (Number(round.valsArray[1]) === target) count += half;
           }
+        }
+
+        // Wildcards are reserved places from the immediately preceding stage.
+        // The actual eliminated player is chosen only after that stage finishes.
+        var wildcardSource = rounds[target - 1];
+        if (wildcardSource) {
+          count += Math.max(0, Math.floor(Number(wildcardSource.wildcardCount) || 0));
         }
 
         this.$set(rounds[target], 'NbPlayers', count);
@@ -984,6 +1184,22 @@ var dash = new Vue({
             }
           }
         }
+
+        var wildcardCount = Math.max(0, Math.floor(Number(round.wildcardCount) || 0));
+        if (Number(round.wildcardCount || 0) !== wildcardCount) {
+          errors.push({ type: 'wildcard-count-' + i, description: label + ': wildcard places must be a non-negative whole number.' });
+        }
+        if (wildcardCount > 0 && i >= rounds.length - 1) {
+          errors.push({ type: 'wildcard-last-' + i, description: label + ': wildcards need a following stage.' });
+        }
+        if (wildcardCount > this.wildcardEligibleCount(round)) {
+          errors.push({
+            type: 'wildcard-eligible-' + i,
+            description: label + ': ' + wildcardCount + ' wildcard place' + (wildcardCount === 1 ? '' : 's') +
+              ' requested, but only ' + this.wildcardEligibleCount(round) + ' eliminated player' +
+              (this.wildcardEligibleCount(round) === 1 ? ' is' : 's are') + ' available.'
+          });
+        }
       }
 
 
@@ -1026,6 +1242,37 @@ var dash = new Vue({
           if (!targetAssignments[destinationStageIndex]) targetAssignments[destinationStageIndex] = new Array(targetSizes.length).fill(0);
           targetAssignments[destinationStageIndex][destinationPoolIndex]++;
         }
+
+        var wildcardRoutes = Array.isArray(sourceStageRound.wildcardRoutes) ? sourceStageRound.wildcardRoutes : [];
+        var expectedWildcards = Math.max(0, Math.floor(Number(sourceStageRound.wildcardCount) || 0));
+        if (wildcardRoutes.length !== expectedWildcards) {
+          errors.push({
+            type: 'wildcard-route-count-' + sourceStageIndex,
+            description: (sourceStageRound.navn || ('Stage ' + (sourceStageIndex + 1))) + ': wildcard pool assignments are incomplete.'
+          });
+        }
+
+        for (var wr = 0; wr < wildcardRoutes.length; wr++) {
+          var wildcardRoute = wildcardRoutes[wr];
+          var wildcardDestinationStage = Number(wildcardRoute.destinationStage);
+          var wildcardDestinationPool = Number(wildcardRoute.destinationPool);
+          var wildcardIndex = Number(wildcardRoute.wildcardIndex);
+
+          if (!Number.isInteger(wildcardIndex) || wildcardIndex < 0 || wildcardIndex >= expectedWildcards ||
+              wildcardDestinationStage !== sourceStageIndex + 1 || wildcardDestinationStage >= rounds.length) {
+            errors.push({ type: 'wildcard-route-' + sourceStageIndex + '-' + wr, description: (sourceStageRound.navn || ('Stage ' + (sourceStageIndex + 1))) + ': invalid wildcard route.' });
+            continue;
+          }
+
+          var wildcardTargetSizes = this.stagePoolSizes(rounds[wildcardDestinationStage]);
+          if (!Number.isInteger(wildcardDestinationPool) || wildcardDestinationPool < 0 || wildcardDestinationPool >= wildcardTargetSizes.length) {
+            errors.push({ type: 'wildcard-pool-' + sourceStageIndex + '-' + wr, description: (sourceStageRound.navn || ('Stage ' + (sourceStageIndex + 1))) + ': choose a destination pool for every wildcard.' });
+            continue;
+          }
+
+          if (!targetAssignments[wildcardDestinationStage]) targetAssignments[wildcardDestinationStage] = new Array(wildcardTargetSizes.length).fill(0);
+          targetAssignments[wildcardDestinationStage][wildcardDestinationPool]++;
+        }
       }
 
       for (var targetStageIndex = 1; targetStageIndex < rounds.length; targetStageIndex++) {
@@ -1041,7 +1288,7 @@ var dash = new Vue({
         if (mismatches.length) {
           errors.push({
             type: 'pool-route-capacity-' + targetStageIndex,
-            description: (rounds[targetStageIndex].navn || ('Stage ' + (targetStageIndex + 1))) + ': assign advancing players so every destination pool is filled exactly (' + mismatches.join(', ') + ').'
+            description: (rounds[targetStageIndex].navn || ('Stage ' + (targetStageIndex + 1))) + ': assign advancing players and wildcard places so every destination pool is filled exactly (' + mismatches.join(', ') + ').'
           });
         }
       }
@@ -1086,6 +1333,7 @@ var dash = new Vue({
         this.updatePoolSizes(this.formdata.rundearray[i]);
       }
       this.rebuildPoolAdvancementRoutes(false);
+      this.rebuildWildcardRoutes(false);
       this.validate();
     },
 
@@ -1192,6 +1440,15 @@ var dash = new Vue({
         }
         if (!Number.isInteger(Number(this.formdata.rundearray[i].PlayTo))) {
           this.$set(this.formdata.rundearray[i], 'PlayTo', 0);
+        }
+        if (!Number.isInteger(Number(this.formdata.rundearray[i].wildcardCount)) || Number(this.formdata.rundearray[i].wildcardCount) < 0) {
+          this.$set(this.formdata.rundearray[i], 'wildcardCount', 0);
+        }
+        if (!Array.isArray(this.formdata.rundearray[i].wildcardRoutes)) {
+          this.$set(this.formdata.rundearray[i], 'wildcardRoutes', []);
+        }
+        if (!Array.isArray(this.formdata.rundearray[i].poolAdvancementRoutes)) {
+          this.$set(this.formdata.rundearray[i], 'poolAdvancementRoutes', []);
         }
         if (this.formdata.rundearray[i].playstyle === 'swiss') {
           this.$set(this.formdata.rundearray[i], 'BestOf', 1);

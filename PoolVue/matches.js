@@ -225,7 +225,14 @@ const matchesApp = new Vue({
     manualAdvanceAssignments: {},
     manualAdvanceError: '',
     manualAdvanceMessage: '',
-    savingManualAdvance: false
+    savingManualAdvance: false,
+    stageAdvanceLoading: false,
+    stageAdvanceState: null,
+    stageAdvanceAssignments: {},
+    stageWildcardAssignments: {},
+    stageAdvanceError: '',
+    stageAdvanceMessage: '',
+    savingStageAdvance: false
   },
 
   computed: {
@@ -309,6 +316,27 @@ const matchesApp = new Vue({
       return children.length > 0 && children.every(child =>
         !child.children || child.children.length === 0
       );
+    },
+
+    selectedIsStageWithPools() {
+      if (!this.selectedNode || !this.matchDetails || this.matchDetails.individualMatch) return false;
+      if (this.selectedIsPool) return false;
+
+      const children = Array.isArray(this.selectedNode.children) ? this.selectedNode.children : [];
+      if (!children.length) return false;
+
+      // A stage can contain both its own pools AND the next stage as another
+      // grouping child in the generated match tree.  The old check required
+      // every child to be a pool, so e.g. Group stage -> [pulje 1, pulje 2,
+      // Semi-finals] was not recognised as a stage.  It is enough that at
+      // least one direct child is a real pool (a grouping node whose direct
+      // children are playable leaf matches).
+      return children.some(child => {
+        const grandchildren = Array.isArray(child.children) ? child.children : [];
+        return grandchildren.length > 0 && grandchildren.every(grandchild =>
+          !grandchild.children || grandchild.children.length === 0
+        );
+      });
     },
 
     selectedVenueLabel() {
@@ -559,6 +587,299 @@ const matchesApp = new Vue({
       this.manualAdvanceError = '';
       this.manualAdvanceMessage = '';
       this.savingManualAdvance = false;
+    },
+
+    resetStageAdvancement() {
+      this.stageAdvanceLoading = false;
+      this.stageAdvanceState = null;
+      this.stageAdvanceAssignments = {};
+      this.stageWildcardAssignments = {};
+      this.stageAdvanceError = '';
+      this.stageAdvanceMessage = '';
+      this.savingStageAdvance = false;
+    },
+
+    stageAdvancePlaceLabel(player) {
+      if (!player || player.place === null || player.place === undefined) return '';
+      const place = Number(player.place);
+      const total = Number(player.sourcePoolPlayerCount || 0);
+      if (Number.isFinite(total) && total > 0) {
+        return 'placement ' + place + ' / ' + total;
+      }
+      return 'placement ' + place;
+    },
+
+    stageAdvancePoolLabel(pool) {
+      if (!pool) return 'Pool';
+      const stage = pool.targetStageName || '';
+      const name = pool.matchName || ('Pool #' + pool.matchId);
+      return stage && stage !== name ? stage + ' · ' + name : name;
+    },
+
+    stageAdvancePoolOptions(player) {
+      const state = this.stageAdvanceState;
+      if (!state || !player || !Array.isArray(state.pools)) return [];
+      return state.pools.filter(pool =>
+        Number(pool.targetStageMatchId) === Number(player.targetStageMatchId)
+      );
+    },
+
+    stageAdvanceSelectedCount(poolId) {
+      const wanted = Number(poolId);
+      let count = Object.keys(this.stageAdvanceAssignments).reduce((total, playerId) => {
+        const value = this.stageAdvanceAssignments[playerId];
+        return total + (Number(value) === wanted ? 1 : 0);
+      }, 0);
+
+      const state = this.stageAdvanceState;
+      if (state && Array.isArray(state.wildcardSlots)) {
+        for (const slot of state.wildcardSlots) {
+          const selectedPlayerId = this.stageWildcardAssignments[String(slot.seatId)];
+          if (Number(slot.destinationPoolMatchId) === wanted &&
+              selectedPlayerId !== null && selectedPlayerId !== undefined && selectedPlayerId !== '') {
+            count++;
+          }
+        }
+      }
+      return count;
+    },
+
+    stageAdvancePoolCapacityText(pool) {
+      if (!pool) return '';
+      const selected = this.stageAdvanceSelectedCount(pool.matchId);
+      const totalCapacity = Number(pool.capacity || 0) + Number(pool.wildcardCapacity || 0);
+      const wildcardCapacity = Number(pool.wildcardCapacity || 0);
+      return selected + ' / ' + totalCapacity + ' assigned' +
+        (wildcardCapacity ? ' (' + wildcardCapacity + ' wildcard)' : '');
+    },
+
+    stageWildcardCandidateLabel(player) {
+      if (!player) return 'Player';
+      const name = player.playerName || ('Player #' + player.playerId);
+      const pool = player.sourcePoolName || ('Pool #' + player.sourcePoolMatchId);
+      return name + ' · ' + pool + ' · placement ' + player.place + ' / ' + Number(player.sourcePoolPlayerCount || 0);
+    },
+
+    stageWildcardPoolLabel(slot) {
+      if (!slot) return 'Wildcard';
+      const stage = slot.targetStageName || '';
+      const pool = slot.destinationPoolName || ('Pool #' + slot.destinationPoolMatchId);
+      return stage && stage !== pool ? stage + ' · ' + pool : pool;
+    },
+
+    stageWildcardPlayerUsedElsewhere(playerId, seatId) {
+      const wanted = Number(playerId);
+      return Object.keys(this.stageWildcardAssignments).some(key =>
+        Number(key) !== Number(seatId) && Number(this.stageWildcardAssignments[key]) === wanted
+      );
+    },
+
+    setStageWildcardPlayer(seatId, playerId) {
+      this.$set(
+        this.stageWildcardAssignments,
+        String(seatId),
+        playerId === null || playerId === undefined || playerId === '' ? null : Number(playerId)
+      );
+      this.stageAdvanceError = '';
+      this.stageAdvanceMessage = '';
+    },
+
+    applyStageAdvancementState(state) {
+      this.stageAdvanceState = state || null;
+      this.stageAdvanceAssignments = {};
+      this.stageWildcardAssignments = {};
+      if (!state) return;
+
+      if (Array.isArray(state.players)) {
+        for (const player of state.players) {
+          this.$set(
+            this.stageAdvanceAssignments,
+            String(player.playerId),
+            player.currentDestinationPoolMatchId === null || player.currentDestinationPoolMatchId === undefined
+              ? null
+              : Number(player.currentDestinationPoolMatchId)
+          );
+        }
+      }
+
+      if (Array.isArray(state.wildcardSlots)) {
+        for (const slot of state.wildcardSlots) {
+          this.$set(
+            this.stageWildcardAssignments,
+            String(slot.seatId),
+            slot.playerId === null || slot.playerId === undefined ? null : Number(slot.playerId)
+          );
+        }
+      }
+    },
+
+    async loadStageAdvancement(stageMatchId) {
+      this.stageAdvanceLoading = true;
+      this.stageAdvanceError = '';
+      this.stageAdvanceMessage = '';
+
+      try {
+        const res = await axios.get(
+          'http://localhost:5000/api/match/' + encodeURIComponent(stageMatchId) + '/advancement/stage',
+          { headers: this.authHeaders() }
+        );
+        this.applyStageAdvancementState(res.data);
+      } catch (e) {
+        console.error(e);
+        this.stageAdvanceState = null;
+        this.stageAdvanceAssignments = {};
+        this.stageWildcardAssignments = {};
+        if (e.response && e.response.status === 401) {
+          this.stageAdvanceError = 'You are not logged in, or your login has expired.';
+        } else if (e.response && e.response.status === 403) {
+          this.stageAdvanceError = 'You do not have permission to manage advancement for this tournament.';
+        } else if (e.response && e.response.status === 404) {
+          this.stageAdvanceError = 'The stage advancement API endpoint was not found. Restart PoolApi after updating the backend.';
+        } else if (e.response && e.response.data && e.response.data.message) {
+          this.stageAdvanceError = e.response.data.message;
+        } else {
+          this.stageAdvanceError = 'Could not load the advancing players for this stage.';
+        }
+      } finally {
+        this.stageAdvanceLoading = false;
+      }
+    },
+
+    setStageAdvanceDestination(playerId, poolId) {
+      this.$set(
+        this.stageAdvanceAssignments,
+        String(playerId),
+        poolId === null || poolId === undefined || poolId === '' ? null : Number(poolId)
+      );
+      this.stageAdvanceError = '';
+      this.stageAdvanceMessage = '';
+    },
+
+    async saveStageAdvancement() {
+      if (!this.matchEditAllowed || !this.selectedIsStageWithPools || !this.stageAdvanceState || this.savingStageAdvance) return;
+      if (!this.stageAdvanceState.stageComplete) {
+        this.stageAdvanceError = 'Finish every pool in this stage before assigning the advancing and wildcard players.';
+        return;
+      }
+
+      const players = Array.isArray(this.stageAdvanceState.players) ? this.stageAdvanceState.players : [];
+      const pools = Array.isArray(this.stageAdvanceState.pools) ? this.stageAdvanceState.pools : [];
+      const wildcardSlots = Array.isArray(this.stageAdvanceState.wildcardSlots) ? this.stageAdvanceState.wildcardSlots : [];
+      const wildcardCandidates = Array.isArray(this.stageAdvanceState.wildcardCandidates) ? this.stageAdvanceState.wildcardCandidates : [];
+
+      if (!players.length && !wildcardSlots.length) {
+        this.stageAdvanceError = 'There are no advancement or wildcard places in this stage.';
+        return;
+      }
+
+      for (const player of players) {
+        const selectedPoolId = this.stageAdvanceAssignments[String(player.playerId)];
+        if (selectedPoolId === null || selectedPoolId === undefined || selectedPoolId === '') {
+          this.stageAdvanceError = 'Choose a destination pool for every player who qualified normally.';
+          return;
+        }
+
+        const allowed = this.stageAdvancePoolOptions(player).some(pool =>
+          Number(pool.matchId) === Number(selectedPoolId)
+        );
+        if (!allowed) {
+          this.stageAdvanceError = 'One of the selected pools is not in the stage that player qualified for.';
+          return;
+        }
+      }
+
+      const wildcardPlayerIds = [];
+      for (const slot of wildcardSlots) {
+        const selectedPlayerId = this.stageWildcardAssignments[String(slot.seatId)];
+        if (selectedPlayerId === null || selectedPlayerId === undefined || selectedPlayerId === '') {
+          this.stageAdvanceError = 'Choose an eliminated player for every wildcard place.';
+          return;
+        }
+
+        const isEligible = wildcardCandidates.some(player => Number(player.playerId) === Number(selectedPlayerId));
+        if (!isEligible) {
+          this.stageAdvanceError = 'One of the selected wildcard players is no longer eligible.';
+          return;
+        }
+        wildcardPlayerIds.push(Number(selectedPlayerId));
+      }
+
+      if (new Set(wildcardPlayerIds).size !== wildcardPlayerIds.length) {
+        this.stageAdvanceError = 'The same player cannot use more than one wildcard place.';
+        return;
+      }
+
+      for (const pool of pools) {
+        const normalSelected = Object.keys(this.stageAdvanceAssignments).reduce((count, playerId) => {
+          return count + (Number(this.stageAdvanceAssignments[playerId]) === Number(pool.matchId) ? 1 : 0);
+        }, 0);
+        if (normalSelected > Number(pool.capacity || 0)) {
+          this.stageAdvanceError = (pool.matchName || 'A destination pool') +
+            ' has ' + normalSelected + ' normal qualifiers selected but only ' + Number(pool.capacity || 0) + ' normal qualification places.';
+          return;
+        }
+      }
+
+      const assignments = players.map(player => ({
+        playerId: Number(player.playerId),
+        destinationPoolMatchId: Number(this.stageAdvanceAssignments[String(player.playerId)])
+      }));
+
+      const wildcardAssignments = wildcardSlots.map(slot => ({
+        seatId: Number(slot.seatId),
+        playerId: Number(this.stageWildcardAssignments[String(slot.seatId)])
+      }));
+
+      this.savingStageAdvance = true;
+      this.stageAdvanceError = '';
+      this.stageAdvanceMessage = '';
+      const sourceStageId = Number(this.selectedMatchId);
+
+      try {
+        const res = await axios.post(
+          'http://localhost:5000/api/match/' + encodeURIComponent(sourceStageId) + '/advancement/stage/manual',
+          { assignments: assignments, wildcardAssignments: wildcardAssignments },
+          {
+            headers: Object.assign(
+              { 'Content-Type': 'application/json; charset=utf-8' },
+              this.authHeaders()
+            )
+          }
+        );
+
+        if (res.data && res.data.state) {
+          this.applyStageAdvancementState(res.data.state);
+        } else {
+          await this.loadStageAdvancement(sourceStageId);
+        }
+
+        if (this.currentTournamentId) {
+          await this.loadMatches(this.currentTournamentId, true);
+          const freshNode = this.findTreeNodeById(sourceStageId);
+          if (freshNode) {
+            this.selectedNode = freshNode;
+            this.selectedMatchId = sourceStageId;
+            await this.loadMatchDetails(sourceStageId);
+          }
+        }
+
+        this.stageAdvanceMessage = res.data && res.data.message
+          ? res.data.message
+          : 'Stage advancement and wildcards saved.';
+      } catch (e) {
+        console.error(e);
+        if (e.response && e.response.status === 401) {
+          this.stageAdvanceError = 'You are not logged in, or your login has expired.';
+        } else if (e.response && e.response.status === 403) {
+          this.stageAdvanceError = 'You do not have permission to manage advancement for this tournament.';
+        } else if (e.response && e.response.data && e.response.data.message) {
+          this.stageAdvanceError = e.response.data.message;
+        } else {
+          this.stageAdvanceError = 'Could not save the stage advancement and wildcards.';
+        }
+      } finally {
+        this.savingStageAdvance = false;
+      }
     },
 
     manualAdvancePlayerPlaceLabel(player) {
@@ -1247,10 +1568,13 @@ const matchesApp = new Vue({
       this.venueMessage = '';
       this.resetPoolMatrix();
       this.resetManualAdvancement();
+      this.resetStageAdvancement();
       await this.loadMatchDetails(node.matchId);
       if (this.selectedIsPool) {
         await this.loadPoolMatrix(node);
         await this.loadManualAdvancement(node.matchId);
+      } else if (this.selectedIsStageWithPools) {
+        await this.loadStageAdvancement(node.matchId);
       }
     },
 

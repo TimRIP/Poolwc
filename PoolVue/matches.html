@@ -728,6 +728,142 @@
               </div>
             </section>
 
+            <section class="resultSection" v-else-if="selectedIsStageWithPools">
+              <div class="resultSectionTitle">Stage advancement</div>
+
+              <div class="resultNote">
+                When every pool in this stage is complete, normal qualifiers can be assigned to destination pools and any reserved wildcard places can be given to eliminated players.
+                The standings still decide normal qualification; wildcards are the explicit exceptions configured when the tournament was created.
+              </div>
+
+              <div class="manualAdvancePanel stageAdvancePanel">
+                <div class="manualAdvanceHeader">
+                  <div>
+                    <div class="manualAdvanceTitle">Advance qualifiers and choose wildcards</div>
+                    <div class="manualAdvanceSub" v-if="stageAdvanceState">
+                      {{ stageAdvanceState.sourceStageName || matchDetails.matchName }}
+                    </div>
+                  </div>
+                  <button type="button"
+                          class="miniBtn"
+                          @click="loadStageAdvancement(selectedMatchId)"
+                          :disabled="stageAdvanceLoading || savingStageAdvance">
+                    <i class="fa" :class="stageAdvanceLoading ? 'fa-circle-o-notch fa-spin' : 'fa-refresh'"></i>
+                    Refresh
+                  </button>
+                </div>
+
+                <div v-if="stageAdvanceLoading" class="resultNote">
+                  <i class="fa fa-circle-o-notch fa-spin"></i> Loading advancing players…
+                </div>
+
+                <div v-else-if="stageAdvanceState">
+                  <div v-if="!stageAdvanceState.stageComplete" class="resultMessage warning manualAdvanceWarning">
+                    Finish every pool in this stage and resolve any tied qualifying placements before assigning destination pools or wildcards.
+                  </div>
+
+                  <template v-else-if="(stageAdvanceState.players && stageAdvanceState.players.length) || (stageAdvanceState.wildcardSlots && stageAdvanceState.wildcardSlots.length)">
+                    <div class="stageAdvancePoolSummary" v-if="stageAdvanceState.pools && stageAdvanceState.pools.length">
+                      <div v-for="pool in stageAdvanceState.pools"
+                           :key="'stage-pool-capacity-' + pool.matchId"
+                           class="stageAdvancePoolSummaryItem">
+                        <strong>{{ stageAdvancePoolLabel(pool) }}</strong>
+                        <span>{{ stageAdvancePoolCapacityText(pool) }}</span>
+                      </div>
+                    </div>
+
+                    <div class="manualAdvanceRoutes stageAdvanceRoutes" v-if="stageAdvanceState.players && stageAdvanceState.players.length">
+                      <div v-for="player in stageAdvanceState.players"
+                           :key="'stage-advance-player-' + player.playerId"
+                           class="manualAdvanceRoute playerPoolRoute stageAdvanceRoute">
+                        <div class="manualAdvanceDestination advancingPlayerInfo">
+                          <strong>{{ player.playerName || ('Player #' + player.playerId) }}</strong>
+                          <span>
+                            {{ player.sourcePoolName || ('Pool #' + player.sourcePoolMatchId) }}
+                          </span>
+                          <span class="stageAdvancePlacement">
+                            {{ stageAdvancePlaceLabel(player) }}
+                          </span>
+                          <span class="stageAdvanceTarget">
+                            advances to {{ player.targetStageName || ('stage #' + player.targetStageMatchId) }}
+                          </span>
+                        </div>
+
+                        <label class="manualAdvanceSelect">
+                          <span>Advance to pool</span>
+                          <select :value="stageAdvanceAssignments[player.playerId]"
+                                  @change="setStageAdvanceDestination(player.playerId, $event.target.value)"
+                                  :disabled="!matchEditAllowed || savingStageAdvance">
+                            <option :value="null" disabled>— Choose pool —</option>
+                            <option v-for="pool in stageAdvancePoolOptions(player)"
+                                    :key="'stage-player-' + player.playerId + '-pool-' + pool.matchId"
+                                    :value="pool.matchId">
+                              {{ stageAdvancePoolLabel(pool) }}
+                            </option>
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div class="manualAdvanceRoutes stageAdvanceRoutes wildcardAdvanceRoutes"
+                         v-if="stageAdvanceState.wildcardSlots && stageAdvanceState.wildcardSlots.length">
+                      <div class="resultNote">
+                        <strong>Wildcards:</strong> choose an eliminated player for each reserved place. The destination pool was fixed in Tournament creation.
+                      </div>
+
+                      <div v-for="(slot, wildcardIndex) in stageAdvanceState.wildcardSlots"
+                           :key="'stage-wildcard-' + slot.seatId"
+                           class="manualAdvanceRoute playerPoolRoute stageAdvanceRoute wildcardAdvanceRoute">
+                        <div class="manualAdvanceDestination advancingPlayerInfo">
+                          <strong>Wildcard {{ wildcardIndex + 1 }}</strong>
+                          <span>{{ stageWildcardPoolLabel(slot) }}</span>
+                          <span class="stageAdvancePlacement">Reserved wildcard place</span>
+                          <span class="stageAdvanceTarget" v-if="slot.playerName">
+                            currently {{ slot.playerName }}
+                          </span>
+                        </div>
+
+                        <label class="manualAdvanceSelect">
+                          <span>Wildcard player</span>
+                          <select :value="stageWildcardAssignments[slot.seatId]"
+                                  @change="setStageWildcardPlayer(slot.seatId, $event.target.value)"
+                                  :disabled="!matchEditAllowed || savingStageAdvance">
+                            <option :value="null" disabled>— Choose eliminated player —</option>
+                            <option v-for="player in stageAdvanceState.wildcardCandidates"
+                                    :key="'wildcard-slot-' + slot.seatId + '-player-' + player.playerId"
+                                    :value="player.playerId"
+                                    :disabled="stageWildcardPlayerUsedElsewhere(player.playerId, slot.seatId)">
+                              {{ stageWildcardCandidateLabel(player) }}
+                            </option>
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+                  </template>
+
+                  <div v-else-if="stageAdvanceState.stageComplete" class="resultNote">
+                    No players advance from this stage and no wildcard places are configured.
+                  </div>
+
+                  <div v-if="stageAdvanceError" class="resultMessage error">{{ stageAdvanceError }}</div>
+                  <div v-if="stageAdvanceMessage" class="resultMessage success">{{ stageAdvanceMessage }}</div>
+
+                  <div v-if="stageAdvanceState.stageComplete && ((stageAdvanceState.players && stageAdvanceState.players.length) || (stageAdvanceState.wildcardSlots && stageAdvanceState.wildcardSlots.length))"
+                       class="resultActions manualAdvanceActions">
+                    <button type="button"
+                            class="saveResultBtn"
+                            @click="saveStageAdvancement"
+                            :disabled="!matchEditAllowed || savingStageAdvance">
+                      <i class="fa" :class="savingStageAdvance ? 'fa-circle-o-notch fa-spin' : 'fa-random'"></i>
+                      {{ savingStageAdvance ? 'Saving…' : 'Save advancement and wildcards' }}
+                    </button>
+                  </div>
+                </div>
+
+                <div v-else-if="stageAdvanceError" class="resultMessage error">{{ stageAdvanceError }}</div>
+              </div>
+            </section>
+
             <section class="resultSection" v-else>
               <div class="resultNote">
                 This is a tournament or round container. Select a pool to enter results in a table, or select an individual match to use the normal result editor.
