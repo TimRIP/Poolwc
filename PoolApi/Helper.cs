@@ -435,8 +435,9 @@ namespace TournamentBackend
                         throw new ArgumentException("A wildcard route has an invalid wildcard number.");
                     }
 
-                    // Wildcards are deliberately tied to the immediately following stage.
-                    if (destinationStage.Value != sourceStage + 1 ||
+                    // A wildcard may skip directly to any later stage selected
+                    // during tournament creation, but it can never point backwards.
+                    if (destinationStage.Value <= sourceStage ||
                         destinationStage.Value >= turn.runder.Count ||
                         destinationPool.Value < 0 ||
                         destinationPool.Value >= turn.runder[destinationStage.Value].puljer.Count)

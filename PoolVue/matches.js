@@ -230,6 +230,7 @@ const matchesApp = new Vue({
     stageAdvanceState: null,
     stageAdvanceAssignments: {},
     stageWildcardAssignments: {},
+    stageWildcardDestinations: {},
     stageAdvanceError: '',
     stageAdvanceMessage: '',
     savingStageAdvance: false
@@ -594,6 +595,7 @@ const matchesApp = new Vue({
       this.stageAdvanceState = null;
       this.stageAdvanceAssignments = {};
       this.stageWildcardAssignments = {};
+      this.stageWildcardDestinations = {};
       this.stageAdvanceError = '';
       this.stageAdvanceMessage = '';
       this.savingStageAdvance = false;
@@ -604,9 +606,9 @@ const matchesApp = new Vue({
       const place = Number(player.place);
       const total = Number(player.sourcePoolPlayerCount || 0);
       if (Number.isFinite(total) && total > 0) {
-        return 'placement ' + place + ' / ' + total;
+        return 'place ' + place + ' / ' + total;
       }
-      return 'placement ' + place;
+      return 'place ' + place;
     },
 
     stageAdvancePoolLabel(pool) {
@@ -635,7 +637,8 @@ const matchesApp = new Vue({
       if (state && Array.isArray(state.wildcardSlots)) {
         for (const slot of state.wildcardSlots) {
           const selectedPlayerId = this.stageWildcardAssignments[String(slot.seatId)];
-          if (Number(slot.destinationPoolMatchId) === wanted &&
+          const selectedPoolId = this.stageWildcardDestinations[String(slot.seatId)];
+          if (Number(selectedPoolId) === wanted &&
               selectedPlayerId !== null && selectedPlayerId !== undefined && selectedPlayerId !== '') {
             count++;
           }
@@ -648,16 +651,14 @@ const matchesApp = new Vue({
       if (!pool) return '';
       const selected = this.stageAdvanceSelectedCount(pool.matchId);
       const totalCapacity = Number(pool.capacity || 0) + Number(pool.wildcardCapacity || 0);
-      const wildcardCapacity = Number(pool.wildcardCapacity || 0);
-      return selected + ' / ' + totalCapacity + ' assigned' +
-        (wildcardCapacity ? ' (' + wildcardCapacity + ' wildcard)' : '');
+      return selected + ' / ' + totalCapacity + ' places assigned';
     },
 
     stageWildcardCandidateLabel(player) {
       if (!player) return 'Player';
       const name = player.playerName || ('Player #' + player.playerId);
       const pool = player.sourcePoolName || ('Pool #' + player.sourcePoolMatchId);
-      return name + ' · ' + pool + ' · placement ' + player.place + ' / ' + Number(player.sourcePoolPlayerCount || 0);
+      return name + ' · ' + pool + ' · place ' + player.place + ' / ' + Number(player.sourcePoolPlayerCount || 0);
     },
 
     stageWildcardPoolLabel(slot) {
@@ -665,6 +666,56 @@ const matchesApp = new Vue({
       const stage = slot.targetStageName || '';
       const pool = slot.destinationPoolName || ('Pool #' + slot.destinationPoolMatchId);
       return stage && stage !== pool ? stage + ' · ' + pool : pool;
+    },
+
+    stageWildcardPoolOptions(slot) {
+      const state = this.stageAdvanceState;
+      if (!state || !slot || !Array.isArray(state.pools)) return [];
+      return state.pools.filter(pool =>
+        Number(pool.targetStageMatchId) === Number(slot.targetStageMatchId)
+      );
+    },
+
+    stageWildcardSelectedCandidate(slot) {
+      if (!slot || !this.stageAdvanceState || !Array.isArray(this.stageAdvanceState.wildcardCandidates)) return null;
+      const playerId = this.stageWildcardAssignments[String(slot.seatId)];
+      if (playerId === null || playerId === undefined || playerId === '') return null;
+      return this.stageAdvanceState.wildcardCandidates.find(player => Number(player.playerId) === Number(playerId)) || null;
+    },
+
+    stageWildcardCandidateGroups() {
+      const state = this.stageAdvanceState;
+      const candidates = state && Array.isArray(state.wildcardCandidates) ? state.wildcardCandidates : [];
+      const groups = new Map();
+
+      for (const player of candidates) {
+        const poolId = Number(player.sourcePoolMatchId);
+        if (!groups.has(poolId)) {
+          groups.set(poolId, {
+            poolId: poolId,
+            poolName: player.sourcePoolName || ('Pool #' + poolId),
+            players: []
+          });
+        }
+        groups.get(poolId).players.push(player);
+      }
+
+      return [...groups.values()]
+        .map(group => {
+          group.players.sort((a, b) => Number(a.place || 0) - Number(b.place || 0) || Number(a.playerId) - Number(b.playerId));
+          return group;
+        })
+        .sort((a, b) => Number(a.poolId) - Number(b.poolId));
+    },
+
+    setStageWildcardDestination(seatId, poolId) {
+      this.$set(
+        this.stageWildcardDestinations,
+        String(seatId),
+        poolId === null || poolId === undefined || poolId === '' ? null : Number(poolId)
+      );
+      this.stageAdvanceError = '';
+      this.stageAdvanceMessage = '';
     },
 
     stageWildcardPlayerUsedElsewhere(playerId, seatId) {
@@ -688,6 +739,7 @@ const matchesApp = new Vue({
       this.stageAdvanceState = state || null;
       this.stageAdvanceAssignments = {};
       this.stageWildcardAssignments = {};
+      this.stageWildcardDestinations = {};
       if (!state) return;
 
       if (Array.isArray(state.players)) {
@@ -709,6 +761,13 @@ const matchesApp = new Vue({
             String(slot.seatId),
             slot.playerId === null || slot.playerId === undefined ? null : Number(slot.playerId)
           );
+          this.$set(
+            this.stageWildcardDestinations,
+            String(slot.seatId),
+            slot.destinationPoolMatchId === null || slot.destinationPoolMatchId === undefined
+              ? null
+              : Number(slot.destinationPoolMatchId)
+          );
         }
       }
     },
@@ -729,6 +788,7 @@ const matchesApp = new Vue({
         this.stageAdvanceState = null;
         this.stageAdvanceAssignments = {};
         this.stageWildcardAssignments = {};
+        this.stageWildcardDestinations = {};
         if (e.response && e.response.status === 401) {
           this.stageAdvanceError = 'You are not logged in, or your login has expired.';
         } else if (e.response && e.response.status === 403) {
@@ -791,14 +851,24 @@ const matchesApp = new Vue({
       const wildcardPlayerIds = [];
       for (const slot of wildcardSlots) {
         const selectedPlayerId = this.stageWildcardAssignments[String(slot.seatId)];
+        const selectedPoolId = this.stageWildcardDestinations[String(slot.seatId)];
         if (selectedPlayerId === null || selectedPlayerId === undefined || selectedPlayerId === '') {
           this.stageAdvanceError = 'Choose an eliminated player for every wildcard place.';
+          return;
+        }
+        if (selectedPoolId === null || selectedPoolId === undefined || selectedPoolId === '') {
+          this.stageAdvanceError = 'Choose a destination pool for every wildcard place.';
           return;
         }
 
         const isEligible = wildcardCandidates.some(player => Number(player.playerId) === Number(selectedPlayerId));
         if (!isEligible) {
           this.stageAdvanceError = 'One of the selected wildcard players is no longer eligible.';
+          return;
+        }
+        const allowedPool = this.stageWildcardPoolOptions(slot).some(pool => Number(pool.matchId) === Number(selectedPoolId));
+        if (!allowedPool) {
+          this.stageAdvanceError = 'One of the selected wildcard pools is not in the configured destination stage.';
           return;
         }
         wildcardPlayerIds.push(Number(selectedPlayerId));
@@ -810,12 +880,11 @@ const matchesApp = new Vue({
       }
 
       for (const pool of pools) {
-        const normalSelected = Object.keys(this.stageAdvanceAssignments).reduce((count, playerId) => {
-          return count + (Number(this.stageAdvanceAssignments[playerId]) === Number(pool.matchId) ? 1 : 0);
-        }, 0);
-        if (normalSelected > Number(pool.capacity || 0)) {
+        const selected = this.stageAdvanceSelectedCount(pool.matchId);
+        const totalCapacity = Number(pool.capacity || 0) + Number(pool.wildcardCapacity || 0);
+        if (selected > totalCapacity) {
           this.stageAdvanceError = (pool.matchName || 'A destination pool') +
-            ' has ' + normalSelected + ' normal qualifiers selected but only ' + Number(pool.capacity || 0) + ' normal qualification places.';
+            ' has ' + selected + ' players selected but only ' + totalCapacity + ' places.';
           return;
         }
       }
@@ -827,7 +896,8 @@ const matchesApp = new Vue({
 
       const wildcardAssignments = wildcardSlots.map(slot => ({
         seatId: Number(slot.seatId),
-        playerId: Number(this.stageWildcardAssignments[String(slot.seatId)])
+        playerId: Number(this.stageWildcardAssignments[String(slot.seatId)]),
+        destinationPoolMatchId: Number(this.stageWildcardDestinations[String(slot.seatId)])
       }));
 
       this.savingStageAdvance = true;

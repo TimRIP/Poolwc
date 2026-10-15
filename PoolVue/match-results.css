@@ -1425,3 +1425,18 @@
   font-size: 0.78rem;
   letter-spacing: 0.01em;
 }
+
+
+/* Wildcards choose both the eliminated player and the destination pool. */
+.wildcardAdvanceControls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, .72fr);
+  gap: 10px;
+  align-items: end;
+}
+
+@media (max-width: 980px) {
+  .wildcardAdvanceControls {
+    grid-template-columns: 1fr;
+  }
+}

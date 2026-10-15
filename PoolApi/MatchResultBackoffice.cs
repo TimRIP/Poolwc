@@ -275,6 +275,7 @@ namespace DrukDatabaseLayer
     {
         public int SeatId { get; set; }
         public int PlayerId { get; set; }
+        public int DestinationPoolMatchId { get; set; }
     }
 
     public class StageManualAdvancementSaveResult
@@ -835,72 +836,6 @@ OPTION (MAXRECURSION 1000);";
                         Dictionary<int, StageManualAdvancementAssignment> assignmentByPlayer =
                             assignments.ToDictionary(x => x.PlayerId, x => x);
 
-                        Dictionary<int, int> destinationCount = assignments
-                            .GroupBy(x => x.DestinationPoolMatchId)
-                            .ToDictionary(x => x.Key, x => x.Count());
-
-                        List<StageManualCandidateSeat> candidates =
-                            GetStageManualCandidateSeats(conn, transaction, sourceStageMatchId);
-
-                        foreach (KeyValuePair<int, int> item in destinationCount)
-                        {
-                            int capacity = candidates.Count(x => x.MatchId == item.Key);
-                            if (item.Value > capacity)
-                            {
-                                StageManualAdvancementPoolDetails pool = poolById[item.Key];
-                                throw new InvalidOperationException(
-                                    (pool.MatchName ?? "The selected pool") +
-                                    " only has room for " + capacity +
-                                    " normal advancing player" + (capacity == 1 ? "." : "s."));
-                            }
-                        }
-
-                        Dictionary<int, int> destinationSeatByPlayer = new Dictionary<int, int>();
-                        HashSet<int> usedSeatIds = new HashSet<int>();
-
-                        // Preserve an existing route when the player stays in the same pool.
-                        foreach (StageManualRouteRecord route in routes.Where(x => x.PlayerId.HasValue))
-                        {
-                            int chosenPoolId = assignmentByPlayer[route.PlayerId.Value].DestinationPoolMatchId;
-                            if (chosenPoolId == route.DestinationPoolMatchId &&
-                                candidates.Any(x => x.SeatId == route.SeatId))
-                            {
-                                destinationSeatByPlayer[route.PlayerId.Value] = route.SeatId;
-                                usedSeatIds.Add(route.SeatId);
-                            }
-                        }
-
-                        // Allocate moved normal qualifiers only among normal route seats.
-                        // Wildcard seats are explicitly marked with place 0 and are not
-                        // part of GetStageManualCandidateSeats.
-                        foreach (StageManualRouteRecord route in routes
-                            .Where(x => x.PlayerId.HasValue && !destinationSeatByPlayer.ContainsKey(x.PlayerId.Value))
-                            .OrderBy(x => x.TargetStageMatchId)
-                            .ThenBy(x => assignmentByPlayer[x.PlayerId.Value].DestinationPoolMatchId)
-                            .ThenBy(x => x.Place)
-                            .ThenBy(x => x.SourcePoolMatchId))
-                        {
-                            int chosenPoolId = assignmentByPlayer[route.PlayerId.Value].DestinationPoolMatchId;
-                            StageManualCandidateSeat seat = candidates
-                                .Where(x => x.MatchId == chosenPoolId && !usedSeatIds.Contains(x.SeatId))
-                                .OrderByDescending(x => x.AutoSelectMatchId.HasValue)
-                                .ThenBy(x => x.SeatId)
-                                .FirstOrDefault();
-
-                            if (seat == null)
-                            {
-                                throw new InvalidOperationException(
-                                    "There is not enough normal qualification room in one of the selected destination pools.");
-                            }
-
-                            destinationSeatByPlayer[route.PlayerId.Value] = seat.SeatId;
-                            usedSeatIds.Add(seat.SeatId);
-                        }
-
-                        bool normalChanged = routes
-                            .Where(x => x.PlayerId.HasValue)
-                            .Any(x => destinationSeatByPlayer[x.PlayerId.Value] != x.SeatId);
-
                         // Validate the wildcard selections. A wildcard may only be given
                         // to a player with no normal progression route from this stage.
                         List<StageManualWildcardCandidateDetails> wildcardCandidates =
@@ -924,18 +859,153 @@ OPTION (MAXRECURSION 1000);";
 
                         foreach (StageManualWildcardAssignment assignment in wildcardAssignments)
                         {
-                            if (!wildcardSlotBySeat.ContainsKey(assignment.SeatId) ||
+                            StageManualWildcardSlotDetails slot;
+                            StageManualAdvancementPoolDetails pool;
+
+                            if (!wildcardSlotBySeat.TryGetValue(assignment.SeatId, out slot) ||
                                 !wildcardCandidateByPlayer.ContainsKey(assignment.PlayerId) ||
-                                requiredPlayerIds.Contains(assignment.PlayerId))
+                                requiredPlayerIds.Contains(assignment.PlayerId) ||
+                                !poolById.TryGetValue(assignment.DestinationPoolMatchId, out pool))
                             {
                                 throw new InvalidOperationException(
-                                    "A wildcard must be assigned to an eliminated player from this stage.");
+                                    "A wildcard must use an eliminated player and a valid destination pool.");
+                            }
+
+                            if (pool.TargetStageMatchId != slot.TargetStageMatchId)
+                            {
+                                throw new InvalidOperationException(
+                                    "A wildcard can only be moved between pools in its configured destination stage.");
                             }
                         }
 
                         Dictionary<int, StageManualWildcardAssignment> wildcardAssignmentBySeat =
                             wildcardAssignments.ToDictionary(x => x.SeatId, x => x);
+
+                        // The seats currently controlled by this source stage are the
+                        // normal qualification seats plus the reserved wildcard seats.
+                        // Treat them as one shared pool of seats. This lets a wildcard
+                        // use Pulje 1 while a normal qualifier moves to Pulje 3, instead
+                        // of permanently making one destination pool "the wildcard pool".
+                        List<StageManualCandidateSeat> managedSeats = routes
+                            .Select(x => new StageManualCandidateSeat
+                            {
+                                SeatId = x.SeatId,
+                                MatchId = x.DestinationPoolMatchId,
+                                TargetStageMatchId = x.TargetStageMatchId
+                            })
+                            .Concat(wildcardSlots.Select(x => new StageManualCandidateSeat
+                            {
+                                SeatId = x.SeatId,
+                                MatchId = x.DestinationPoolMatchId,
+                                TargetStageMatchId = x.TargetStageMatchId
+                            }))
+                            .GroupBy(x => x.SeatId)
+                            .Select(x => x.First())
+                            .ToList();
+
+                        Dictionary<int, int> requestedCountByPool = assignments
+                            .Select(x => x.DestinationPoolMatchId)
+                            .Concat(wildcardAssignments.Select(x => x.DestinationPoolMatchId))
+                            .GroupBy(x => x)
+                            .ToDictionary(x => x.Key, x => x.Count());
+
+                        foreach (KeyValuePair<int, int> item in requestedCountByPool)
+                        {
+                            int capacity = managedSeats.Count(x => x.MatchId == item.Key);
+                            if (item.Value > capacity)
+                            {
+                                StageManualAdvancementPoolDetails pool = poolById[item.Key];
+                                throw new InvalidOperationException(
+                                    (pool.MatchName ?? "The selected pool") +
+                                    " has room for " + capacity +
+                                    " advancing player" + (capacity == 1 ? " from this stage." : "s from this stage.") +
+                                    " Move another qualifier or wildcard to a different pool.");
+                            }
+                        }
+
+                        Dictionary<int, int> destinationSeatByPlayer = new Dictionary<int, int>();
+                        Dictionary<int, int> destinationSeatByWildcardSeat = new Dictionary<int, int>();
+                        HashSet<int> usedSeatIds = new HashSet<int>();
+
+                        // Keep existing normal routes when they remain in the same pool.
+                        foreach (StageManualRouteRecord route in routes.Where(x => x.PlayerId.HasValue))
+                        {
+                            int chosenPoolId = assignmentByPlayer[route.PlayerId.Value].DestinationPoolMatchId;
+                            if (chosenPoolId == route.DestinationPoolMatchId && !usedSeatIds.Contains(route.SeatId))
+                            {
+                                destinationSeatByPlayer[route.PlayerId.Value] = route.SeatId;
+                                usedSeatIds.Add(route.SeatId);
+                            }
+                        }
+
+                        // Keep wildcard seats too when both the wildcard and its destination
+                        // pool stay unchanged. The wildcard player itself may still change.
+                        foreach (StageManualWildcardSlotDetails slot in wildcardSlots)
+                        {
+                            StageManualWildcardAssignment assignment = wildcardAssignmentBySeat[slot.SeatId];
+                            if (assignment.DestinationPoolMatchId == slot.DestinationPoolMatchId &&
+                                !usedSeatIds.Contains(slot.SeatId))
+                            {
+                                destinationSeatByWildcardSeat[slot.SeatId] = slot.SeatId;
+                                usedSeatIds.Add(slot.SeatId);
+                            }
+                        }
+
+                        // Allocate moved normal qualifiers into any seat controlled by this
+                        // stage in the chosen destination pool, including a seat that was
+                        // previously reserved as a wildcard seat.
+                        foreach (StageManualRouteRecord route in routes
+                            .Where(x => x.PlayerId.HasValue && !destinationSeatByPlayer.ContainsKey(x.PlayerId.Value))
+                            .OrderBy(x => x.TargetStageMatchId)
+                            .ThenBy(x => assignmentByPlayer[x.PlayerId.Value].DestinationPoolMatchId)
+                            .ThenBy(x => x.Place)
+                            .ThenBy(x => x.SourcePoolMatchId))
+                        {
+                            int chosenPoolId = assignmentByPlayer[route.PlayerId.Value].DestinationPoolMatchId;
+                            StageManualCandidateSeat seat = managedSeats
+                                .Where(x => x.MatchId == chosenPoolId && !usedSeatIds.Contains(x.SeatId))
+                                .OrderBy(x => x.SeatId)
+                                .FirstOrDefault();
+
+                            if (seat == null)
+                            {
+                                throw new InvalidOperationException(
+                                    "There is not enough room in one of the selected destination pools.");
+                            }
+
+                            destinationSeatByPlayer[route.PlayerId.Value] = seat.SeatId;
+                            usedSeatIds.Add(seat.SeatId);
+                        }
+
+                        // Allocate moved wildcard places after the normal qualifiers. The
+                        // combined per-pool capacity check above guarantees enough seats.
+                        foreach (StageManualWildcardSlotDetails slot in wildcardSlots
+                            .Where(x => !destinationSeatByWildcardSeat.ContainsKey(x.SeatId))
+                            .OrderBy(x => x.TargetStageMatchId)
+                            .ThenBy(x => wildcardAssignmentBySeat[x.SeatId].DestinationPoolMatchId)
+                            .ThenBy(x => x.SeatId))
+                        {
+                            int chosenPoolId = wildcardAssignmentBySeat[slot.SeatId].DestinationPoolMatchId;
+                            StageManualCandidateSeat seat = managedSeats
+                                .Where(x => x.MatchId == chosenPoolId && !usedSeatIds.Contains(x.SeatId))
+                                .OrderBy(x => x.SeatId)
+                                .FirstOrDefault();
+
+                            if (seat == null)
+                            {
+                                throw new InvalidOperationException(
+                                    "There is not enough room in one of the selected wildcard destination pools.");
+                            }
+
+                            destinationSeatByWildcardSeat[slot.SeatId] = seat.SeatId;
+                            usedSeatIds.Add(seat.SeatId);
+                        }
+
+                        bool normalChanged = routes
+                            .Where(x => x.PlayerId.HasValue)
+                            .Any(x => destinationSeatByPlayer[x.PlayerId.Value] != x.SeatId);
                         bool wildcardChanged = wildcardSlots.Any(slot =>
+                            destinationSeatByWildcardSeat[slot.SeatId] != slot.SeatId ||
                             !slot.PlayerId.HasValue ||
                             slot.PlayerId.Value != wildcardAssignmentBySeat[slot.SeatId].PlayerId);
 
@@ -951,26 +1021,34 @@ OPTION (MAXRECURSION 1000);";
                         }
 
                         HashSet<int> affectedPools = new HashSet<int>();
+                        HashSet<int> touchedSeatIds = new HashSet<int>();
+
                         foreach (StageManualRouteRecord route in routes.Where(x => x.PlayerId.HasValue))
                         {
                             int newSeatId = destinationSeatByPlayer[route.PlayerId.Value];
-                            if (newSeatId == route.SeatId)
-                            {
-                                continue;
-                            }
+                            if (newSeatId == route.SeatId) continue;
 
+                            touchedSeatIds.Add(route.SeatId);
+                            touchedSeatIds.Add(newSeatId);
                             affectedPools.Add(route.DestinationPoolMatchId);
-                            StageManualCandidateSeat target = candidates.First(x => x.SeatId == newSeatId);
-                            affectedPools.Add(target.MatchId);
+                            affectedPools.Add(managedSeats.First(x => x.SeatId == newSeatId).MatchId);
                         }
 
                         foreach (StageManualWildcardSlotDetails slot in wildcardSlots)
                         {
                             StageManualWildcardAssignment assignment = wildcardAssignmentBySeat[slot.SeatId];
-                            if (!slot.PlayerId.HasValue || slot.PlayerId.Value != assignment.PlayerId)
+                            int newSeatId = destinationSeatByWildcardSeat[slot.SeatId];
+                            if (newSeatId == slot.SeatId &&
+                                slot.PlayerId.HasValue &&
+                                slot.PlayerId.Value == assignment.PlayerId)
                             {
-                                affectedPools.Add(slot.DestinationPoolMatchId);
+                                continue;
                             }
+
+                            touchedSeatIds.Add(slot.SeatId);
+                            touchedSeatIds.Add(newSeatId);
+                            affectedPools.Add(slot.DestinationPoolMatchId);
+                            affectedPools.Add(managedSeats.First(x => x.SeatId == newSeatId).MatchId);
                         }
 
                         HashSet<int> visited = new HashSet<int>();
@@ -984,20 +1062,9 @@ OPTION (MAXRECURSION 1000);";
                                 visited);
                         }
 
-                        List<StageManualRouteRecord> changedRoutes = routes
-                            .Where(x =>
-                                x.PlayerId.HasValue &&
-                                destinationSeatByPlayer[x.PlayerId.Value] != x.SeatId)
-                            .ToList();
-
-                        HashSet<int> touchedSeatIds = new HashSet<int>(
-                            changedRoutes.Select(x => x.SeatId));
-                        foreach (StageManualRouteRecord route in changedRoutes)
-                        {
-                            touchedSeatIds.Add(destinationSeatByPlayer[route.PlayerId.Value]);
-                        }
-
-                        // Clear only normal route slots participating in a rearrangement.
+                        // Clear every seat participating in the rearrangement before
+                        // writing the new normal/wildcard route metadata. This makes
+                        // swaps between a normal seat and a wildcard seat safe.
                         foreach (int seatId in touchedSeatIds)
                         {
                             ClearPlayerFromSeatAndChildren(conn, transaction, seatId);
@@ -1012,9 +1079,10 @@ WHERE Id = @SeatId;", conn, transaction))
                             }
                         }
 
-                        foreach (StageManualRouteRecord route in changedRoutes)
+                        foreach (StageManualRouteRecord route in routes.Where(x => x.PlayerId.HasValue))
                         {
                             int targetSeatId = destinationSeatByPlayer[route.PlayerId.Value];
+                            if (!touchedSeatIds.Contains(targetSeatId)) continue;
 
                             using (SqlCommand cmd = new SqlCommand(@"
 UPDATE Seat
@@ -1035,19 +1103,27 @@ WHERE Id = @SeatId;", conn, transaction))
                                 route.PlayerId.Value);
                         }
 
-                        // Wildcard route metadata never changes: source stage + place 0.
-                        // Only the chosen player is placed into the reserved seat.
                         foreach (StageManualWildcardSlotDetails slot in wildcardSlots)
                         {
-                            int playerId = wildcardAssignmentBySeat[slot.SeatId].PlayerId;
-                            if (!slot.PlayerId.HasValue || slot.PlayerId.Value != playerId)
+                            int targetSeatId = destinationSeatByWildcardSeat[slot.SeatId];
+                            if (!touchedSeatIds.Contains(targetSeatId)) continue;
+
+                            using (SqlCommand cmd = new SqlCommand(@"
+UPDATE Seat
+SET AutoSelectMatchId = @SourceStageMatchId,
+    AutoSelectlPlace = 0
+WHERE Id = @SeatId;", conn, transaction))
                             {
-                                SetPlayerOnSeatAndChildren(
-                                    conn,
-                                    transaction,
-                                    slot.SeatId,
-                                    playerId);
+                                cmd.Parameters.Add("@SourceStageMatchId", SqlDbType.Int).Value = sourceStageMatchId;
+                                cmd.Parameters.Add("@SeatId", SqlDbType.Int).Value = targetSeatId;
+                                cmd.ExecuteNonQuery();
                             }
+
+                            SetPlayerOnSeatAndChildren(
+                                conn,
+                                transaction,
+                                targetSeatId,
+                                wildcardAssignmentBySeat[slot.SeatId].PlayerId);
                         }
 
                         StageManualAdvancementState updated =

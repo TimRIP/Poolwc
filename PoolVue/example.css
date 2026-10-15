@@ -705,3 +705,58 @@ input[type="datetime-local"]:focus {
   .advancement-route-row { grid-template-columns: 1fr; }
   .advancement-arrow { transform: rotate(90deg); justify-self: start; }
 }
+
+/* Wildcard stage routing */
+.wildcard-config-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.wildcard-add-btn { flex: 0 0 auto; }
+.wildcard-config-summary {
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.wildcard-config-empty {
+  padding: 12px;
+  border: 1px dashed rgba(255,255,255,.16);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.wildcard-config-list {
+  display: grid;
+  gap: 8px;
+}
+.wildcard-config-row {
+  display: grid;
+  grid-template-columns: minmax(150px, .8fr) minmax(180px, 1.2fr) 40px;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255,255,255,.018);
+}
+.wildcard-config-name {
+  align-self: center;
+}
+.wildcard-config-name strong,
+.wildcard-config-name small { display: block; }
+.wildcard-config-name small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.wildcard-stage-field { margin: 0; }
+.wildcard-remove-btn { margin-bottom: 1px; }
+@media (max-width: 640px) {
+  .wildcard-config-heading { flex-direction: column; }
+  .wildcard-add-btn { width: 100%; }
+  .wildcard-config-row { grid-template-columns: 1fr 42px; }
+  .wildcard-config-name { grid-column: 1 / -1; }
+  .wildcard-stage-field { grid-column: 1; }
+  .wildcard-remove-btn { grid-column: 2; }
+}

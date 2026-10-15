@@ -363,6 +363,18 @@ var dash = new Vue({
       return this.placeLabel(place);
     },
 
+    sourceRoutePlacementLabel: function (round, route) {
+      if (!route) return '';
+      var place = Number(route.place);
+      if (round && round.selected === 'knockout') return place === 1 ? 'Winner' : 'Loser';
+      var sizes = this.stagePoolSizes(round);
+      var sourcePool = Number(route.sourcePool);
+      var total = Number.isInteger(sourcePool) && sourcePool >= 0 && sourcePool < sizes.length
+        ? Number(sizes[sourcePool]) || 0
+        : 0;
+      return total > 0 ? ('place ' + place + ' / ' + total) : ('place ' + place);
+    },
+
     hasPoolAdvancementRoutes: function () {
       return this.formdata.rundearray.some(function (round) {
         return (Array.isArray(round.poolAdvancementRoutes) && round.poolAdvancementRoutes.length > 0) ||
@@ -418,9 +430,69 @@ var dash = new Vue({
               targetSizes: targetSizes
             });
 
-            if (validPreserved) usage[destinationStage][preserved]++;
           }
         }
+      }
+
+      // Any earlier stage may reserve wildcard seats in this destination
+      // stage. Treat every existing wildcard destination as reserved while
+      // preserving normal qualifier routes. This keeps wildcard routes independent
+      // even when one source stage sends wildcards to several later stages.
+      Object.keys(usage).forEach(function (destinationStageKey) {
+        var destinationStageIndex = Number(destinationStageKey);
+        var targetUsage = usage[destinationStageIndex];
+        var targetSizes = destinationStageIndex >= 0 && destinationStageIndex < rounds.length
+          ? this.stagePoolSizes(rounds[destinationStageIndex])
+          : [];
+
+        for (var u = 0; u < targetUsage.length; u++) targetUsage[u] = 0;
+
+        for (var wildcardSourceStage = 0; wildcardSourceStage < destinationStageIndex; wildcardSourceStage++) {
+          var wildcardSourceRound = rounds[wildcardSourceStage];
+          var existingWildcardRoutes = Array.isArray(wildcardSourceRound.wildcardRoutes)
+            ? wildcardSourceRound.wildcardRoutes
+            : [];
+
+          for (var w = 0; w < existingWildcardRoutes.length; w++) {
+            var wildcardRoute = existingWildcardRoutes[w];
+            var wildcardDestinationStage = Number(wildcardRoute.destinationStage);
+            var wildcardDestinationPool = Number(wildcardRoute.destinationPool);
+
+            if (wildcardDestinationStage !== destinationStageIndex) continue;
+            if (!Number.isInteger(wildcardDestinationPool) || wildcardDestinationPool < 0 || wildcardDestinationPool >= targetUsage.length) continue;
+
+            // Do not let stale routes reserve more seats than a pool currently
+            // has. rebuildWildcardRoutes() will move any invalid/excess default.
+            if (targetUsage[wildcardDestinationPool] < Number(targetSizes[wildcardDestinationPool] || 0)) {
+              targetUsage[wildcardDestinationPool]++;
+            }
+          }
+        }
+      }.bind(this));
+
+      // Re-apply preserved normal destinations only while capacity remains.
+      // If a downstream stage changed size (for example because another stage
+      // gained or lost wildcards), only the routes that no longer fit are put
+      // back through auto-fill. Valid manual choices stay untouched.
+      specs.sort(function (a, b) {
+        return a.destinationStage - b.destinationStage ||
+          a.sourceStage - b.sourceStage ||
+          a.sourcePool - b.sourcePool ||
+          a.place - b.place;
+      });
+
+      for (var preservedIndex = 0; preservedIndex < specs.length; preservedIndex++) {
+        var preservedSpec = specs[preservedIndex];
+        if (preservedSpec.destinationPool < 0) continue;
+
+        var preservedUsage = usage[preservedSpec.destinationStage];
+        var preservedCapacity = Number(preservedSpec.targetSizes[preservedSpec.destinationPool]) || 0;
+        if (!preservedUsage || preservedCapacity <= 0 || preservedUsage[preservedSpec.destinationPool] >= preservedCapacity) {
+          preservedSpec.destinationPool = -1;
+          continue;
+        }
+
+        preservedUsage[preservedSpec.destinationPool]++;
       }
 
       // Fill only routes that do not already have a valid manual selection.
@@ -592,73 +664,127 @@ var dash = new Vue({
 
     rebuildWildcardRoutes: function (resetAssignments) {
       var rounds = this.formdata.rundearray;
+      var usageByStage = {};
+      var specs = [];
+
+      // Start with all normal qualification routes so wildcard defaults fill
+      // whatever capacity remains in each destination stage/pool.
+      for (var normalSource = 0; normalSource < rounds.length; normalSource++) {
+        var normalRoutes = Array.isArray(rounds[normalSource].poolAdvancementRoutes)
+          ? rounds[normalSource].poolAdvancementRoutes
+          : [];
+
+        for (var nr = 0; nr < normalRoutes.length; nr++) {
+          var normalDestinationStage = Number(normalRoutes[nr].destinationStage);
+          var normalDestinationPool = Number(normalRoutes[nr].destinationPool);
+          if (!Number.isInteger(normalDestinationStage) || normalDestinationStage <= normalSource || normalDestinationStage >= rounds.length) continue;
+
+          var normalTargetSizes = this.stagePoolSizes(rounds[normalDestinationStage]);
+          if (!usageByStage[normalDestinationStage]) usageByStage[normalDestinationStage] = new Array(normalTargetSizes.length).fill(0);
+          if (Number.isInteger(normalDestinationPool) && normalDestinationPool >= 0 && normalDestinationPool < normalTargetSizes.length) {
+            usageByStage[normalDestinationStage][normalDestinationPool]++;
+          }
+        }
+      }
 
       for (var sourceStage = 0; sourceStage < rounds.length; sourceStage++) {
         var round = rounds[sourceStage];
-        var count = sourceStage < rounds.length - 1
-          ? Math.max(0, Math.floor(Number(round.wildcardCount) || 0))
-          : 0;
-        var destinationStage = sourceStage + 1;
-        var targetSizes = destinationStage < rounds.length ? this.stagePoolSizes(rounds[destinationStage]) : [];
         var existing = Array.isArray(round.wildcardRoutes) ? round.wildcardRoutes : [];
-        var normalRoutes = [];
 
-        for (var rs = 0; rs < rounds.length; rs++) {
-          var sourceRoutes = Array.isArray(rounds[rs].poolAdvancementRoutes) ? rounds[rs].poolAdvancementRoutes : [];
-          for (var nr = 0; nr < sourceRoutes.length; nr++) {
-            if (Number(sourceRoutes[nr].destinationStage) === destinationStage) normalRoutes.push(sourceRoutes[nr]);
-          }
-        }
-
-        var usage = new Array(targetSizes.length).fill(0);
-        for (var n = 0; n < normalRoutes.length; n++) {
-          var normalPool = Number(normalRoutes[n].destinationPool);
-          if (Number.isInteger(normalPool) && normalPool >= 0 && normalPool < usage.length) usage[normalPool]++;
-        }
-
-        var routes = [];
-        for (var wildcardIndex = 0; wildcardIndex < count; wildcardIndex++) {
-          var preserved = -1;
-          if (!resetAssignments) {
-            var oldRoute = existing.find(function (item) {
-              return Number(item.wildcardIndex) === wildcardIndex && Number(item.destinationStage) === destinationStage;
+        // Backward compatibility with drafts made before wildcards became a
+        // per-wildcard list. Old wildcardCount values all targeted the next stage.
+        if (!existing.length && sourceStage < rounds.length - 1) {
+          var legacyCount = Math.max(0, Math.floor(Number(round.wildcardCount) || 0));
+          for (var legacyIndex = 0; legacyIndex < legacyCount; legacyIndex++) {
+            existing.push({
+              wildcardIndex: legacyIndex,
+              destinationStage: sourceStage + 1,
+              destinationPool: -1
             });
-            if (oldRoute) preserved = Number(oldRoute.destinationPool);
           }
+        }
 
-          var chosen = -1;
-          if (Number.isInteger(preserved) && preserved >= 0 && preserved < targetSizes.length && usage[preserved] < Number(targetSizes[preserved] || 0)) {
-            chosen = preserved;
-          } else {
-            var bestFill = Number.POSITIVE_INFINITY;
-            for (var poolIndex = 0; poolIndex < targetSizes.length; poolIndex++) {
-              var capacity = Number(targetSizes[poolIndex]) || 0;
-              if (capacity <= 0 || usage[poolIndex] >= capacity) continue;
-              var fill = usage[poolIndex] / capacity;
-              if (fill < bestFill) {
-                bestFill = fill;
-                chosen = poolIndex;
-              }
-            }
+        if (sourceStage >= rounds.length - 1) existing = [];
+
+        for (var wildcardIndex = 0; wildcardIndex < existing.length; wildcardIndex++) {
+          var oldRoute = existing[wildcardIndex] || {};
+          var destinationStage = Number(oldRoute.destinationStage);
+
+          if (!Number.isInteger(destinationStage) || destinationStage <= sourceStage || destinationStage >= rounds.length) {
+            destinationStage = sourceStage + 1;
           }
+          if (destinationStage >= rounds.length) continue;
 
-          if (chosen < 0 && targetSizes.length) chosen = 0;
-          if (chosen >= 0 && chosen < usage.length) usage[chosen]++;
+          var targetSizes = this.stagePoolSizes(rounds[destinationStage]);
+          if (!usageByStage[destinationStage]) usageByStage[destinationStage] = new Array(targetSizes.length).fill(0);
 
-          routes.push({
-            wildcardIndex: wildcardIndex,
+          var preservedPool = resetAssignments ? -1 : Number(oldRoute.destinationPool);
+          if (!Number.isInteger(preservedPool) || preservedPool < 0 || preservedPool >= targetSizes.length) preservedPool = -1;
+
+          specs.push({
+            sourceStage: sourceStage,
             destinationStage: destinationStage,
-            destinationPool: chosen
+            destinationPool: preservedPool,
+            targetSizes: targetSizes
           });
         }
+      }
 
-        this.$set(round, 'wildcardRoutes', routes);
+      // Preserve manual wildcard pool choices first. Over-capacity choices stay
+      // visible so validation can tell the user what needs moving.
+      for (var preservedIndex = 0; preservedIndex < specs.length; preservedIndex++) {
+        var preservedSpec = specs[preservedIndex];
+        if (preservedSpec.destinationPool < 0) continue;
+        usageByStage[preservedSpec.destinationStage][preservedSpec.destinationPool]++;
+      }
+
+      // Auto-place only wildcards without a manual pool choice.
+      for (var specIndex = 0; specIndex < specs.length; specIndex++) {
+        var spec = specs[specIndex];
+        if (spec.destinationPool >= 0) continue;
+
+        var usage = usageByStage[spec.destinationStage];
+        var chosen = -1;
+        var bestFill = Number.POSITIVE_INFINITY;
+
+        for (var poolIndex = 0; poolIndex < spec.targetSizes.length; poolIndex++) {
+          var capacity = Number(spec.targetSizes[poolIndex]) || 0;
+          if (capacity <= 0 || usage[poolIndex] >= capacity) continue;
+          var fill = usage[poolIndex] / capacity;
+          if (fill < bestFill) {
+            bestFill = fill;
+            chosen = poolIndex;
+          }
+        }
+
+        if (chosen < 0 && spec.targetSizes.length) chosen = 0;
+        spec.destinationPool = chosen;
+        if (chosen >= 0 && chosen < usage.length) usage[chosen]++;
+      }
+
+      var routesPerSource = new Array(rounds.length);
+      for (var i = 0; i < routesPerSource.length; i++) routesPerSource[i] = [];
+
+      for (var routeIndex = 0; routeIndex < specs.length; routeIndex++) {
+        var routeSpec = specs[routeIndex];
+        var list = routesPerSource[routeSpec.sourceStage];
+        list.push({
+          wildcardIndex: list.length,
+          destinationStage: routeSpec.destinationStage,
+          destinationPool: routeSpec.destinationPool
+        });
+      }
+
+      for (var setStage = 0; setStage < rounds.length; setStage++) {
+        this.$set(rounds[setStage], 'wildcardRoutes', routesPerSource[setStage]);
+        this.$set(rounds[setStage], 'wildcardCount', routesPerSource[setStage].length);
       }
     },
 
     autoAssignPoolAdvancementRoutes: function () {
-      this.rebuildPoolAdvancementRoutes(true);
       this.rebuildWildcardRoutes(true);
+      this.rebuildPoolAdvancementRoutes(true);
+      this.rebuildWildcardRoutes(false);
       this.validate();
       this.uiMessage = 'Pool advancement routes and wildcard slots were auto-filled. Normal placements are paired where possible, and wildcard places fill the remaining destination-pool capacity.';
     },
@@ -884,24 +1010,43 @@ var dash = new Vue({
       this.uiMessage = '';
       this.formdata.rundearray.splice(index, 1);
 
-      // Repair destinations because stage indexes changed.
+      // Repair normal and wildcard destinations because stage indexes changed.
       for (var i = 0; i < this.formdata.rundearray.length; i++) {
         var round = this.formdata.rundearray[i];
-        if (!Array.isArray(round.valsArray)) continue;
 
-        for (var p = 0; p < round.valsArray.length; p++) {
-          var destination = Number(round.valsArray[p]);
-          if (destination === index) {
-            this.$set(round.valsArray, p, -1);
-          } else if (destination > index) {
-            this.$set(round.valsArray, p, destination - 1);
-          }
+        if (Array.isArray(round.valsArray)) {
+          for (var p = 0; p < round.valsArray.length; p++) {
+            var destination = Number(round.valsArray[p]);
+            if (destination === index) {
+              this.$set(round.valsArray, p, -1);
+            } else if (destination > index) {
+              this.$set(round.valsArray, p, destination - 1);
+            }
 
-          // A route may only point forward. 0 is reserved for tournament winner.
-          if (Number(round.valsArray[p]) > 0 && Number(round.valsArray[p]) <= i) {
-            this.$set(round.valsArray, p, -1);
+            // A route may only point forward. 0 is reserved for tournament winner.
+            if (Number(round.valsArray[p]) > 0 && Number(round.valsArray[p]) <= i) {
+              this.$set(round.valsArray, p, -1);
+            }
           }
         }
+
+        var repairedWildcards = [];
+        var wildcardRoutes = Array.isArray(round.wildcardRoutes) ? round.wildcardRoutes : [];
+        for (var w = 0; w < wildcardRoutes.length; w++) {
+          var wildcard = wildcardRoutes[w];
+          var wildcardDestination = Number(wildcard.destinationStage);
+          if (wildcardDestination === index) continue;
+          if (wildcardDestination > index) wildcardDestination--;
+          if (!Number.isInteger(wildcardDestination) || wildcardDestination <= i || wildcardDestination >= this.formdata.rundearray.length) continue;
+
+          repairedWildcards.push({
+            wildcardIndex: repairedWildcards.length,
+            destinationStage: wildcardDestination,
+            destinationPool: Number(wildcard.destinationPool)
+          });
+        }
+        this.$set(round, 'wildcardRoutes', repairedWildcards);
+        this.$set(round, 'wildcardCount', repairedWildcards.length);
       }
 
       if (this.formdata.rundearray.length) {
@@ -988,12 +1133,74 @@ var dash = new Vue({
       this.recalculate();
     },
 
-    onWildcardCountChange: function (index) {
+    addWildcard: function (index) {
       this.activePreset = 'custom';
       var round = this.formdata.rundearray[index];
-      if (!round) return;
-      var count = Math.max(0, Math.floor(Number(round.wildcardCount) || 0));
-      this.$set(round, 'wildcardCount', count);
+      if (!round || index >= this.formdata.rundearray.length - 1) return;
+
+      var routes = Array.isArray(round.wildcardRoutes) ? round.wildcardRoutes.slice() : [];
+      if (routes.length >= this.wildcardEligibleCount(round)) {
+        this.uiMessage = 'There are no more eliminated player places available for wildcards in this stage.';
+        return;
+      }
+
+      routes.push({
+        wildcardIndex: routes.length,
+        destinationStage: index + 1,
+        destinationPool: -1
+      });
+      this.$set(round, 'wildcardRoutes', routes);
+      this.$set(round, 'wildcardCount', routes.length);
+      this.recalculate();
+    },
+
+    removeWildcard: function (index, wildcardIndex) {
+      this.activePreset = 'custom';
+      var round = this.formdata.rundearray[index];
+      if (!round || !Array.isArray(round.wildcardRoutes)) return;
+
+      var routes = round.wildcardRoutes.slice();
+      routes.splice(wildcardIndex, 1);
+      routes.forEach(function (route, routeIndex) { route.wildcardIndex = routeIndex; });
+      this.$set(round, 'wildcardRoutes', routes);
+      this.$set(round, 'wildcardCount', routes.length);
+      this.recalculate();
+    },
+
+    onWildcardDestinationStageChange: function (index, wildcardIndex) {
+      this.activePreset = 'custom';
+      var round = this.formdata.rundearray[index];
+      if (!round || !Array.isArray(round.wildcardRoutes) || !round.wildcardRoutes[wildcardIndex]) return;
+
+      var route = round.wildcardRoutes[wildcardIndex];
+      var destinationStage = Number(route.destinationStage);
+      if (!Number.isInteger(destinationStage) || destinationStage <= index || destinationStage >= this.formdata.rundearray.length) {
+        destinationStage = index + 1;
+        this.$set(route, 'destinationStage', destinationStage);
+      }
+
+      // A pool number belongs to the old destination stage, so let the route
+      // auto-pick a valid pool in the newly selected stage.
+      this.$set(route, 'destinationPool', -1);
+      this.$set(round, 'wildcardCount', round.wildcardRoutes.length);
+      this.recalculate();
+    },
+
+    // Kept for backward compatibility with old saved drafts/UI state.
+    onWildcardCountChange: function (index) {
+      var round = this.formdata.rundearray[index];
+      if (!round || index >= this.formdata.rundearray.length - 1) return;
+      var wanted = Math.max(0, Math.floor(Number(round.wildcardCount) || 0));
+      var routes = Array.isArray(round.wildcardRoutes) ? round.wildcardRoutes.slice() : [];
+
+      while (routes.length < wanted) {
+        routes.push({ wildcardIndex: routes.length, destinationStage: index + 1, destinationPool: -1 });
+      }
+      if (routes.length > wanted) routes = routes.slice(0, wanted);
+      routes.forEach(function (route, routeIndex) { route.wildcardIndex = routeIndex; });
+
+      this.$set(round, 'wildcardRoutes', routes);
+      this.$set(round, 'wildcardCount', routes.length);
       this.recalculate();
     },
 
@@ -1029,11 +1236,16 @@ var dash = new Vue({
           }
         }
 
-        // Wildcards are reserved places from the immediately preceding stage.
-        // The actual eliminated player is chosen only after that stage finishes.
-        var wildcardSource = rounds[target - 1];
-        if (wildcardSource) {
-          count += Math.max(0, Math.floor(Number(wildcardSource.wildcardCount) || 0));
+        // Wildcards are independent routes. Any earlier stage can reserve a
+        // place in this later stage; the actual eliminated player is chosen only
+        // after the wildcard's source stage finishes.
+        for (var wildcardSourceIndex = 0; wildcardSourceIndex < target; wildcardSourceIndex++) {
+          var sourceWildcardRoutes = Array.isArray(rounds[wildcardSourceIndex].wildcardRoutes)
+            ? rounds[wildcardSourceIndex].wildcardRoutes
+            : [];
+          for (var wildcardRouteIndex = 0; wildcardRouteIndex < sourceWildcardRoutes.length; wildcardRouteIndex++) {
+            if (Number(sourceWildcardRoutes[wildcardRouteIndex].destinationStage) === target) count++;
+          }
         }
 
         this.$set(rounds[target], 'NbPlayers', count);
@@ -1185,12 +1397,13 @@ var dash = new Vue({
           }
         }
 
-        var wildcardCount = Math.max(0, Math.floor(Number(round.wildcardCount) || 0));
+        var configuredWildcards = Array.isArray(round.wildcardRoutes) ? round.wildcardRoutes : [];
+        var wildcardCount = configuredWildcards.length;
         if (Number(round.wildcardCount || 0) !== wildcardCount) {
-          errors.push({ type: 'wildcard-count-' + i, description: label + ': wildcard places must be a non-negative whole number.' });
+          errors.push({ type: 'wildcard-count-' + i, description: label + ': wildcard configuration is out of sync. Recalculate the tournament.' });
         }
         if (wildcardCount > 0 && i >= rounds.length - 1) {
-          errors.push({ type: 'wildcard-last-' + i, description: label + ': wildcards need a following stage.' });
+          errors.push({ type: 'wildcard-last-' + i, description: label + ': wildcards need a later destination stage.' });
         }
         if (wildcardCount > this.wildcardEligibleCount(round)) {
           errors.push({
@@ -1199,6 +1412,17 @@ var dash = new Vue({
               ' requested, but only ' + this.wildcardEligibleCount(round) + ' eliminated player' +
               (this.wildcardEligibleCount(round) === 1 ? ' is' : 's are') + ' available.'
           });
+        }
+
+        for (var wildcardCheckIndex = 0; wildcardCheckIndex < configuredWildcards.length; wildcardCheckIndex++) {
+          var wildcardCheck = configuredWildcards[wildcardCheckIndex] || {};
+          var wildcardCheckDestination = Number(wildcardCheck.destinationStage);
+          if (Number(wildcardCheck.wildcardIndex) !== wildcardCheckIndex) {
+            errors.push({ type: 'wildcard-index-' + i + '-' + wildcardCheckIndex, description: label + ': wildcard numbering is invalid.' });
+          }
+          if (!Number.isInteger(wildcardCheckDestination) || wildcardCheckDestination <= i || wildcardCheckDestination >= rounds.length) {
+            errors.push({ type: 'wildcard-stage-' + i + '-' + wildcardCheckIndex, description: label + ': choose a later destination stage for Wildcard ' + (wildcardCheckIndex + 1) + '.' });
+          }
         }
       }
 
@@ -1244,11 +1468,11 @@ var dash = new Vue({
         }
 
         var wildcardRoutes = Array.isArray(sourceStageRound.wildcardRoutes) ? sourceStageRound.wildcardRoutes : [];
-        var expectedWildcards = Math.max(0, Math.floor(Number(sourceStageRound.wildcardCount) || 0));
-        if (wildcardRoutes.length !== expectedWildcards) {
+        var expectedWildcards = wildcardRoutes.length;
+        if (Number(sourceStageRound.wildcardCount || 0) !== expectedWildcards) {
           errors.push({
             type: 'wildcard-route-count-' + sourceStageIndex,
-            description: (sourceStageRound.navn || ('Stage ' + (sourceStageIndex + 1))) + ': wildcard pool assignments are incomplete.'
+            description: (sourceStageRound.navn || ('Stage ' + (sourceStageIndex + 1))) + ': wildcard configuration is out of sync.'
           });
         }
 
@@ -1258,8 +1482,8 @@ var dash = new Vue({
           var wildcardDestinationPool = Number(wildcardRoute.destinationPool);
           var wildcardIndex = Number(wildcardRoute.wildcardIndex);
 
-          if (!Number.isInteger(wildcardIndex) || wildcardIndex < 0 || wildcardIndex >= expectedWildcards ||
-              wildcardDestinationStage !== sourceStageIndex + 1 || wildcardDestinationStage >= rounds.length) {
+          if (!Number.isInteger(wildcardIndex) || wildcardIndex !== wr ||
+              !Number.isInteger(wildcardDestinationStage) || wildcardDestinationStage <= sourceStageIndex || wildcardDestinationStage >= rounds.length) {
             errors.push({ type: 'wildcard-route-' + sourceStageIndex + '-' + wr, description: (sourceStageRound.navn || ('Stage ' + (sourceStageIndex + 1))) + ': invalid wildcard route.' });
             continue;
           }
@@ -1441,12 +1665,26 @@ var dash = new Vue({
         if (!Number.isInteger(Number(this.formdata.rundearray[i].PlayTo))) {
           this.$set(this.formdata.rundearray[i], 'PlayTo', 0);
         }
-        if (!Number.isInteger(Number(this.formdata.rundearray[i].wildcardCount)) || Number(this.formdata.rundearray[i].wildcardCount) < 0) {
-          this.$set(this.formdata.rundearray[i], 'wildcardCount', 0);
+        var loadedRound = this.formdata.rundearray[i];
+        var legacyWildcardCount = Number.isInteger(Number(loadedRound.wildcardCount)) && Number(loadedRound.wildcardCount) > 0
+          ? Math.floor(Number(loadedRound.wildcardCount))
+          : 0;
+        if (!Array.isArray(loadedRound.wildcardRoutes)) {
+          this.$set(loadedRound, 'wildcardRoutes', []);
         }
-        if (!Array.isArray(this.formdata.rundearray[i].wildcardRoutes)) {
-          this.$set(this.formdata.rundearray[i], 'wildcardRoutes', []);
+        if (!loadedRound.wildcardRoutes.length && legacyWildcardCount > 0 && i < this.formdata.rundearray.length - 1) {
+          var migratedWildcards = [];
+          for (var migratedIndex = 0; migratedIndex < legacyWildcardCount; migratedIndex++) {
+            migratedWildcards.push({
+              wildcardIndex: migratedIndex,
+              destinationStage: i + 1,
+              destinationPool: -1
+            });
+          }
+          this.$set(loadedRound, 'wildcardRoutes', migratedWildcards);
         }
+        this.$set(loadedRound, 'wildcardCount', i < this.formdata.rundearray.length - 1 ? loadedRound.wildcardRoutes.length : 0);
+        if (i >= this.formdata.rundearray.length - 1) this.$set(loadedRound, 'wildcardRoutes', []);
         if (!Array.isArray(this.formdata.rundearray[i].poolAdvancementRoutes)) {
           this.$set(this.formdata.rundearray[i], 'poolAdvancementRoutes', []);
         }

@@ -325,28 +325,52 @@
                   </div>
 
                   <div class="routing-block wildcard-routing-block" v-if="index < formdata.rundearray.length - 1">
-                    <div class="routing-heading">
+                    <div class="routing-heading wildcard-config-heading">
                       <div>
-                        <strong>Wildcards to next stage</strong>
-                        <small>Reserve places for players who are eliminated in this stage but may be promoted manually after the stage is complete.</small>
+                        <strong>Wildcards</strong>
+                        <small>Add wildcard places for eliminated players and choose the later stage each wildcard should progress to.</small>
                       </div>
+                      <button type="button" class="secondary-btn wildcard-add-btn" @click="addWildcard(index)"
+                              :disabled="runde.wildcardRoutes.length >= wildcardEligibleCount(runde)">
+                        <i class="fa fa-plus"></i> Add wildcard
+                      </button>
                     </div>
 
-                    <div class="form-grid two-col compact-grid">
-                      <label class="field">
-                        <span>Wildcard places</span>
-                        <input type="number"
-                               min="0"
-                               step="1"
-                               v-model.number="runde.wildcardCount"
-                               @change="onWildcardCountChange(index)">
-                        <small>{{ wildcardEligibleCount(runde) }} eliminated player{{ wildcardEligibleCount(runde) === 1 ? '' : 's' }} available for wildcard selection.</small>
-                      </label>
-                      <label class="field">
-                        <span>Progress to</span>
-                        <input type="text" :value="formdata.rundearray[index + 1].navn || ('Stage ' + (index + 2))" disabled>
-                        <small>The actual wildcard player is chosen after this stage finishes.</small>
-                      </label>
+                    <div class="wildcard-config-summary">
+                      {{ runde.wildcardRoutes.length }} wildcard{{ runde.wildcardRoutes.length === 1 ? '' : 's' }} configured ·
+                      {{ wildcardEligibleCount(runde) }} eliminated player{{ wildcardEligibleCount(runde) === 1 ? '' : 's' }} available
+                    </div>
+
+                    <div class="wildcard-config-empty" v-if="!runde.wildcardRoutes.length">
+                      No wildcard places configured for this stage.
+                    </div>
+
+                    <div class="wildcard-config-list" v-else>
+                      <div class="wildcard-config-row" v-for="(route, wildcardIndex) in runde.wildcardRoutes"
+                           :key="'wildcard-config-' + index + '-' + wildcardIndex">
+                        <div class="wildcard-config-name">
+                          <strong>Wildcard {{ wildcardIndex + 1 }}</strong>
+                          <small>Player chosen after this stage is complete</small>
+                        </div>
+
+                        <label class="field wildcard-stage-field">
+                          <span>Progress to</span>
+                          <select v-model.number="route.destinationStage"
+                                  @change="onWildcardDestinationStageChange(index, wildcardIndex)">
+                            <option v-for="(destinationRound, destinationIndex) in formdata.rundearray"
+                                    v-if="destinationIndex > index"
+                                    :key="'wildcard-stage-' + index + '-' + wildcardIndex + '-' + destinationIndex"
+                                    :value="destinationIndex">
+                              {{ destinationRound.navn || ('Stage ' + (destinationIndex + 1)) }}
+                            </option>
+                          </select>
+                        </label>
+
+                        <button type="button" class="icon-btn danger wildcard-remove-btn"
+                                @click="removeWildcard(index, wildcardIndex)" title="Remove wildcard">
+                          <i class="fa fa-trash"></i>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -362,7 +386,7 @@
               <div class="section-heading advancement-map-heading">
                 <div>
                   <h2>3. Advance to pool</h2>
-                  <p>Choose the exact destination pool for normal qualifiers and for each reserved wildcard place.</p>
+                  <p>Choose the exact destination pool for normal qualifiers and for each wildcard place.</p>
                 </div>
                 <button type="button" class="secondary-btn" @click="autoAssignPoolAdvancementRoutes">
                   <i class="fa fa-random"></i> Auto-fill placements
@@ -371,7 +395,7 @@
 
               <div class="advancement-help">
                 <i class="fa fa-info-circle"></i>
-                Auto-fill pairs adjacent placements where possible: <strong>1st with 2nd, 3rd with 4th, 5th with 6th</strong>, and so on. Wildcard places are then put into the remaining free destination-pool slots. Normal routes advance automatically; wildcard players are chosen manually after the source stage is complete.
+                Auto-fill pairs adjacent placements where possible: <strong>1st with 2nd, 3rd with 4th, 5th with 6th</strong>, and so on. Each wildcard can progress to any later stage selected above. Wildcard places are initially put into free destination-pool slots, but you can choose another pulje here or again when the source stage is complete. Normal routes advance automatically; the actual wildcard player is chosen after the source stage is complete.
               </div>
 
               <article class="advancement-stage-card"
@@ -391,7 +415,7 @@
                        :key="'advance-' + sourceIndex + '-' + route.sourcePool + '-' + route.place + '-' + route.destinationStage">
                     <div class="advancement-source">
                       <strong>pulje {{ route.sourcePool + 1 }}</strong>
-                      <span>{{ sourceRouteLabel(runde, route.place) }}</span>
+                      <span>{{ sourceRoutePlacementLabel(runde, route) }}</span>
                     </div>
 
                     <i class="fa fa-long-arrow-right advancement-arrow"></i>
@@ -415,7 +439,7 @@
                        :key="'wildcard-' + sourceIndex + '-' + route.wildcardIndex + '-' + route.destinationStage">
                     <div class="advancement-source">
                       <strong>Wildcard {{ route.wildcardIndex + 1 }}</strong>
-                      <span>Chosen after stage completion</span>
+                      <span>Eliminated player chosen after stage completion</span>
                     </div>
 
                     <i class="fa fa-long-arrow-right advancement-arrow"></i>
@@ -432,6 +456,7 @@
                       <small>
                         {{ destinationPoolAssignedCount(route.destinationStage, route.destinationPool) }} / {{ destinationPoolCapacity(route.destinationStage, route.destinationPool) }} total places assigned to this pool
                       </small>
+                      <small>The wildcard can be moved to another pulje after the stage is complete.</small>
                     </div>
                   </div>
                 </div>

@@ -808,7 +808,7 @@
                     <div class="manualAdvanceRoutes stageAdvanceRoutes wildcardAdvanceRoutes"
                          v-if="stageAdvanceState.wildcardSlots && stageAdvanceState.wildcardSlots.length">
                       <div class="resultNote">
-                        <strong>Wildcards:</strong> choose an eliminated player for each reserved place. The destination pool was fixed in Tournament creation.
+                        <strong>Wildcards:</strong> choose an eliminated player and the destination pool. Wildcards can be moved between the pools in their configured destination stage.
                       </div>
 
                       <div v-for="(slot, wildcardIndex) in stageAdvanceState.wildcardSlots"
@@ -816,27 +816,48 @@
                            class="manualAdvanceRoute playerPoolRoute stageAdvanceRoute wildcardAdvanceRoute">
                         <div class="manualAdvanceDestination advancingPlayerInfo">
                           <strong>Wildcard {{ wildcardIndex + 1 }}</strong>
-                          <span>{{ stageWildcardPoolLabel(slot) }}</span>
-                          <span class="stageAdvancePlacement">Reserved wildcard place</span>
-                          <span class="stageAdvanceTarget" v-if="slot.playerName">
-                            currently {{ slot.playerName }}
+                          <span>Choose any eliminated player from this stage</span>
+                          <span class="stageAdvancePlacement" v-if="stageWildcardSelectedCandidate(slot)">
+                            {{ stageWildcardSelectedCandidate(slot).sourcePoolName || ('Pool #' + stageWildcardSelectedCandidate(slot).sourcePoolMatchId) }}
+                            · place {{ stageWildcardSelectedCandidate(slot).place }} / {{ stageWildcardSelectedCandidate(slot).sourcePoolPlayerCount }}
                           </span>
+                          <span class="stageAdvancePlacement" v-else>Source pool and placement will appear here</span>
                         </div>
 
-                        <label class="manualAdvanceSelect">
-                          <span>Wildcard player</span>
-                          <select :value="stageWildcardAssignments[slot.seatId]"
-                                  @change="setStageWildcardPlayer(slot.seatId, $event.target.value)"
-                                  :disabled="!matchEditAllowed || savingStageAdvance">
-                            <option :value="null" disabled>— Choose eliminated player —</option>
-                            <option v-for="player in stageAdvanceState.wildcardCandidates"
-                                    :key="'wildcard-slot-' + slot.seatId + '-player-' + player.playerId"
-                                    :value="player.playerId"
-                                    :disabled="stageWildcardPlayerUsedElsewhere(player.playerId, slot.seatId)">
-                              {{ stageWildcardCandidateLabel(player) }}
-                            </option>
-                          </select>
-                        </label>
+                        <div class="wildcardAdvanceControls">
+                          <label class="manualAdvanceSelect">
+                            <span>Wildcard player</span>
+                            <select :value="stageWildcardAssignments[slot.seatId]"
+                                    @change="setStageWildcardPlayer(slot.seatId, $event.target.value)"
+                                    :disabled="!matchEditAllowed || savingStageAdvance">
+                              <option :value="null" disabled>— Choose eliminated player —</option>
+                              <optgroup v-for="group in stageWildcardCandidateGroups()"
+                                        :key="'wildcard-source-pool-' + slot.seatId + '-' + group.poolId"
+                                        :label="group.poolName">
+                                <option v-for="player in group.players"
+                                        :key="'wildcard-slot-' + slot.seatId + '-player-' + player.playerId"
+                                        :value="player.playerId"
+                                        :disabled="stageWildcardPlayerUsedElsewhere(player.playerId, slot.seatId)">
+                                  {{ stageWildcardCandidateLabel(player) }}
+                                </option>
+                              </optgroup>
+                            </select>
+                          </label>
+
+                          <label class="manualAdvanceSelect">
+                            <span>Advance to pool</span>
+                            <select :value="stageWildcardDestinations[slot.seatId]"
+                                    @change="setStageWildcardDestination(slot.seatId, $event.target.value)"
+                                    :disabled="!matchEditAllowed || savingStageAdvance">
+                              <option :value="null" disabled>— Choose pool —</option>
+                              <option v-for="pool in stageWildcardPoolOptions(slot)"
+                                      :key="'wildcard-slot-' + slot.seatId + '-pool-' + pool.matchId"
+                                      :value="pool.matchId">
+                                {{ stageAdvancePoolLabel(pool) }}
+                              </option>
+                            </select>
+                          </label>
+                        </div>
                       </div>
                     </div>
                   </template>
