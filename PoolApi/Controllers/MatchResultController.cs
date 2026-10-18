@@ -359,6 +359,51 @@ namespace TournamentBackend.Controllers
             }
         }
 
+        [HttpPost("{stageMatchId:int}/advancement/stage/incoming/manual")]
+        public IActionResult SaveAllIncomingStageManualAdvancement(
+            int stageMatchId,
+            [FromBody] StageManualAdvancementRequest model)
+        {
+            if (!TryGetUserId(out int userId))
+            {
+                return Unauthorized();
+            }
+
+            if (model == null)
+            {
+                return BadRequest(new { message = "Incoming-stage assignments are required." });
+            }
+
+            MatchResultBackoffice backoffice = new MatchResultBackoffice();
+            if (!backoffice.CanEditMatchResults(stageMatchId, userId))
+            {
+                return StatusCode(403, new { message = "You do not have permission to manage advancement for this tournament." });
+            }
+
+            try
+            {
+                StageManualAdvancementSaveResult result =
+                    backoffice.SaveIncomingStageManualAdvancement(
+                        stageMatchId,
+                        model.Assignments ?? new List<StageManualAdvancementAssignment>(),
+                        model.WildcardAssignments ?? new List<StageManualWildcardAssignment>());
+                return Ok(result);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                return StatusCode(500, new { message = "Could not save incoming stage advancement." });
+            }
+        }
+
         [HttpPost("{stageMatchId:int}/advancement/stage/incoming/{sourceStageMatchId:int}/manual")]
         public IActionResult SaveIncomingStageManualAdvancement(
             int stageMatchId,

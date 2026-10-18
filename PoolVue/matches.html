@@ -753,7 +753,16 @@
                 </div>
 
                 <div class="resultNote">
-                  Choose where the qualifiers entering this stage should be placed. Wildcard players are also chosen here, on the stage they are entering.
+                  Choose where the qualifiers entering this stage should be placed. Wildcard players are also chosen here, on the stage they are entering. All incoming players can use any available pool in this stage.
+                </div>
+
+                <div class="stageAdvancePoolSummary" v-if="stageAdvancePools().length">
+                  <div v-for="pool in stageAdvancePools()"
+                       :key="'stage-pool-capacity-' + pool.matchId"
+                       class="stageAdvancePoolSummaryItem">
+                    <strong>{{ stageAdvancePoolLabel(pool) }}</strong>
+                    <span>{{ stageAdvancePoolCapacityText(pool) }}</span>
+                  </div>
                 </div>
 
                 <div v-for="sourceState in stageAdvanceSources()"
@@ -768,15 +777,6 @@
                   </div>
 
                   <template v-else-if="(sourceState.players && sourceState.players.length) || (sourceState.wildcardSlots && sourceState.wildcardSlots.length)">
-                    <div class="stageAdvancePoolSummary" v-if="sourceState.pools && sourceState.pools.length">
-                      <div v-for="pool in sourceState.pools"
-                           :key="'stage-pool-capacity-' + sourceState.sourceStageMatchId + '-' + pool.matchId"
-                           class="stageAdvancePoolSummaryItem">
-                        <strong>{{ stageAdvancePoolLabel(pool) }}</strong>
-                        <span>{{ stageAdvancePoolCapacityText(pool, sourceState) }}</span>
-                      </div>
-                    </div>
-
                     <div class="manualAdvanceRoutes stageAdvanceRoutes" v-if="sourceState.players && sourceState.players.length">
                       <div v-for="player in sourceState.players"
                            :key="'stage-advance-player-' + sourceState.sourceStageMatchId + '-' + player.playerId"
@@ -859,16 +859,17 @@
                       </div>
                     </div>
 
-                    <div class="resultActions manualAdvanceActions">
-                      <button type="button"
-                              class="saveResultBtn"
-                              @click="saveStageAdvancement(sourceState)"
-                              :disabled="!matchEditAllowed || savingStageAdvance">
-                        <i class="fa" :class="savingStageAdvance ? 'fa-circle-o-notch fa-spin' : 'fa-random'"></i>
-                        {{ savingStageAdvance ? 'Saving…' : 'Save incoming players' }}
-                      </button>
-                    </div>
                   </template>
+                </div>
+
+                <div class="resultActions manualAdvanceActions">
+                  <button type="button"
+                          class="saveResultBtn"
+                          @click="saveStageAdvancement()"
+                          :disabled="!matchEditAllowed || savingStageAdvance">
+                    <i class="fa" :class="savingStageAdvance ? 'fa-circle-o-notch fa-spin' : 'fa-random'"></i>
+                    {{ savingStageAdvance ? 'Saving…' : 'Save incoming players' }}
+                  </button>
                 </div>
 
                 <div v-if="stageAdvanceError" class="resultMessage error">{{ stageAdvanceError }}</div>
