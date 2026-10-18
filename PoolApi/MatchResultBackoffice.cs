@@ -265,6 +265,13 @@ namespace DrukDatabaseLayer
         public List<StageManualWildcardCandidateDetails> WildcardCandidates { get; set; } = new List<StageManualWildcardCandidateDetails>();
     }
 
+    public class IncomingStageManualAdvancementState
+    {
+        public int TargetStageMatchId { get; set; }
+        public string TargetStageName { get; set; }
+        public List<StageManualAdvancementState> Sources { get; set; } = new List<StageManualAdvancementState>();
+    }
+
     public class StageManualAdvancementAssignment
     {
         public int PlayerId { get; set; }
@@ -744,8 +751,138 @@ OPTION (MAXRECURSION 1000);";
             }
         }
 
+        public IncomingStageManualAdvancementState GetIncomingStageManualAdvancement(int targetStageMatchId)
+        {
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            {
+                conn.Open();
+                using (SqlTransaction transaction = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        string targetStageName = GetMatchName(conn, transaction, targetStageMatchId);
+                        if (targetStageName == null)
+                        {
+                            return null;
+                        }
+
+                        List<int> sourceStageIds = new List<int>();
+                        using (SqlCommand cmd = new SqlCommand(@"
+SELECT DISTINCT X.SourceStageMatchId
+FROM (
+    SELECT SP.ParentMatchId AS SourceStageMatchId
+    FROM Seat R
+    INNER JOIN [Match] SP ON SP.Id = R.AutoSelectMatchId
+    INNER JOIN [Match] DP ON DP.Id = R.MatchId
+    WHERE R.AutoSelectlPlace IS NOT NULL
+      AND R.AutoSelectlPlace > 0
+      AND SP.ParentMatchId IS NOT NULL
+      AND (DP.ParentMatchId = @TargetStageMatchId OR DP.Id = @TargetStageMatchId)
+
+    UNION
+
+    SELECT S.AutoSelectMatchId AS SourceStageMatchId
+    FROM Seat S
+    INNER JOIN [Match] DP ON DP.Id = S.MatchId
+    WHERE S.AutoSelectMatchId IS NOT NULL
+      AND S.AutoSelectlPlace = 0
+      AND (DP.ParentMatchId = @TargetStageMatchId OR DP.Id = @TargetStageMatchId)
+) X
+WHERE X.SourceStageMatchId IS NOT NULL
+  AND X.SourceStageMatchId <> @TargetStageMatchId
+ORDER BY X.SourceStageMatchId;", conn, transaction))
+                        {
+                            cmd.Parameters.Add("@TargetStageMatchId", SqlDbType.Int).Value = targetStageMatchId;
+                            using (SqlDataReader reader = cmd.ExecuteReader())
+                            {
+                                while (reader.Read())
+                                {
+                                    sourceStageIds.Add(Convert.ToInt32(reader["SourceStageMatchId"]));
+                                }
+                            }
+                        }
+
+                        IncomingStageManualAdvancementState incoming = new IncomingStageManualAdvancementState
+                        {
+                            TargetStageMatchId = targetStageMatchId,
+                            TargetStageName = targetStageName
+                        };
+
+                        foreach (int sourceStageId in sourceStageIds)
+                        {
+                            StageManualAdvancementState fullState =
+                                BuildStageManualAdvancementState(conn, transaction, sourceStageId);
+                            if (fullState == null)
+                            {
+                                continue;
+                            }
+
+                            StageManualAdvancementState filtered = new StageManualAdvancementState
+                            {
+                                SourceStageMatchId = fullState.SourceStageMatchId,
+                                SourceStageName = fullState.SourceStageName,
+                                StageComplete = fullState.StageComplete,
+                                Players = fullState.Players
+                                    .Where(x => x.TargetStageMatchId == targetStageMatchId)
+                                    .ToList(),
+                                Pools = fullState.Pools
+                                    .Where(x => x.TargetStageMatchId == targetStageMatchId)
+                                    .ToList(),
+                                WildcardSlots = fullState.WildcardSlots
+                                    .Where(x => x.TargetStageMatchId == targetStageMatchId)
+                                    .ToList()
+                            };
+
+                            filtered.WildcardCandidates = filtered.WildcardSlots.Count > 0
+                                ? fullState.WildcardCandidates
+                                : new List<StageManualWildcardCandidateDetails>();
+
+                            if (filtered.Players.Count > 0 || filtered.WildcardSlots.Count > 0)
+                            {
+                                incoming.Sources.Add(filtered);
+                            }
+                        }
+
+                        transaction.Commit();
+                        return incoming;
+                    }
+                    catch
+                    {
+                        transaction.Rollback();
+                        throw;
+                    }
+                }
+            }
+        }
+
         public StageManualAdvancementSaveResult SaveStageManualAdvancement(
             int sourceStageMatchId,
+            IList<StageManualAdvancementAssignment> assignments,
+            IList<StageManualWildcardAssignment> wildcardAssignments)
+        {
+            return SaveStageManualAdvancementCore(
+                sourceStageMatchId,
+                null,
+                assignments,
+                wildcardAssignments);
+        }
+
+        public StageManualAdvancementSaveResult SaveIncomingStageManualAdvancement(
+            int sourceStageMatchId,
+            int targetStageMatchId,
+            IList<StageManualAdvancementAssignment> assignments,
+            IList<StageManualWildcardAssignment> wildcardAssignments)
+        {
+            return SaveStageManualAdvancementCore(
+                sourceStageMatchId,
+                targetStageMatchId,
+                assignments,
+                wildcardAssignments);
+        }
+
+        private StageManualAdvancementSaveResult SaveStageManualAdvancementCore(
+            int sourceStageMatchId,
+            int? targetStageMatchId,
             IList<StageManualAdvancementAssignment> assignments,
             IList<StageManualWildcardAssignment> wildcardAssignments)
         {
@@ -777,6 +914,16 @@ OPTION (MAXRECURSION 1000);";
                             GetStageManualRouteRecords(conn, transaction, sourceStageMatchId);
                         List<StageManualWildcardSlotDetails> wildcardSlots =
                             GetStageWildcardSlots(conn, transaction, sourceStageMatchId);
+
+                        if (targetStageMatchId.HasValue)
+                        {
+                            routes = routes
+                                .Where(x => x.TargetStageMatchId == targetStageMatchId.Value)
+                                .ToList();
+                            wildcardSlots = wildcardSlots
+                                .Where(x => x.TargetStageMatchId == targetStageMatchId.Value)
+                                .ToList();
+                        }
 
                         if (routes.Count == 0 && wildcardSlots.Count == 0)
                         {
