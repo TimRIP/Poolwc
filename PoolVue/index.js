@@ -1792,7 +1792,8 @@ function showSection(sectionId) {
 
 $(document).ready(function () {
   $('.mainContent').show();
-  showSection('dashboard');
+  var initialSection = window.location.hash.substring(1);
+  showSection(['app', 'vueformapp'].indexOf(initialSection) !== -1 ? initialSection : 'dashboard');
 
   $('.admin-panel .slidebar a[href="#"]').on('click', function (event) {
     event.preventDefault();

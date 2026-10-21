@@ -1,0 +1,49 @@
+/* Consistent navigation across every Pool page. Loaded after all page CSS. */
+html body > .admin-panel,
+html body .admin-panel .slidebar {
+  font-family: Arial, Helvetica, sans-serif !important;
+  font-size: 14px !important;
+  line-height: normal !important;
+  zoom: 1 !important;
+}
+html body .admin-panel .slidebar ul {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: stretch !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  list-style: none !important;
+}
+html body .admin-panel .slidebar ul > li {
+  display: flex !important;
+  align-items: stretch !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  font-size: 14px !important;
+  line-height: 1 !important;
+}
+html body .admin-panel .slidebar ul > li > a {
+  box-sizing: border-box !important;
+  display: inline-flex !important;
+  flex: none !important;
+  align-items: center !important;
+  gap: 9px !important;
+  min-height: 42px !important;
+  height: 42px !important;
+  padding: 0 16px !important;
+  margin: 0 !important;
+  font: 700 14px/1 Arial, Helvetica, sans-serif !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  transform: none !important;
+  white-space: nowrap !important;
+}
+html body .admin-panel .slidebar ul > li > a > i.sideicon {
+  display: inline-block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  font-size: 14px !important;
+  line-height: 1 !important;
+  vertical-align: baseline !important;
+  transform: none !important;
+}

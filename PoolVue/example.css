@@ -35,16 +35,19 @@ a { color: var(--accent-2); }
   box-shadow: 0 6px 22px rgba(0,0,0,.3);
 }
 .slidebar ul { padding: 0; margin: 0; display: flex; flex-wrap: wrap; }
+/* Fixed-size navigation, independent of each page's body styles. */
+.admin-panel .slidebar { font-family: Arial, Helvetica, sans-serif; font-size: 12px; }
 .slidebar li { list-style: none; position: relative; }
 .slidebar ul a {
   color: #c7d2e4;
   text-decoration: none;
   display: block;
-  padding: 0 18px;
-  line-height: 52px;
+  padding: 0 14px;
+  line-height: 36px;
   border-right: 1px solid rgba(255,255,255,.06);
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
+  white-space: nowrap;
 }
 .slidebar li:hover,
 .slidebar li.selectedbutton { background: #182536; box-shadow: inset 0 -3px 0 var(--accent); }
@@ -52,7 +55,7 @@ a { color: var(--accent-2); }
 .slidebar li.selectedbutton a { color: #fff; }
 .sideicon { margin-left: 10px; }
 
-.mainContent { min-height: calc(100vh - 52px); }
+.mainContent { min-height: calc(100vh - 36px); }
 
 /* ===== Tournament builder ===== */
 .builder-page { padding: 30px; max-width: 1500px; margin: 0 auto; }
@@ -759,4 +762,29 @@ input[type="datetime-local"]:focus {
   .wildcard-config-name { grid-column: 1 / -1; }
   .wildcard-stage-field { grid-column: 1; }
   .wildcard-remove-btn { grid-column: 2; }
+}
+
+/* Unified navigation dimensions: applies to every tab on every page. */
+.admin-panel .slidebar ul > li > a,
+.admin-panel .slidebar ul > li > a.dashboard,
+.admin-panel .slidebar ul > li > a.vuematch,
+.admin-panel .slidebar ul > li > a.visualization,
+.admin-panel .slidebar ul > li > a.app,
+.admin-panel .slidebar ul > li > a.vueformapp {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center;
+  height: 42px !important;
+  min-height: 42px !important;
+  padding: 0 16px !important;
+  font-family: Arial, Helvetica, sans-serif !important;
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  white-space: nowrap;
+}
+.admin-panel .slidebar ul > li > a .sideicon {
+  margin-left: 9px;
+  font-size: 14px !important;
+  line-height: 1 !important;
 }
