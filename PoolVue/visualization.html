@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visualization · Pool</title>
+<script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.min.js"></script><script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+<link rel="stylesheet" href="example.css"><link rel="stylesheet" href="visualization.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css"></head>
+<body><div id="visualization" class="vizApp">
+<header class="vizNav"><nav><a href="index.htm">Tournament</a><a href="matches.html">Matches</a><a class="active" href="visualization.html">Visualization</a></nav>
+<div class="vizPicker"><label for="vizTournament">Tournament</label><select id="vizTournament" v-model="selectedTournamentId" @change="loadMatches" :disabled="loading"><option value="">Select tournament</option><option v-for="t in tournaments" :key="t.tournamentId" :value="String(t.tournamentId)">{{t.name}}</option></select><button type="button" @click="refresh" :disabled="loading">↻ Refresh</button></div></header>
+<main class="vizMain"><div class="vizHeading"><div><span class="vizEyebrow">TOURNAMENT OVERVIEW</span><h1>Visualization</h1><p>Read-only view of the stages, puljer, matches and players.</p></div><span class="vizReadonly"> <i class="fa fa-eye"></i> Read only</span></div>
+<div v-if="error" class="vizError" role="alert">{{error}}</div><div v-if="loading" class="vizEmpty">Loading tournament…</div><div v-else-if="!selectedTournamentId" class="vizEmpty">Select a tournament to see its stages and puljer.</div><div v-else-if="!stages.length" class="vizEmpty">No tournament structure found.</div>
+<div v-else class="vizScrollable"><p v-if="routeWarning" class="vizRouteWarning">{{routeWarning}}</p><div class="vizBoard" ref="vizBoard"><svg class="vizLines" aria-hidden="true"><path v-for="line in connections" :key="line.key" :d="line.d" /></svg><div class="vizStages"><section v-for="(stage, index) in stages" :key="stage.matchId" class="vizStage"><div class="vizStageTop"><div class="vizStageIndex">STAGE {{index+1}}</div><h2>{{stage.matchName}}</h2><span class="vizStageCount">{{ stage.pools.length }} {{stage.pools.length===1?'pulje':'puljer'}}</span></div>
+<div class="vizPoolList"><article v-for="pool in stage.pools" :key="pool.matchId" class="vizPool" :data-pool-id="pool.matchId"><header class="vizPoolTitle"><div><span class="vizPoolLabel">PULJE</span><h3>{{pool.matchName}}</h3></div><span class="vizCount">{{pool.matches.length}} matches</span></header>
+<div v-if="pool.players.length" class="vizPlayers"><span class="vizSmallLabel">Players</span><div class="vizPlayer" v-for="(player, i) in pool.players" :key="player"><span class="vizPlayerNo">{{i+1}}</span><span>{{player}}</span></div></div>
+<div v-if="pool.matches.length" class="vizMatches"><span class="vizSmallLabel">Matches</span><div v-for="match in pool.matches" :key="match.matchId" class="vizMatch"><div class="vizMatchTitle">{{match.matchName}}</div><div class="vizParticipants">{{match.players.length ? match.players.join(' · ') : 'Players not yet assigned'}}</div></div></div>
+<div v-if="!pool.players.length && !pool.matches.length" class="vizEmptyPool">No players or matches assigned yet</div></article></div></section></div></div></div>
+</main></div><script src="visualization.js"></script></body></html>

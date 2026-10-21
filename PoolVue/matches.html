@@ -583,7 +583,10 @@
                     <thead>
                       <tr>
                         <th class="poolMatrixCorner"></th>
-                        <th v-for="player in poolMatrixPlayers"
+                        <th v-if="poolMatrixIsSeries" v-for="(game, gameIndex) in poolMatrixMatches"
+                            :key="'game-head-' + game.matchId"
+                            class="poolMatrixPlayerHead">kamp{{ gameIndex + 1 }}</th>
+                        <th v-if="!poolMatrixIsSeries" v-for="player in poolMatrixPlayers"
                             :key="'head-' + player.playerId"
                             class="poolMatrixPlayerHead">
                           {{ player.playerName }}
@@ -597,7 +600,19 @@
                       <tr v-for="player in poolMatrixPlayers" :key="'row-' + player.playerId">
                         <th class="poolMatrixRowHead">{{ player.playerName }}</th>
 
-                        <td v-for="opponent in poolMatrixPlayers"
+                        <td v-if="poolMatrixIsSeries" v-for="game in poolMatrixMatches"
+                            :key="'game-' + player.playerId + '-' + game.matchId"
+                            class="poolMatrixCell"
+                            :class="poolMatrixGameCell(player.playerId, game) ? poolMatrixCellClass(player.playerId, poolMatrixGameCell(player.playerId, game).opponentId, game.matchId) : {}">
+                          <input v-if="poolMatrixGameCell(player.playerId, game)"
+                                 type="number" step="1"
+                                 :value="poolMatrixGameCell(player.playerId, game).value == null ? '' : poolMatrixGameCell(player.playerId, game).value"
+                                 :disabled="!matchEditAllowed || savingPoolMatrix"
+                                 @input="onPoolMatrixInput(player.playerId, poolMatrixGameCell(player.playerId, game).opponentId, $event.target.value, game.matchId)"
+                                 :aria-label="player.playerName + ' score in ' + game.matchName">
+                          <span v-else class="poolMatrixNoMatch">—</span>
+                        </td>
+                        <td v-if="!poolMatrixIsSeries" v-for="opponent in poolMatrixPlayers"
                             :key="player.playerId + '-' + opponent.playerId"
                             class="poolMatrixCell"
                             :class="poolMatrixCellClass(player.playerId, opponent.playerId)">

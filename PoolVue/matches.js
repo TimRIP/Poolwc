@@ -380,8 +380,8 @@ const matchesApp = new Vue({
         if (!match || !Array.isArray(match.seats) || match.seats.length !== 2) continue;
         const a = match.seats[0];
         const b = match.seats[1];
-        const ac = this.poolMatrixCells[this.poolMatrixPairKey(a.playerId, b.playerId, a.playerId)];
-        const bc = this.poolMatrixCells[this.poolMatrixPairKey(a.playerId, b.playerId, b.playerId)];
+        const ac = this.poolMatrixCells[this.poolMatrixPairKey(a.playerId, b.playerId, a.playerId, match.matchId)];
+        const bc = this.poolMatrixCells[this.poolMatrixPairKey(a.playerId, b.playerId, b.playerId, match.matchId)];
         if (!ac || !bc) continue;
         const av = ac.value;
         const bv = bc.value;
@@ -425,6 +425,17 @@ const matchesApp = new Vue({
       return dirty.size;
     },
 
+    poolMatrixIsSeries() {
+      const seen = new Set();
+      for (const match of this.poolMatrixMatches) {
+        if (!match.seats || match.seats.length !== 2) continue;
+        const ids = match.seats.map(s => Number(s.playerId)).sort((a,b) => a-b).join(':');
+        if (seen.has(ids)) return true;
+        seen.add(ids);
+      }
+      return false;
+    },
+
     poolMatrixStandings() {
       const stats = new Map();
       for (const player of this.poolMatrixPlayers) {
@@ -445,8 +456,8 @@ const matchesApp = new Vue({
         if (!match || !Array.isArray(match.seats) || match.seats.length !== 2) continue;
         const a = match.seats[0];
         const b = match.seats[1];
-        const ac = this.poolMatrixCells[this.poolMatrixPairKey(a.playerId, b.playerId, a.playerId)];
-        const bc = this.poolMatrixCells[this.poolMatrixPairKey(a.playerId, b.playerId, b.playerId)];
+        const ac = this.poolMatrixCells[this.poolMatrixPairKey(a.playerId, b.playerId, a.playerId, match.matchId)];
+        const bc = this.poolMatrixCells[this.poolMatrixPairKey(a.playerId, b.playerId, b.playerId, match.matchId)];
         if (!ac || !bc) continue;
 
         const av = ac.value;
@@ -1241,17 +1252,22 @@ const matchesApp = new Vue({
       }
     },
 
-    poolMatrixPairKey(playerA, playerB, ownerPlayerId) {
+    poolMatrixPairKey(playerA, playerB, ownerPlayerId, matchId = null) {
       const a = Number(playerA);
       const b = Number(playerB);
       const low = Math.min(a, b);
       const high = Math.max(a, b);
-      return low + ':' + high + ':' + Number(ownerPlayerId);
+      return (matchId === null ? 'pair:' + low + ':' + high : 'match:' + Number(matchId)) + ':' + Number(ownerPlayerId);
     },
 
-    poolMatrixCell(playerId, opponentId) {
+    poolMatrixCell(playerId, opponentId, matchId = null) {
       if (Number(playerId) === Number(opponentId)) return null;
-      return this.poolMatrixCells[this.poolMatrixPairKey(playerId, opponentId, playerId)] || null;
+      return this.poolMatrixCells[this.poolMatrixPairKey(playerId, opponentId, playerId, matchId)] || null;
+    },
+
+    poolMatrixGameCell(playerId, match) {
+      if (!match || !match.seats || !match.seats.some(s => Number(s.playerId) === Number(playerId))) return null;
+      return this.poolMatrixCells['match:' + Number(match.matchId) + ':' + Number(playerId)] || null;
     },
 
     poolMatrixStanding(playerId) {
@@ -1262,9 +1278,9 @@ const matchesApp = new Vue({
       };
     },
 
-    poolMatrixCellClass(playerId, opponentId) {
-      const cell = this.poolMatrixCell(playerId, opponentId);
-      const other = this.poolMatrixCell(opponentId, playerId);
+    poolMatrixCellClass(playerId, opponentId, matchId = null) {
+      const cell = this.poolMatrixCell(playerId, opponentId, matchId);
+      const other = this.poolMatrixCell(opponentId, playerId, matchId);
       if (!cell || !other) return {};
       const playTo = Number(cell.playTo);
       const mine = cell.value === '' || cell.value === null || cell.value === undefined ? null : Number(cell.value);
@@ -1354,7 +1370,7 @@ const matchesApp = new Vue({
           const second = assigned[1];
           for (const seat of assigned) {
             const opponent = Number(seat.playerId) === Number(first.playerId) ? second : first;
-            const key = this.poolMatrixPairKey(first.playerId, second.playerId, seat.playerId);
+            const key = this.poolMatrixPairKey(first.playerId, second.playerId, seat.playerId, details.matchId);
             cells[key] = {
               matchId: details.matchId,
               matchName: details.matchName,
@@ -1367,6 +1383,11 @@ const matchesApp = new Vue({
               playFrom: details.matchRules ? details.matchRules.playFrom : null,
               playTo: details.matchRules ? details.matchRules.playTo : null
             };
+          }
+          // The ordinary opponent-based matrix uses the same cells when each pair plays once.
+          for (const seat of assigned) {
+            const pairKey = this.poolMatrixPairKey(first.playerId, second.playerId, seat.playerId);
+            cells[pairKey] = cells[this.poolMatrixPairKey(first.playerId, second.playerId, seat.playerId, details.matchId)];
           }
         }
 
@@ -1391,10 +1412,10 @@ const matchesApp = new Vue({
       }
     },
 
-    onPoolMatrixInput(playerId, opponentId, rawValue) {
+    onPoolMatrixInput(playerId, opponentId, rawValue, matchId = null) {
       if (!this.matchEditAllowed) return;
-      const cell = this.poolMatrixCell(playerId, opponentId);
-      const other = this.poolMatrixCell(opponentId, playerId);
+      const cell = this.poolMatrixCell(playerId, opponentId, matchId);
+      const other = this.poolMatrixCell(opponentId, playerId, matchId);
       if (!cell || !other) return;
 
       this.poolMatrixError = '';
@@ -1437,8 +1458,8 @@ const matchesApp = new Vue({
 
       const a = match.seats[0];
       const b = match.seats[1];
-      const ac = this.poolMatrixCell(a.playerId, b.playerId);
-      const bc = this.poolMatrixCell(b.playerId, a.playerId);
+      const ac = this.poolMatrixCell(a.playerId, b.playerId, match.matchId);
+      const bc = this.poolMatrixCell(b.playerId, a.playerId, match.matchId);
       if (!ac || !bc) return { action: 'skip' };
 
       const dirty = this.poolMatrixMatchDirty(match.matchId);
