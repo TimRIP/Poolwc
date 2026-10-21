@@ -136,6 +136,10 @@ var dash = new Vue({
     uiMessage: '',
     apiError: '',
     creating: false,
+    tournamentTemplates: [],
+    templatesLoading: false,
+    selectedTemplateId: '',
+    templateMessage: '',
     createdTournamentId: localStorage.getItem('lastTournamentId') || '',
     createdJoinCode: localStorage.getItem('lastTournamentJoinCode') || '',
     nextKey: 2,
@@ -181,12 +185,60 @@ var dash = new Vue({
     tokenAvailable: function () {
       return !!this.authToken;
     },
+    matchingTemplates: function () {
+      var count = Number(this.formdata.tournamentplayers);
+      return this.tournamentTemplates.filter(function (template) {
+        return Number(template.playerCount) === count;
+      });
+    },
     isValid: function () {
       return this.formdata.errors.length === 0;
     }
   },
 
   methods: {
+    loadTournamentTemplates: function () {
+      this.templatesLoading = true;
+      this.templateMessage = '';
+      return axios.get('http://localhost:5000/api/matches/templates', {
+        headers: { Authorization: this.authToken || localStorage.getItem('token') || '' }
+      }).then(function (response) {
+        var rows = response.data && Array.isArray(response.data.templates) ? response.data.templates : [];
+        this.tournamentTemplates = rows.map(function (row) {
+          try {
+            var raw = row.formData || row.FormData;
+            var form = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            if (!form || !Array.isArray(form.rundearray)) return null;
+            return { tournamentId: row.tournamentId || row.TournamentId,
+              name: row.name || row.Name || form.tournamentname || 'Tournament',
+              playerCount: Number(form.tournamentplayers), form: form };
+          } catch (e) { return null; }
+        }).filter(Boolean);
+        if (!this.matchingTemplates.some(function(t){ return String(t.tournamentId) === this.selectedTemplateId; }, this)) {
+          this.selectedTemplateId = '';
+        }
+      }.bind(this)).catch(function (error) {
+        this.templateMessage = error.response && error.response.status === 401
+          ? 'Please log in to load your previous tournaments.'
+          : 'Could not retrieve templates from the server.';
+      }.bind(this)).finally(function () { this.templatesLoading = false; }.bind(this));
+    },
+    applyTournamentTemplate: function () {
+      var selected = this.matchingTemplates.find(function (t) {
+        return String(t.tournamentId) === String(this.selectedTemplateId);
+      }, this);
+      if (!selected) { this.templateMessage = 'Select a matching tournament first.'; return; }
+      var loaded = JSON.parse(JSON.stringify(selected.form));
+      loaded.errors = [];
+      loaded.tournamentname = 'New tournament';
+      loaded.scheduleStart = defaultTournamentStart();
+      // Reuse existing saved-draft migration/normalization logic.
+      this.saveStorage(loaded);
+      this.loaddatapost();
+      this.selectedTemplateId = String(selected.tournamentId);
+      this.templateMessage = 'Template loaded from ' + selected.name + '. You can edit it before creating a new tournament.';
+      this.uiMessage = '';
+    },
     newKey: function () {
       return this.nextKey++;
     },
@@ -1775,6 +1827,7 @@ var dash = new Vue({
 
   mounted: function () {
     this.recalculate();
+    this.loadTournamentTemplates();
   }
 });
 
@@ -1792,8 +1845,7 @@ function showSection(sectionId) {
 
 $(document).ready(function () {
   $('.mainContent').show();
-  var initialSection = window.location.hash.substring(1);
-  showSection(['app', 'vueformapp'].indexOf(initialSection) !== -1 ? initialSection : 'dashboard');
+  showSection('dashboard');
 
   $('.admin-panel .slidebar a[href="#"]').on('click', function (event) {
     event.preventDefault();

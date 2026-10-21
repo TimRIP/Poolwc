@@ -59,6 +59,22 @@
                 </label>
               </div>
 
+              <div class="access-area" style="margin-top:16px">
+                <span class="small-label">Use a previous tournament as a template</span>
+                <div class="form-grid two-col" style="align-items:end">
+                  <label class="field">
+                    <span>Previous tournaments with {{ Number(formdata.tournamentplayers) || 0 }} players</span>
+                    <select v-model="selectedTemplateId" :disabled="templatesLoading || !matchingTemplates.length">
+                      <option value="">{{ templatesLoading ? 'Loading tournaments…' : (matchingTemplates.length ? 'Select a tournament…' : 'No matching tournaments') }}</option>
+                      <option v-for="template in matchingTemplates" :key="template.tournamentId" :value="String(template.tournamentId)">{{ template.name }} (#{{ template.tournamentId }})</option>
+                    </select>
+                  </label>
+                  <div><button type="button" class="secondary-btn" @click="applyTournamentTemplate" :disabled="!selectedTemplateId">Use as template</button>
+                  <button type="button" class="secondary-btn" @click="loadTournamentTemplates" :disabled="templatesLoading">Refresh list</button></div>
+                </div>
+                <p class="inline-message" v-if="templateMessage">{{ templateMessage }}</p>
+              </div>
+
               <div class="access-area">
                 <span class="small-label">Player registration</span>
                 <div class="choice-row access-choice-row">

@@ -279,6 +279,25 @@ namespace TournamentBackend.Controllers
     [Route("api/matches")]
     public class MatchesController : ControllerBase
     {
+        [HttpGet("templates")]
+        public IActionResult GetTournamentTemplates()
+        {
+            var ubo = new UserBackoffice();
+            StringValues auth;
+            Request.Headers.TryGetValue("Authorization", out auth);
+            int userId = ubo.SP_GetUserFromToken(auth.ToString());
+            if (userId == -1) return Unauthorized();
+            try
+            {
+                return Ok(new { templates = new TournamentEditorBackoffice().GetTournamentTemplates(userId) });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                return StatusCode(500, new { message = "Could not load tournament templates." });
+            }
+        }
+
         [HttpGet("tournaments")]
         public IActionResult GetTournaments()
         {

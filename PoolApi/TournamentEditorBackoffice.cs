@@ -34,6 +34,13 @@ namespace DrukDatabaseLayer
         public bool IsMatchEditor { get; set; }
     }
 
+    public class TournamentTemplateItem
+    {
+        public int TournamentId { get; set; }
+        public string Name { get; set; }
+        public string FormData { get; set; }
+    }
+
     public class TournamentEditorBackoffice
     {
         private readonly IConfigurationRoot _configuration;
@@ -90,6 +97,28 @@ ORDER BY T.CreatedAt DESC, T.Id DESC;";
             }
 
             return tournaments;
+        }
+
+        public List<TournamentTemplateItem> GetTournamentTemplates(int userId)
+        {
+            const string sql = @"SELECT T.Id, T.[name], T.FormData FROM Tournament T
+WHERE T.Admin = @UserId AND T.FormData IS NOT NULL AND LEN(LTRIM(RTRIM(T.FormData))) > 0
+ORDER BY T.Id DESC";
+            var result = new List<TournamentTemplateItem>();
+            using (var conn = new SqlConnection(_configuration["connectionstring"]))
+            using (var cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                conn.Open();
+                using (var reader = cmd.ExecuteReader())
+                    while (reader.Read())
+                        result.Add(new TournamentTemplateItem {
+                            TournamentId = Convert.ToInt32(reader["Id"]),
+                            Name = Convert.ToString(reader["name"]),
+                            FormData = Convert.ToString(reader["FormData"])
+                        });
+            }
+            return result;
         }
 
         public bool IsTournamentAdmin(int tournamentId, int userId)
