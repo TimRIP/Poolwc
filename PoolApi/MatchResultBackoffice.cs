@@ -192,6 +192,8 @@ namespace DrukDatabaseLayer
         public bool StageComplete { get; set; }
         public List<ManualAdvancementPlayerDetails> Players { get; set; } = new List<ManualAdvancementPlayerDetails>();
         public List<ManualAdvancementDestinationDetails> Destinations { get; set; } = new List<ManualAdvancementDestinationDetails>();
+        public List<StageManualWildcardSlotDetails> WildcardSlots { get; set; } = new List<StageManualWildcardSlotDetails>();
+        public List<StageManualWildcardCandidateDetails> WildcardCandidates { get; set; } = new List<StageManualWildcardCandidateDetails>();
     }
 
     public class ManualAdvancementAssignment
@@ -443,6 +445,13 @@ OPTION (MAXRECURSION 1000);";
                             Players = GetManualAdvancementPlayers(conn, transaction, sourceStageMatchId),
                             Destinations = GetManualAdvancementDestinations(conn, transaction, sourceStageMatchId)
                         };
+                        int? parentStageId = GetParentStageForWildcard(conn, transaction, sourceStageMatchId);
+                        if (parentStageId.HasValue)
+                        {
+                            state.WildcardSlots = GetStageWildcardSlots(conn, transaction, parentStageId.Value);
+                            state.WildcardCandidates = GetStageWildcardCandidates(conn, transaction, parentStageId.Value)
+                                .Where(x => x.SourcePoolMatchId == sourceStageMatchId).ToList();
+                        }
 
                         transaction.Commit();
                         return state;
@@ -454,6 +463,78 @@ OPTION (MAXRECURSION 1000);";
                     }
                 }
             }
+        }
+
+        private static int? GetParentStageForWildcard(SqlConnection conn, SqlTransaction transaction, int poolMatchId)
+        {
+            using (SqlCommand cmd = new SqlCommand(
+                "SELECT ParentMatchId FROM [Match] WHERE Id = @Id AND ISNULL(IndividualMatch, 0) = 0;", conn, transaction))
+            {
+                cmd.Parameters.Add("@Id", SqlDbType.Int).Value = poolMatchId;
+                object value = cmd.ExecuteScalar();
+                return value == null || value == DBNull.Value ? (int?)null : Convert.ToInt32(value);
+            }
+        }
+
+        // Assign wildcard player identities now; destination pools are finalized in the incoming stage.
+        // A source pool can change only its own wildcard choices, never another pool's choices.
+        public ManualAdvancementState SavePoolWildcards(int sourcePoolId, IList<ManualAdvancementAssignment> assignments)
+        {
+            if (assignments == null) throw new ArgumentException("Wildcard assignments are required.");
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            {
+                conn.Open();
+                using (SqlTransaction transaction = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        int? stageId = GetParentStageForWildcard(conn, transaction, sourcePoolId);
+                        if (!stageId.HasValue || !IsStageCompleteForManualAdvancement(conn, transaction, sourcePoolId))
+                            throw new InvalidOperationException("Finish the pool before assigning wildcard players.");
+
+                        var candidates = GetStageWildcardCandidates(conn, transaction, stageId.Value)
+                            .Where(x => x.SourcePoolMatchId == sourcePoolId).ToList();
+                        var validPlayers = new HashSet<int>(candidates.Select(x => x.PlayerId));
+                        var slots = GetStageWildcardSlots(conn, transaction, stageId.Value);
+                        var slotIds = new HashSet<int>(slots.Select(x => x.SeatId));
+                        var chosen = assignments.Where(x => x.PlayerId.HasValue).ToList();
+                        if (chosen.Any(x => !validPlayers.Contains(x.PlayerId.Value) || !slotIds.Contains(x.DestinationSeatId)) ||
+                            chosen.Select(x => x.PlayerId.Value).Distinct().Count() != chosen.Count ||
+                            chosen.Select(x => x.DestinationSeatId).Distinct().Count() != chosen.Count)
+                            throw new InvalidOperationException("Select distinct eliminated players and valid wildcard seats.");
+
+                        var ownPlayerIds = new HashSet<int>(validPlayers);
+                        foreach (var slot in slots)
+                        {
+                            if (slot.PlayerId.HasValue && !ownPlayerIds.Contains(slot.PlayerId.Value) &&
+                                chosen.Any(x => x.DestinationSeatId == slot.SeatId))
+                                throw new InvalidOperationException("This wildcard place is already assigned to another pool's player.");
+                        }
+                        // Clear only this pool's previous wildcard selections, then bind selected players.
+                        foreach (var slot in slots.Where(x => x.PlayerId.HasValue && ownPlayerIds.Contains(x.PlayerId.Value)))
+                        {
+                            using (var cmd = new SqlCommand("UPDATE Seat SET PlayerId = NULL WHERE Id = @SeatId;", conn, transaction))
+                            {
+                                cmd.Parameters.Add("@SeatId", SqlDbType.Int).Value = slot.SeatId;
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
+                        foreach (var item in chosen)
+                        {
+                            using (var cmd = new SqlCommand("UPDATE Seat SET PlayerId = @PlayerId WHERE Id = @SeatId AND PlayerId IS NULL;", conn, transaction))
+                            {
+                                cmd.Parameters.Add("@SeatId", SqlDbType.Int).Value = item.DestinationSeatId;
+                                cmd.Parameters.Add("@PlayerId", SqlDbType.Int).Value = item.PlayerId.Value;
+                                if (cmd.ExecuteNonQuery() != 1)
+                                    throw new InvalidOperationException("A wildcard seat was assigned by another pool. Refresh and try again.");
+                            }
+                        }
+                        transaction.Commit();
+                    }
+                    catch { transaction.Rollback(); throw; }
+                }
+            }
+            return GetManualAdvancement(sourcePoolId);
         }
 
         public ManualAdvancementSaveResult SaveManualAdvancement(
@@ -4997,13 +5078,11 @@ ORDER BY S.Id;", conn, transaction))
 SELECT DISTINCT S.Id, S.MatchId, S.PlayerId, M.Name AS MatchName
 FROM Seat S
 INNER JOIN [Match] M ON M.Id = S.MatchId
+-- Only invalidate destinations routed from the stage being recalculated.
+-- Wildcard seats use the PARENT stage as AutoSelectMatchId, so they
+-- must not be cleared when another individual pulje changes/finishes.
+-- Recalculating that parent stage itself can still invalidate its seats.
 WHERE S.AutoSelectMatchId = @SourceStageMatchId
-   OR (
-        S.AutoSelectlPlace = 0
-        AND S.AutoSelectMatchId = (
-            SELECT ParentMatchId FROM [Match] WHERE Id = @SourceStageMatchId
-        )
-      )
 ORDER BY S.Id;", conn, transaction))
             {
                 cmd.Parameters.Add("@SourceStageMatchId", SqlDbType.Int).Value = sourceStageMatchId;

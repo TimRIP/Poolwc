@@ -12,19 +12,12 @@
     <link rel="stylesheet" type="text/css" href="example.css">
     <link rel="stylesheet" type="text/css" href="match-results.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
-  <link rel="stylesheet" href="top-navigation.css?v=20261021-2"></head>
+  </head>
 
   <body>
-    <div class="admin-panel"><div class="slidebar"><ul>
-<li class=""><a href="index.htm" class="dashboard">Tournament builder<i class="sideicon fa fa-sitemap"></i></a></li>
-<li class="selectedbutton"><a href="matches.html" class="vuematch">Matches<i class="sideicon fa fa-area-chart"></i></a></li>
-<li class=""><a href="visualization.html" class="visualization">Visualization<i class="sideicon fa fa-object-group"></i></a></li>
-<li><a href="index.htm#app" class="app">Ruler board<i class="sideicon fa fa-trophy"></i></a></li>
-<li><a href="index.htm#vueformapp" class="vueformapp">Login &amp; token<i class="sideicon fa fa-file-text-o"></i></a></li>
-</ul></div></div>
     <div id="vuematch">
     <div class="topbar">
-
+      <a href="index.htm"><i class="fa fa-arrow-left"></i> Back</a>
 
       <div class="matchesTopControls">
         <label for="tournamentSelect">Tournament:</label>
@@ -730,6 +723,41 @@
 
                   <div v-else-if="manualAdvanceState.stageComplete" class="resultNote">
                     This pool has no configured next-stage pools. Add advancement routes in the tournament structure first.
+                  </div>
+
+                  <div v-if="manualAdvanceState.stageComplete && manualAdvanceEliminatedPlayers().length" class="manualAdvanceRoutes" style="margin-top:16px">
+                    <div class="manualAdvanceTitle">Eliminated players · wildcard selection</div>
+                    <div class="manualAdvanceSub" style="margin-bottom:10px">
+                      Assign a reserved wildcard place to an eliminated player now. Select the destination pool later in the incoming stage.
+                    </div>
+                    <div v-for="player in manualAdvanceEliminatedPlayers()"
+                         :key="'wildcard-pool-player-' + player.playerId"
+                         class="manualAdvanceRoute playerPoolRoute">
+                      <div class="manualAdvanceDestination advancingPlayerInfo">
+                        <strong>{{ player.playerName || ('Player #' + player.playerId) }}</strong>
+                        <span>place {{ player.place }} · eliminated</span>
+                      </div>
+                      <label class="manualAdvanceSelect">
+                        <span>Wildcard</span>
+                        <select :value="manualWildcardAssignments[player.playerId] == null ? '' : manualWildcardAssignments[player.playerId]"
+                                @change="setManualWildcardSeat(player.playerId, $event.target.value)"
+                                :disabled="!matchEditAllowed || savingManualWildcards">
+                          <option value="">No wildcard</option>
+                          <option v-for="slot in manualWildcardSeatsForPlayer(player)"
+                                  :key="'pool-wildcard-seat-' + player.playerId + '-' + slot.seatId"
+                                  :value="slot.seatId"
+                                  :disabled="manualWildcardSelectedElsewhere(slot.seatId, player.playerId)">
+                            Wildcard #{{ slot.seatId }} · {{ slot.targetStageName || 'Next stage' }}
+                          </option>
+                        </select>
+                      </label>
+                    </div>
+                    <div class="resultActions manualAdvanceActions">
+                      <button type="button" class="saveResultBtn" @click="saveManualWildcards"
+                              :disabled="!matchEditAllowed || savingManualWildcards">
+                        {{ savingManualWildcards ? 'Saving…' : 'Save wildcard players' }}
+                      </button>
+                    </div>
                   </div>
 
                   <div v-if="manualAdvanceError" class="resultMessage error">{{ manualAdvanceError }}</div>

@@ -223,6 +223,8 @@ const matchesApp = new Vue({
     manualAdvanceLoading: false,
     manualAdvanceState: null,
     manualAdvanceAssignments: {},
+    manualWildcardAssignments: {},
+    savingManualWildcards: false,
     manualAdvanceError: '',
     manualAdvanceMessage: '',
     savingManualAdvance: false,
@@ -596,6 +598,8 @@ const matchesApp = new Vue({
       this.manualAdvanceLoading = false;
       this.manualAdvanceState = null;
       this.manualAdvanceAssignments = {};
+      this.manualWildcardAssignments = {};
+      this.savingManualWildcards = false;
       this.manualAdvanceError = '';
       this.manualAdvanceMessage = '';
       this.savingManualAdvance = false;
@@ -1031,6 +1035,68 @@ const matchesApp = new Vue({
         .sort((a, b) => Number(a.place) - Number(b.place) || Number(a.playerId) - Number(b.playerId));
     },
 
+    manualAdvanceEliminatedPlayers() {
+      const state = this.manualAdvanceState;
+      if (!state || !Array.isArray(state.wildcardCandidates)) return [];
+      return state.wildcardCandidates.slice().sort((a, b) => Number(a.place) - Number(b.place));
+    },
+
+    manualWildcardSeatsForPlayer(player) {
+      const state = this.manualAdvanceState;
+      if (!state || !Array.isArray(state.wildcardSlots)) return [];
+      const ownIds = new Set(this.manualAdvanceEliminatedPlayers().map(x => Number(x.playerId)));
+      return state.wildcardSlots.filter(slot =>
+        slot.playerId === null || slot.playerId === undefined || ownIds.has(Number(slot.playerId))
+      );
+    },
+
+    manualWildcardSelectedElsewhere(seatId, playerId) {
+      return Object.keys(this.manualWildcardAssignments).some(key =>
+        Number(key) !== Number(playerId) && Number(this.manualWildcardAssignments[key]) === Number(seatId)
+      );
+    },
+
+    setManualWildcardSeat(playerId, seatId) {
+      const id = seatId === '' ? null : Number(seatId);
+      this.$set(this.manualWildcardAssignments, String(playerId), id);
+      this.manualAdvanceMessage = '';
+      this.manualAdvanceError = '';
+    },
+
+    async saveManualWildcards() {
+      if (!this.matchEditAllowed || !this.manualAdvanceState || this.savingManualWildcards) return;
+      const used = new Set();
+      const assignments = [];
+      for (const player of this.manualAdvanceEliminatedPlayers()) {
+        const selected = this.manualWildcardAssignments[String(player.playerId)];
+        if (selected === null || selected === undefined || selected === '') continue;
+        const id = Number(selected);
+        if (used.has(id)) {
+          this.manualAdvanceError = 'Each wildcard seat can only be assigned once.';
+          return;
+        }
+        used.add(id);
+        assignments.push({ destinationSeatId: id, playerId: Number(player.playerId) });
+      }
+      this.savingManualWildcards = true;
+      this.manualAdvanceError = '';
+      this.manualAdvanceMessage = '';
+      try {
+        const response = await axios.post(
+          'http://localhost:5000/api/match/' + encodeURIComponent(this.selectedMatchId) + '/advancement/wildcards',
+          { assignments },
+          { headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, this.authHeaders()) }
+        );
+        this.applyManualAdvancementState(response.data.state);
+        this.manualAdvanceMessage = 'Wildcard players saved. They will appear in the incoming stage.';
+      } catch (e) {
+        this.manualAdvanceError = (e.response && e.response.data && e.response.data.message) ||
+          'Could not save wildcard players.';
+      } finally {
+        this.savingManualWildcards = false;
+      }
+    },
+
     manualAdvanceDestinationLabel(destination) {
       if (!destination) return 'Next pool';
       const parent = destination.parentMatchName || '';
@@ -1098,6 +1164,13 @@ const matchesApp = new Vue({
     applyManualAdvancementState(state) {
       this.manualAdvanceState = state || null;
       this.manualAdvanceAssignments = {};
+      this.manualWildcardAssignments = {};
+      if (state && Array.isArray(state.wildcardCandidates) && Array.isArray(state.wildcardSlots)) {
+        for (const player of state.wildcardCandidates) {
+          const existing = state.wildcardSlots.find(slot => Number(slot.playerId) === Number(player.playerId));
+          this.$set(this.manualWildcardAssignments, String(player.playerId), existing ? Number(existing.seatId) : null);
+        }
+      }
       if (!state || !Array.isArray(state.destinations) || !Array.isArray(state.players)) return;
 
       const eligiblePlayers = this.manualAdvanceEligiblePlayers();
