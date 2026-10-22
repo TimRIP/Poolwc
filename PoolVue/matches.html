@@ -17,6 +17,9 @@
 .stageSeatPool{background:#101c2d;border:1px solid #354b68;border-radius:9px;padding:14px;min-width:0}
 .stageSeatHeading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
 .stageSeatHeading span{font-size:12px;color:#9fb2ce}
+.stageSeatHeadingActions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}
+.stageSeatRandomizeBtn{background:#244b87;color:#fff;border:1px solid #5185d0;border-radius:6px;padding:6px 10px;cursor:pointer;font:inherit;font-size:12px}
+.stageSeatRandomizeBtn:disabled{opacity:.45;cursor:not-allowed}
 .stageSeatRow{margin:9px 0}
 .stageSeatRow .manualAdvanceSelect,.stageSeatRow select{width:100%;max-width:none}
 </style>
@@ -689,6 +692,7 @@
                     <i class="fa" :class="manualAdvanceLoading ? 'fa-circle-o-notch fa-spin' : 'fa-refresh'"></i>
                     Refresh
                   </button>
+                  </div>
                 </div>
 
                 <div v-if="manualAdvanceLoading" class="resultNote">
@@ -786,7 +790,7 @@
               </div>
             </section>
 
-            <section class="resultSection" v-else-if="selectedIsStageWithPools">
+            <section class="resultSection" v-if="selectedIsStageWithPools">
               <div class="resultSectionTitle">Incoming players</div>
 
               <div v-if="stageAdvanceLoading" class="resultNote">
@@ -801,6 +805,13 @@
                       Players entering {{ stageAdvanceState.targetStageName || matchDetails.matchName }}
                     </div>
                   </div>
+                  <div class="stageSeatHeadingActions">
+                    <button type="button" class="stageSeatRandomizeBtn"
+                            @click="randomizeAllStageSeats()"
+                            :disabled="!matchEditAllowed || savingStageAdvance || stageAdvancePools().reduce((n, pool) => n + stagePoolSeats(pool).filter(seat => seat.playerId).length, 0) < 2"
+                            title="Shuffle all incoming players across the destination puljer and seats (save separately)">
+                      <i class="fa fa-random"></i> Randomize players
+                    </button>
                   <button type="button"
                           class="miniBtn"
                           @click="loadStageAdvancement(selectedMatchId)"
@@ -823,7 +834,9 @@
                   <div v-for="pool in stageAdvancePools()" :key="'seat-pool-' + pool.matchId" class="stageSeatPool">
                     <div class="stageSeatHeading">
                       <strong>{{ stageAdvancePoolLabel(pool) }}</strong>
-                      <span>{{ stageAdvancePoolCapacityText(pool) }}</span>
+                      <div class="stageSeatHeadingActions">
+                        <span>{{ stageAdvancePoolCapacityText(pool) }}</span>
+                      </div>
                     </div>
                     <div v-for="seat in stagePoolSeats(pool)" :key="seat.key" class="stageSeatRow">
                       <label class="manualAdvanceSelect">

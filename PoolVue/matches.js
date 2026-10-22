@@ -316,6 +316,9 @@ const matchesApp = new Vue({
 
     selectedIsPool() {
       if (!this.selectedNode || !this.matchDetails || this.matchDetails.individualMatch) return false;
+      // A stage with just leaf children is still a stage, not a pulje.
+      const name = String(this.matchDetails.matchName || this.selectedNode.matchName || this.selectedNode.name || '');
+      if (/^\s*stage\s*\d+\b/i.test(name)) return false;
       const children = Array.isArray(this.selectedNode.children) ? this.selectedNode.children : [];
       return children.length > 0 && children.every(child =>
         !child.children || child.children.length === 0
@@ -323,8 +326,18 @@ const matchesApp = new Vue({
     },
 
     selectedIsStageWithPools() {
-      if (!this.selectedNode || !this.matchDetails || this.matchDetails.individualMatch) return false;
-      if (this.selectedIsPool) return false;
+      if (!this.selectedNode || !this.matchDetails) return false;
+      // Stage grouping nodes must be detected even when the detail response
+      // reports an unexpected individualMatch flag or has empty seats.
+      const stageName = String(this.matchDetails.matchName || this.selectedNode.matchName || this.selectedNode.name || '');
+      if (/^\s*stage\s*\d+\b/i.test(stageName)) return true;
+      if (this.matchDetails.individualMatch || this.selectedIsPool) return false;
+
+      // Stage data may have empty child puljer after an incoming-seat change.
+      // Keep the incoming-stage UI available even when those children do not
+      // currently contain playable matches; the API will report any errors.
+      const name = String(this.matchDetails.matchName || this.selectedNode.matchName || this.selectedNode.name || '');
+      if (/^\s*stage\s*\d+\b/i.test(name)) return true;
 
       const children = Array.isArray(this.selectedNode.children) ? this.selectedNode.children : [];
       if (!children.length) return false;
@@ -671,6 +684,34 @@ const matchesApp = new Vue({
         result.push({ key, type: 'S', number: i + 1, playerId: this.stagePoolSeatSelections[key] || '' });
       }
       return result;
+    },
+
+    randomizeAllStageSeats() {
+      if (!this.matchEditAllowed || this.savingStageAdvance) return;
+      const occupied = this.stageAdvancePools().flatMap(pool =>
+        this.stagePoolSeats(pool).filter(seat => seat.playerId).map(seat => ({ pool, seat })));
+      if (occupied.length < 2) return;
+      const original = occupied.map(entry => Number(entry.seat.playerId));
+      const shuffled = original.slice();
+      // Shuffle all incoming stage seats, including seats in different puljer.
+      // Only choose permutations allowed by the stage/player eligibility rules.
+      let valid = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        valid = shuffled.some((id, i) => id !== original[i]) &&
+          occupied.every((entry, i) => this.stagePoolSeatCandidates(entry.pool, entry.seat)
+            .some(candidate => Number(candidate.playerId) === shuffled[i]));
+        if (valid) break;
+      }
+      if (!valid) return;
+      occupied.forEach((entry, i) => {
+        this.$set(this.stagePoolSeatSelections, entry.seat.key, shuffled[i]);
+      });
+      this.stageAdvanceError = '';
+      this.stageAdvanceMessage = '';
     },
 
     stagePoolSeatCandidates(pool, seat) {
