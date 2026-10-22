@@ -22,6 +22,33 @@
 .stageSeatRandomizeBtn:disabled{opacity:.45;cursor:not-allowed}
 .stageSeatRow{margin:9px 0}
 .stageSeatRow .manualAdvanceSelect,.stageSeatRow select{width:100%;max-width:none}
+
+/* Incoming-stage editor: full-width, readable layout on narrow and wide panels. */
+.stageAdvancePanel{display:block!important;width:100%;max-width:none;min-width:0;box-sizing:border-box}
+.stageAdvancePanel>*{box-sizing:border-box}
+.stageAdvanceTop{display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap;padding-bottom:14px;border-bottom:1px solid #31445e}
+.stageAdvanceIntro{flex:1 1 260px;min-width:0}
+.stageAdvanceIntro .manualAdvanceTitle{font-size:17px;font-weight:700;line-height:1.35;margin-bottom:5px}
+.stageAdvanceIntro .manualAdvanceSub{font-size:12px;color:#a4b8d2}
+.stageAdvanceToolbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.stageAdvanceToolbar button{min-height:34px;white-space:nowrap}
+.stageAdvanceHelp{display:flex;align-items:flex-start;gap:9px;padding:12px 14px;margin:14px 0 18px;background:#17283d;border:1px solid #304a68;border-radius:8px;color:#bbcee6;font-size:12px;line-height:1.55}
+.stageAdvanceHelp .fa{color:#7baef4;margin-top:2px}
+.stageAdvancePanel .stageSeatPools{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:14px;align-items:start;margin:0 0 18px;width:100%}
+.stageAdvancePanel .stageSeatPool{min-width:0;padding:16px;border:1px solid #3a5271;background:#101d30;border-radius:10px}
+.stageAdvancePanel .stageSeatHeading{display:flex;justify-content:space-between;gap:10px;align-items:center;padding-bottom:12px;margin-bottom:12px;border-bottom:1px solid #2e415b;flex-wrap:wrap}
+.stageAdvancePanel .stageSeatHeading strong{font-size:14px;color:#edf4ff}
+.stageAdvancePanel .stageSeatCount{color:#a9c3e6;font-size:11px;background:#203651;border-radius:20px;padding:4px 9px}
+.stageAdvancePanel .stageSeatFields{display:grid;gap:12px}
+.stageAdvancePanel .stageSeatRow{margin:0;min-width:0}
+.stageAdvancePanel .stageSeatRow .manualAdvanceSelect{display:block;width:100%;min-width:0;max-width:none}
+.stageAdvancePanel .stageSeatRow .manualAdvanceSelect>span{display:block;font-weight:600;color:#bacce4;font-size:11px;margin:0 0 6px}
+.stageAdvancePanel .stageSeatRow select{display:block;width:100%;max-width:none;min-width:0;box-sizing:border-box;min-height:38px;padding:7px 10px;border-radius:6px;background:#0d192a;color:#f0f6ff;border:1px solid #466281;font-size:12px}
+.stageAdvancePanel .stageSeatRow select:focus{outline:2px solid #76aafa;outline-offset:1px}
+.stageAdvanceFooter{display:flex;align-items:center;justify-content:flex-end;gap:16px;flex-wrap:wrap;border-top:1px solid #31445e;padding-top:15px}
+.stageAdvanceSaveHint{font-size:11px;color:#95accb}
+.stageAdvanceFooter .saveResultBtn{min-height:38px;padding:9px 18px;white-space:nowrap}
+@media(max-width:650px){.stageAdvanceToolbar{width:100%}.stageAdvanceHelp{margin-top:12px}.stageAdvanceFooter .saveResultBtn{width:100%}.stageAdvanceSaveHint{width:100%;text-align:center}}
 </style>
 </head>
 
@@ -798,31 +825,28 @@
               </div>
 
               <div v-else-if="stageAdvanceState && stageAdvanceSources().length" class="manualAdvancePanel stageAdvancePanel">
-                <div class="manualAdvanceHeader">
-                  <div>
+                <div class="stageAdvanceTop">
+                  <div class="stageAdvanceIntro">
                     <div class="manualAdvanceTitle">Advance qualifiers and choose wildcards</div>
-                    <div class="manualAdvanceSub">
-                      Players entering {{ stageAdvanceState.targetStageName || matchDetails.matchName }}
-                    </div>
+                    <div class="manualAdvanceSub">Players entering {{ stageAdvanceState.targetStageName || matchDetails.matchName }}</div>
                   </div>
-                  <div class="stageSeatHeadingActions">
+                  <div class="stageAdvanceToolbar">
                     <button type="button" class="stageSeatRandomizeBtn"
                             @click="randomizeAllStageSeats()"
                             :disabled="!matchEditAllowed || savingStageAdvance || stageAdvancePools().reduce((n, pool) => n + stagePoolSeats(pool).filter(seat => seat.playerId).length, 0) < 2"
-                            title="Shuffle all incoming players across the destination puljer and seats (save separately)">
+                            title="Shuffle incoming players across destination puljer and seats; click Save to keep changes">
                       <i class="fa fa-random"></i> Randomize players
                     </button>
-                  <button type="button"
-                          class="miniBtn"
-                          @click="loadStageAdvancement(selectedMatchId)"
-                          :disabled="stageAdvanceLoading || savingStageAdvance">
-                    <i class="fa" :class="stageAdvanceLoading ? 'fa-circle-o-notch fa-spin' : 'fa-refresh'"></i>
-                    Refresh
-                  </button>
+                    <button type="button" class="miniBtn" @click="loadStageAdvancement(selectedMatchId)"
+                            :disabled="stageAdvanceLoading || savingStageAdvance">
+                      <i class="fa" :class="stageAdvanceLoading ? 'fa-circle-o-notch fa-spin' : 'fa-refresh'"></i> Refresh
+                    </button>
+                  </div>
                 </div>
 
-                <div class="resultNote">
-                  Select a player for each numbered seat in the destination pulje. Wildcard seats use players eliminated in the earlier stage. Previously reserved wildcard players are preselected.
+                <div class="stageAdvanceHelp">
+                  <i class="fa fa-info-circle"></i>
+                  <span>Select a player for each seat. Reserved wildcard players are preselected. You can rearrange players or randomize the stage, then save your changes.</span>
                 </div>
 
                 <div v-if="stageAdvanceSources().some(source => !source.stageComplete)"
@@ -834,34 +858,31 @@
                   <div v-for="pool in stageAdvancePools()" :key="'seat-pool-' + pool.matchId" class="stageSeatPool">
                     <div class="stageSeatHeading">
                       <strong>{{ stageAdvancePoolLabel(pool) }}</strong>
-                      <div class="stageSeatHeadingActions">
-                        <span>{{ stageAdvancePoolCapacityText(pool) }}</span>
-                      </div>
+                      <span class="stageSeatCount">{{ stageAdvancePoolCapacityText(pool) }}</span>
                     </div>
-                    <div v-for="seat in stagePoolSeats(pool)" :key="seat.key" class="stageSeatRow">
-                      <label class="manualAdvanceSelect">
-                        <span>Seat {{ seat.number }}{{ seat.type === 'W' ? ' · Wildcard' : '' }}</span>
-                        <select :value="seat.playerId" @change="setStagePoolSeat(pool, seat, $event.target.value)"
-                                :disabled="!matchEditAllowed || savingStageAdvance">
-                          <option value="">— Select player —</option>
-                          <option v-for="player in stagePoolSeatCandidates(pool, seat)"
-                                  :key="seat.key + '-player-' + player.playerId"
-                                  :value="player.playerId"
->
-                            {{ player.label }}
-                          </option>
-                        </select>
-                      </label>
+                    <div class="stageSeatFields">
+                      <div v-for="seat in stagePoolSeats(pool)" :key="seat.key" class="stageSeatRow">
+                        <label class="manualAdvanceSelect">
+                          <span>Seat {{ seat.number }}{{ seat.type === 'W' ? ' · Wildcard' : '' }}</span>
+                          <select :value="seat.playerId" @change="setStagePoolSeat(pool, seat, $event.target.value)"
+                                  :disabled="!matchEditAllowed || savingStageAdvance">
+                            <option value="">— Select player —</option>
+                            <option v-for="player in stagePoolSeatCandidates(pool, seat)"
+                                    :key="seat.key + '-player-' + player.playerId"
+                                    :value="player.playerId">{{ player.label }}</option>
+                          </select>
+                        </label>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div class="resultActions manualAdvanceActions">
-                  <button type="button"
-                          class="saveResultBtn"
+                <div class="stageAdvanceFooter">
+                  <span class="stageAdvanceSaveHint">Changes are only applied when you save.</span>
+                  <button type="button" class="saveResultBtn"
                           @click="saveStageAdvancement()"
                           :disabled="!matchEditAllowed || savingStageAdvance">
-                    <i class="fa" :class="savingStageAdvance ? 'fa-circle-o-notch fa-spin' : 'fa-random'"></i>
+                    <i class="fa" :class="savingStageAdvance ? 'fa-circle-o-notch fa-spin' : 'fa-save'"></i>
                     {{ savingStageAdvance ? 'Saving…' : 'Save incoming players' }}
                   </button>
                 </div>
