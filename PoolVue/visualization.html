@@ -3,20 +3,73 @@
 <title>Visualization · Pool</title>
 <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.min.js"></script><script src="https://unpkg.com/axios/dist/axios.min.js"></script>
 <link rel="stylesheet" href="example.css"><link rel="stylesheet" href="visualization.css">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css"><link rel="stylesheet" href="top-navigation.css?v=20261021-2"></head>
-<body><div class="admin-panel"><div class="slidebar"><ul>
-<li class=""><a href="index.htm" class="dashboard">Tournament builder<i class="sideicon fa fa-sitemap"></i></a></li>
-<li class=""><a href="matches.html" class="vuematch">Matches<i class="sideicon fa fa-area-chart"></i></a></li>
-<li class="selectedbutton"><a href="visualization.html" class="visualization">Visualization<i class="sideicon fa fa-object-group"></i></a></li>
-<li><a href="index.htm#app" class="app">Ruler board<i class="sideicon fa fa-trophy"></i></a></li>
-<li><a href="index.htm#vueformapp" class="vueformapp">Login &amp; token<i class="sideicon fa fa-file-text-o"></i></a></li>
-</ul></div></div><div id="visualization" class="vizApp">
-<div class="vizControls"><div class="vizPicker"><label for="vizTournament">Tournament</label><select id="vizTournament" v-model="selectedTournamentId" @change="loadMatches" :disabled="loading"><option value="">Select tournament</option><option v-for="t in tournaments" :key="t.tournamentId" :value="String(t.tournamentId)">{{t.name}}</option></select><button type="button" @click="refresh" :disabled="loading">↻ Refresh</button></div></div>
-<main class="vizMain"><div class="vizHeading"><div><span class="vizEyebrow">TOURNAMENT OVERVIEW</span><h1>Visualization</h1><p>Read-only view of the stages, puljer, matches and players.</p></div><span class="vizReadonly"> <i class="fa fa-eye"></i> Read only</span></div>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css"></head>
+<body><div id="visualization" class="vizApp">
+<header class="vizNav"><nav><a href="index.htm">Tournament</a><a href="matches.html">Matches</a><a class="active" href="visualization.html">Visualization</a></nav>
+<div class="vizPicker"><label for="vizTournament">Tournament</label><select id="vizTournament" v-model="selectedTournamentId" @change="loadMatches" :disabled="loading"><option value="">Select tournament</option><option v-for="t in tournaments" :key="t.tournamentId" :value="String(t.tournamentId)">{{t.name}}</option></select><button type="button" @click="refresh" :disabled="loading">↻ Refresh</button></div></header>
+<main class="vizMain"><div class="vizHeading"><div><span class="vizEyebrow">TOURNAMENT OVERVIEW</span><h1>Visualization</h1><p>Click a pulje to enter match results, or follow the tournament paths.</p></div><span class="vizReadonly"><i class="fa fa-pencil"></i> Click a pulje to edit scores</span></div>
+<section class="vizFindPlayer" aria-label="Find player matches">
+  <div class="vizFindPlayerHeading"><div><h2><i class="fa fa-search" aria-hidden="true"></i> Find player matches</h2><p>Search for a player to find their puljer and matches in this tournament.</p></div><span class="vizPlayerCount">{{searchablePlayers.length}} players</span></div>
+  <label for="vizPlayerSearch">Search player</label>
+  <input id="vizPlayerSearch" type="search" v-model="playerSearch" @focus="playerSearchOpen=true" @input="playerSearchOpen=true" @keydown.esc="onSearchEscape" autocomplete="off" placeholder="Type a player name…" :disabled="!selectedTournamentId || loading" />
+  <div v-if="playerSearch.trim() && playerSearchOpen" class="vizSearchResults" role="region" aria-label="Matching players">
+    <p v-if="!matchingPlayers.length" class="vizSearchEmpty">No players found in this tournament.</p>
+    <div v-for="player in matchingPlayers" :key="player.name" class="vizSearchPlayer">
+      <strong>{{player.name}}</strong>
+      <button type="button" v-for="entry in player.pools" :key="entry.poolId" class="vizSearchPool" @click="selectPlayerPool(entry.pool)">
+        <span><b>{{entry.stageName}} · {{entry.poolName}}</b><small>{{entry.matches.length ? entry.matches.map(m=>m.matchName).join(' · ') : 'Open pulje'}}</small></span><span aria-hidden="true">↗</span>
+      </button>
+    </div>
+    <p v-if="matchingPlayers.length === 40" class="vizSearchEmpty">Showing the first 40 matches. Refine your search to narrow the list.</p>
+  </div>
+</section>
 <div v-if="error" class="vizError" role="alert">{{error}}</div><div v-if="loading" class="vizEmpty">Loading tournament…</div><div v-else-if="!selectedTournamentId" class="vizEmpty">Select a tournament to see its stages and puljer.</div><div v-else-if="!stages.length" class="vizEmpty">No tournament structure found.</div>
-<div v-else class="vizScrollable"><p v-if="routeWarning" class="vizRouteWarning">{{routeWarning}}</p><div class="vizBoard" ref="vizBoard"><svg class="vizLines" aria-hidden="true"><path v-for="line in connections" :key="line.key" :d="line.d" /></svg><div class="vizStages"><section v-for="(stage, index) in stages" :key="stage.matchId" class="vizStage"><div class="vizStageTop"><div class="vizStageIndex">STAGE {{index+1}}</div><h2>{{stage.matchName}}</h2><span class="vizStageCount">{{ stage.pools.length }} {{stage.pools.length===1?'pulje':'puljer'}}</span></div>
-<div class="vizPoolList"><article v-for="pool in stage.pools" :key="pool.matchId" class="vizPool" :data-pool-id="pool.matchId"><header class="vizPoolTitle"><div><span class="vizPoolLabel">PULJE</span><h3>{{pool.matchName}}</h3></div><span class="vizCount">{{pool.matches.length}} matches</span></header>
+<div v-else class="vizScrollable"><p v-if="routeWarning" class="vizRouteWarning">{{routeWarning}}</p><div class="vizBoard" ref="vizBoard"><svg class="vizLines" aria-hidden="true"><path v-for="line in connections" :key="line.key" :d="line.d" /></svg><div class="vizStages"><section v-for="(stage, index) in stages" :key="stage.matchId" class="vizStage"><div class="vizStageTop vizStageClickable" tabindex="0" role="button" :aria-label="'Manage players entering '+stage.matchName" @click="openStage(stage)" @keydown.enter.prevent="openStage(stage)" @keydown.space.prevent="openStage(stage)"><div class="vizStageIndex">STAGE {{index+1}}</div><h2>{{stage.matchName}}</h2><span class="vizStageCount">{{ stage.pools.length }} {{stage.pools.length===1?'pulje':'puljer'}}</span></div>
+<div class="vizPoolList"><article v-for="pool in stage.pools" :key="pool.matchId" class="vizPool vizPoolClickable" :data-pool-id="pool.matchId" tabindex="0" role="button" :aria-label="'Edit results for '+pool.matchName" @click="openPool(pool)" @keydown.enter.prevent="openPool(pool)" @keydown.space.prevent="openPool(pool)"><header class="vizPoolTitle"><div><span class="vizPoolLabel">PULJE</span><h3>{{pool.matchName}}</h3></div><span class="vizCount">{{pool.matches.length}} matches</span></header>
 <div v-if="pool.players.length" class="vizPlayers"><span class="vizSmallLabel">Players</span><div class="vizPlayer" v-for="(player, i) in pool.players" :key="player"><span class="vizPlayerNo">{{i+1}}</span><span>{{player}}</span></div></div>
 <div v-if="pool.matches.length" class="vizMatches"><span class="vizSmallLabel">Matches</span><div v-for="match in pool.matches" :key="match.matchId" class="vizMatch"><div class="vizMatchTitle">{{match.matchName}}</div><div class="vizParticipants">{{match.players.length ? match.players.join(' · ') : 'Players not yet assigned'}}</div></div></div>
 <div v-if="!pool.players.length && !pool.matches.length" class="vizEmptyPool">No players or matches assigned yet</div></article></div></section></div></div></div>
-</main></div><script src="visualization.js"></script></body></html>
+</main>
+<div v-if="editorStage" class="vizModalOverlay" @click.self="closeStage" @keydown.esc="closeStage">
+<section class="vizModal vizStageEditorModal" role="dialog" aria-modal="true" :aria-label="'Incoming players for '+editorStage.matchName">
+<div class="vizModalHeader"><div><span class="vizEyebrow">INCOMING PLAYERS</span><h2>{{editorStage.matchName}}</h2><p>Assign players to seats, choose wildcards, randomize, and save—using the Matches editor.</p></div><button class="vizClose" type="button" @click="closeStage" aria-label="Close">×</button></div>
+<iframe class="vizStageEditorFrame" :src="stageEditorUrl" title="Stage incoming players editor"></iframe>
+<footer class="vizModalFooter"><button type="button" @click="closeStage">Close and refresh visualization</button></footer>
+</section></div>
+<div v-if="editorPool" class="vizModalOverlay" @click.self="closePool" @keydown.esc="closePool">
+  <section class="vizModal" role="dialog" aria-modal="true" :aria-label="'Match results for '+editorPool.matchName">
+    <div class="vizModalHeader"><div><span class="vizEyebrow">MATCH RESULTS</span><h2>{{editorPool.matchName}}</h2><p>Edit scores in the result matrix. Point, Score and Placering update automatically.</p></div><button class="vizClose" type="button" @click="closePool" aria-label="Close">×</button></div>
+    <div class="vizModalBody"><div v-if="editorLoading" class="vizEmpty">Loading matches…</div><div v-if="editorError" class="vizError" role="alert">{{editorError}}</div><div v-if="editorMessage" class="vizSuccess" role="status">{{editorMessage}}</div>
+      <div v-if="!editorLoading && editorPlayers.length" class="vizMatrixScroll">
+        <table class="vizMatrix"><thead><tr><th class="vizMatrixCorner"></th>
+          <template v-if="editorIsSeries"><th v-for="(game,i) in editorMatches" :key="'g'+game.matchId">kamp{{i+1}}</th></template>
+          <template v-else><th v-for="p in editorPlayers" :key="p.key">{{p.playerName}}</th></template>
+          <th>Point</th><th>Score</th><th>Placering</th></tr></thead>
+          <tbody><tr v-for="row in editorPlayers" :key="row.key"><th scope="row">{{row.playerName}}</th>
+            <template v-if="editorIsSeries">
+              <td v-for="game in editorMatches" :key="game.matchId" class="vizMatrixEditable" :class="matchCellClass(game,seriesSeat(row,game))">
+                <input v-if="seriesSeat(row,game)" type="number" step="1" :aria-label="row.playerName+' score in '+game.matchName" :value="seriesSeat(row,game).score" :disabled="editorSaving" @input="seriesChange(row,game,$event.target.value)" />
+                <span v-else>—</span>
+              </td>
+            </template>
+            <template v-else>
+              <td v-for="col in editorPlayers" :key="col.key" :class="row.key===col.key?'vizMatrixDiagonal':(matrixSeat(row,col)?'vizMatrixEditable '+matrixCellClass(row,col):'vizMatrixMissing')">
+                <span v-if="row.key===col.key">—</span>
+                <input v-else-if="matrixSeat(row,col)" type="number" step="1" :aria-label="row.playerName+' score against '+col.playerName" :value="matrixSeat(row,col).score" :disabled="editorSaving" @input="matrixChange(row,col,$event.target.value)" />
+                <span v-else>—</span>
+              </td>
+            </template>
+            <td class="vizMatrixTotal">{{editorStandings[row.key].points}}</td><td class="vizMatrixTotal">{{editorStandings[row.key].score}}</td><td class="vizMatrixTotal vizMatrixPlace">{{editorStandings[row.key].place}}</td>
+          </tr></tbody></table>
+        <p class="vizMatrixHint">Green marks a winning score, purple a losing score. For best-of-X, each kamp is a separate game. Save match results to store changes.</p>
+        <p v-if="editorMatches.some(m=>m.seats.length!==2)" class="vizUnassigned">Some matches do not yet have two players and cannot be scored.</p>
+      </div>
+      <div v-if="!editorLoading && !editorMatches.length" class="vizEmpty">No playable matches are available in this pulje.</div>
+      <div class="vizAdvancement"><h3>Choose destination pools and wildcards</h3><p>Use the same qualification and wildcard controls as Matches. Save each section before closing.</p>
+        <iframe v-if="poolAdvanceUrl" class="vizPoolAdvanceFrame" :src="poolAdvanceUrl" title="Choose destination pools and wildcard players"></iframe>
+      </div>
+    </div>
+    <footer class="vizModalFooter"><button type="button" @click="closePool" :disabled="editorSaving">Close</button><button class="vizSave" type="button" @click="savePoolResults" :disabled="editorSaving || editorLoading || !editorMatches.length">{{editorSaving?'Saving…':'Save match results'}}</button></footer>
+  </section>
+</div>
+</div><script src="visualization.js"></script></body></html>

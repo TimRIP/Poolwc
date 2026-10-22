@@ -692,18 +692,18 @@ const matchesApp = new Vue({
         this.stagePoolSeats(pool).filter(seat => seat.playerId).map(seat => ({ pool, seat })));
       if (occupied.length < 2) return;
       const original = occupied.map(entry => Number(entry.seat.playerId));
-      const shuffled = original.slice();
-      // Shuffle all incoming stage seats, including seats in different puljer.
-      // Only choose permutations allowed by the stage/player eligibility rules.
+      // A valid random permutation may be identical to the current seating.
+      // In particular, two players should have a 50/50 chance of staying or swapping.
+      let shuffled = original.slice();
       let valid = false;
       for (let attempt = 0; attempt < 100; attempt++) {
+        shuffled = original.slice();
         for (let i = shuffled.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
           [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
         }
-        valid = shuffled.some((id, i) => id !== original[i]) &&
-          occupied.every((entry, i) => this.stagePoolSeatCandidates(entry.pool, entry.seat)
-            .some(candidate => Number(candidate.playerId) === shuffled[i]));
+        valid = occupied.every((entry, i) => this.stagePoolSeatCandidates(entry.pool, entry.seat)
+          .some(candidate => Number(candidate.playerId) === shuffled[i]));
         if (valid) break;
       }
       if (!valid) return;
@@ -2993,7 +2993,21 @@ const matchesApp = new Vue({
     }
   },
 
-  mounted() {
-    this.loadTournamentOptions(false);
+  async mounted() {
+    const params = new URLSearchParams(location.search);
+    if (params.get('embeddedStage') !== '1') {
+      this.loadTournamentOptions(false);
+      return;
+    }
+    const tournamentId = Number(params.get('tournamentId'));
+    const stageId = Number(params.get('stageId'));
+    if (!Number.isFinite(tournamentId) || !Number.isFinite(stageId)) return;
+    await this.loadMatches(tournamentId, false);
+    // Use the same selection and API path as clicking the stage in Matches.
+    const stage = (() => {
+      const walk = items => { for (const node of items) { if (Number(node.matchId) === stageId) return node; const nested = walk(node.children || []); if (nested) return nested; } return null; };
+      return walk(this.roots);
+    })();
+    if (stage) await this.selectMatch(stage);
   }
 });

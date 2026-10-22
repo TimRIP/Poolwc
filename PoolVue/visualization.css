@@ -2,5 +2,49 @@
 
 .vizBoard{position:relative;width:max-content;min-width:100%}.vizLines{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:2}.vizLines path{fill:none;stroke:#67b6f7;stroke-width:2.5;opacity:.85;stroke-linecap:round}.vizRouteWarning{font-size:13px;color:#c0cfdf;margin:0 0 14px}.vizPool{position:relative}
 
-/* Shared top navigation; tournament picker belongs to the visualization content. */
-.vizControls{display:flex;justify-content:flex-end;padding:14px 26px 0}.vizControls .vizPicker{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.vizApp{min-height:calc(100vh - 52px)}
+.vizPoolClickable{cursor:pointer;transition:border-color .15s,box-shadow .15s}.vizPoolClickable:hover,.vizPoolClickable:focus-visible{border-color:#72b9f7;box-shadow:0 0 0 2px #72b9f733;outline:none}
+.vizModalOverlay{position:fixed;inset:0;background:#050b14cc;z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}.vizModal{background:#172435;border:1px solid #52708d;border-radius:15px;width:min(800px,100%);max-height:90vh;display:flex;flex-direction:column;box-shadow:0 20px 65px #0009}.vizModalHeader{display:flex;align-items:flex-start;justify-content:space-between;padding:23px;border-bottom:1px solid #3c526c;gap:20px}.vizModalHeader h2{margin:5px 0 6px}.vizModalHeader p{margin:0;color:#b5c5d7;font-size:13px}.vizClose{background:transparent;border:1px solid #536f88;color:white;font-size:26px;border-radius:8px;cursor:pointer;width:40px;height:40px}.vizModalBody{overflow-y:auto;padding:18px 23px;display:grid;gap:14px}.vizScoreMatch{background:#101d2c;border:1px solid #405976;border-radius:10px;padding:16px}.vizScoreHead{display:flex;justify-content:space-between;gap:12px;margin-bottom:12px}.vizScoreHead small{color:#afc2d7}.vizScoreRows{display:grid;gap:10px}.vizScoreRow{display:flex;justify-content:space-between;align-items:center;gap:14px}.vizScoreRow input{width:105px;padding:9px 12px;border-radius:7px;border:1px solid #627a95;background:#20354b;color:#fff;font-size:16px;text-align:center}.vizModalFooter{display:flex;justify-content:flex-end;gap:10px;padding:16px 23px;border-top:1px solid #3c526c}.vizModalFooter button{padding:11px 17px;border-radius:8px;border:1px solid #607892;background:#223347;color:#fff;cursor:pointer;font-weight:700}.vizModalFooter button.vizSave{background:#467fe0;border-color:#6ea2f5}.vizModalFooter button:disabled{opacity:.5;cursor:not-allowed}.vizUnassigned{color:#a9bcd0;font-size:13px}.vizSuccess{padding:10px 14px;border:1px solid #4c9b81;background:#193b34;color:#bff8de;border-radius:8px}
+
+/* Result-matrix editor, matching the Matches view */
+.vizModal{width:min(1120px,calc(100vw - 28px))}.vizModalBody{display:block;padding:18px;min-height:100px}.vizMatrixScroll{overflow:auto;max-width:100%}.vizMatrix{border-collapse:separate;border-spacing:0;width:100%;min-width:620px;table-layout:fixed;border:1px solid #354963;border-radius:8px;overflow:hidden;font-size:13px}.vizMatrix th,.vizMatrix td{padding:9px 6px;text-align:center;border-right:1px solid #2e435d;border-bottom:1px solid #2e435d}.vizMatrix thead th{background:#15243a;color:#e8efff;font-weight:750}.vizMatrix thead th:first-child{min-width:115px}.vizMatrix thead th:not(:first-child){min-width:90px}.vizMatrix tbody th{background:#15243a;text-align:left;font-weight:750;white-space:nowrap}.vizMatrix tr:last-child>*{border-bottom:0}.vizMatrix tr>*:last-child{border-right:0}.vizMatrixDiagonal{background:#837300;color:white;font-weight:800}.vizMatrixEditable{background:#102b2b}.vizMatrixEditable input{box-sizing:border-box;width:64px;max-width:100%;padding:7px 4px;border-radius:6px;border:1px solid #20a76a;background:#07131d;color:#fff;text-align:center;font-weight:650}.vizMatrixEditable input:focus{outline:2px solid #75bafd;outline-offset:1px}.vizMatrixMissing{background:#1a2634;color:#7e8e9f}.vizMatrixTotal{background:#172638;font-weight:700}.vizMatrixPlace{font-weight:850}.vizMatrixHint{color:#abc1d7;margin:12px 2px 4px;font-size:12px}@media(max-width:700px){.vizModalOverlay{padding:6px}.vizModal{width:100%;max-height:96vh}.vizModalHeader{padding:14px}.vizModalBody{padding:10px}.vizModalFooter{padding:12px}}
+
+/* Match the two halves of the existing Matches result matrix. */
+.vizMatrixEditable.vizMatrixUpper{background:#102b2b}
+.vizMatrixEditable.vizMatrixLower{background:#211d2b}
+.vizMatrixEditable.vizMatrixLower input{border-color:#536f89}
+
+/* Match result status, based on Matches PlayTo winner logic. */
+.vizMatrixEditable{background:#19283a}
+.vizMatrixEditable input{border-color:#4b6886}
+.vizMatrixEditable.vizMatrixWinner{background:#102c25}
+.vizMatrixEditable.vizMatrixWinner input{border-color:#21aa73}
+.vizMatrixEditable.vizMatrixLoser{background:#291d30}
+.vizMatrixEditable.vizMatrixLoser input{border-color:#655678}
+
+.vizStageClickable{cursor:pointer;border-radius:8px;padding:10px!important;margin:-8px -8px 12px!important;transition:background .15s}
+.vizStageClickable:hover,.vizStageClickable:focus-visible{background:#293e57;outline:2px solid #6fa7ed;outline-offset:2px}
+.vizStageClickable:after{content:'Click to manage incoming players';display:block;color:#92bce9;font-size:11px;margin-top:8px}
+.vizStageEditorModal{width:min(1200px,calc(100vw - 30px));height:min(90vh,850px);max-height:95vh}
+.vizStageEditorFrame{display:block;flex:1;width:100%;min-height:150px;border:0;background:#172435}
+
+/* Destination-pool editor below score matrix */
+.vizAdvancement{margin-top:24px;padding-top:16px;border-top:1px solid #344b67}
+.vizAdvancement h3{color:#f0f6ff;font-size:17px;margin:0 0 5px}
+.vizAdvancement p{font-size:12px;color:#b7c9df;margin:0 0 12px}
+.vizPoolAdvanceFrame{display:block;width:100%;height:650px;min-height:420px;border:1px solid #344d6d;border-radius:10px;background:#172435}
+
+/* Tournament-specific player and match search */
+.vizFindPlayer{background:#172435;border:1px solid #344a65;border-radius:12px;padding:18px 20px;margin:0 0 22px}
+.vizFindPlayerHeading{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:13px}
+.vizFindPlayerHeading h2{font-size:17px;margin:0 0 6px;font-weight:750}.vizFindPlayerHeading h2 i{color:#78b8ff;margin-right:7px}
+.vizFindPlayerHeading p{font-size:12px;color:#b5c5d7;margin:0}.vizPlayerCount{background:#253e5d;color:#d0e9ff;padding:5px 10px;border-radius:20px;font-size:11px;white-space:nowrap}
+.vizFindPlayer label{display:block;font-size:12px;color:#b4cbe4;margin-bottom:5px}
+.vizFindPlayer input{display:block;box-sizing:border-box;width:100%;border:1px solid #486886;border-radius:7px;background:#101d2c;color:#f7faff;padding:11px 12px;font:inherit;font-size:14px}
+.vizFindPlayer input:focus{outline:2px solid #6ba9ec;outline-offset:1px}
+.vizSearchResults{margin-top:9px;background:#111e2e;border:1px solid #395574;border-radius:9px;max-height:350px;overflow-y:auto}
+.vizSearchPlayer{padding:12px 13px;border-bottom:1px solid #2b425d;display:grid;gap:7px}.vizSearchPlayer:last-child{border-bottom:0}
+.vizSearchPlayer>strong{font-size:13px;color:#f0f7ff}
+.vizSearchPool{display:flex;justify-content:space-between;align-items:center;text-align:left;gap:15px;border:1px solid #3b5778;border-radius:7px;color:#e5f1ff;background:#20324a;padding:10px 12px;cursor:pointer;width:100%}
+.vizSearchPool:hover,.vizSearchPool:focus-visible{background:#2c4867;outline:1px solid #79baff}
+.vizSearchPool span:first-child{display:grid;gap:4px;min-width:0}.vizSearchPool b{font-size:13px}.vizSearchPool small{font-size:11px;color:#a9c4df;overflow-wrap:anywhere}
+.vizSearchEmpty{padding:12px;color:#b4c6d8;font-size:13px;margin:0}
