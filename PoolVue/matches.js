@@ -3154,6 +3154,67 @@ window.addEventListener('message', async function(event) {
         await matchesApp.saveManualAdvancement();
         if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
       }
+      // Qualifier advancement can reassign destination seats after wildcard
+      // placement. Re-read the latest wildcard seat IDs and reconcile the
+      // selected players/destinations once more in the *same* Save click.
+      // Never replay stale seat IDs from before the qualifier save.
+      if (matchesApp.manualAdvanceEliminatedPlayers().length) {
+        await matchesApp.loadManualAdvancement(poolId);
+        if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
+        const state = matchesApp.manualAdvanceState;
+        const requested = Object.entries(chosen.wildcards || {})
+          .filter(([id, seat]) => seat !== null && seat !== undefined && seat !== '')
+          .map(([id, seat]) => ({ playerId: Number(id), seatId: Number(seat),
+            poolId: Number((chosen.wildcardDestinations || {})[String(seat)]) }));
+        for (const item of requested) {
+          // Find the seat that is *currently* reserved for this player.
+          // That seat may differ after the first wildcard placement.
+          const current = (state.wildcardSlots || []).find(slot => Number(slot.playerId) === item.playerId);
+          if (!current) throw new Error('Wildcard player '+item.playerId+' was not retained after saving.');
+          matchesApp.$set(matchesApp.manualWildcardAssignments, String(item.playerId), Number(current.seatId));
+          if (Number.isInteger(item.poolId) && item.poolId > 0) {
+            matchesApp.$set(matchesApp.manualWildcardDestinationAssignments, String(current.seatId), item.poolId);
+          }
+        }
+        if (requested.length) {
+          await matchesApp.saveManualWildcards();
+          if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
+        }
+      }
+      // A first save may relocate a wildcard to a different reserved seat.
+      // Check the freshly persisted state, not the stale dropdown seat IDs,
+      // and reconcile any remaining destination changes before confirming.
+      const requestedByPlayer = Object.entries(chosen.wildcards || {})
+        .filter(([id, seat]) => seat !== null && seat !== undefined && seat !== '')
+        .map(([id, seat]) => ({
+          playerId: Number(id),
+          destinationPoolId: Number((chosen.wildcardDestinations || {})[String(seat)])
+        }));
+      if (requestedByPlayer.length) {
+        let verified = false;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          await matchesApp.loadManualAdvancement(poolId);
+          if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
+          const slots = (matchesApp.manualAdvanceState && matchesApp.manualAdvanceState.wildcardSlots) || [];
+          const pending = requestedByPlayer.map(item => {
+            const slot = slots.find(x => Number(x.playerId) === item.playerId);
+            if (!slot) throw new Error('Wildcard player ' + item.playerId + ' was not saved.');
+            const storedPool = Number(slot.preferredDestinationPoolMatchId || slot.destinationPoolMatchId);
+            return { ...item, seatId: Number(slot.seatId), storedPool };
+          }).filter(item => Number.isInteger(item.destinationPoolId) && item.destinationPoolId > 0 && item.storedPool !== item.destinationPoolId);
+          if (!pending.length) { verified = true; break; }
+          if (attempt === 2) break;
+          for (const item of requestedByPlayer) {
+            const slot = slots.find(x => Number(x.playerId) === item.playerId);
+            matchesApp.$set(matchesApp.manualWildcardAssignments, String(item.playerId), Number(slot.seatId));
+            if (Number.isInteger(item.destinationPoolId) && item.destinationPoolId > 0)
+              matchesApp.$set(matchesApp.manualWildcardDestinationAssignments, String(slot.seatId), item.destinationPoolId);
+          }
+          await matchesApp.saveManualWildcards();
+          if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
+        }
+        if (!verified) throw new Error('Wildcard destination was not persisted. The save was not confirmed; check the chosen pulje.');
+      }
     }
     respond({ok:true, savedAdvancement:!!matchesApp.manualAdvanceState.stageComplete});
   } catch(e) { respond(null, e.message || 'Advancement save failed.'); }

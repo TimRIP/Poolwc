@@ -507,6 +507,10 @@ OPTION (MAXRECURSION 1000);";
                             .Where(x => x.SourcePoolMatchId == sourcePoolId).ToList();
                         var validPlayers = new HashSet<int>(candidates.Select(x => x.PlayerId));
                         var slots = GetStageWildcardSlots(conn, transaction, stageId.Value);
+                        // Snapshot all normal qualification routes for the target stages.
+                        // A wildcard move must never remove any of these routes.
+                        var qualifierRoutesBefore = SnapshotNormalRoutesForWildcardStages(
+                            conn, transaction, slots.Select(x => x.TargetStageMatchId));
                         var slotIds = new HashSet<int>(slots.Select(x => x.SeatId));
                         var chosen = assignments.Where(x => x.PlayerId.HasValue).ToList();
                         if (chosen.Any(x => !validPlayers.Contains(x.PlayerId.Value) || !slotIds.Contains(x.DestinationSeatId)) ||
@@ -596,12 +600,16 @@ IF @@ROWCOUNT = 0 INSERT INTO WildcardDestinationPreference (SeatId, Destination
 FROM Seat S
 WHERE S.MatchId = @PoolId
   AND S.PlayerId IS NULL
-  AND S.AutoSelectMatchId IS NULL
-  AND S.AutoSelectlPlace IS NULL
+  AND S.ResultMatchPlace IS NULL
+  AND S.ResultPoints IS NULL
+  -- Swapping a wildcard with a normal qualification route preserves the
+  -- source-pulje qualifying place. Only use unoccupied, unplayed seats.
+  AND NOT EXISTS (SELECT 1 FROM WildcardDestinationPreference W
+                  WHERE W.SeatId = S.Id)
   AND NOT EXISTS (SELECT 1 FROM Seat Child
                   WHERE Child.ParentSeatId = S.Id
                     AND (Child.PlayerId IS NOT NULL OR Child.ResultMatchPlace IS NOT NULL OR Child.ResultPoints IS NOT NULL))
-ORDER BY S.Id;", conn, transaction))
+ORDER BY CASE WHEN S.AutoSelectMatchId IS NOT NULL AND S.AutoSelectlPlace > 0 THEN 0 ELSE 1 END, S.Id;", conn, transaction))
                             {
                                 find.Parameters.Add("@PoolId", SqlDbType.Int).Value = selection.DestinationPoolMatchId;
                                 object value = find.ExecuteScalar();
@@ -619,19 +627,38 @@ WHERE (Id = @SeatId OR ParentSeatId = @SeatId)
                                 if (Convert.ToInt32(played.ExecuteScalar()) > 0)
                                     throw new InvalidOperationException("This wildcard has already played in its current destination pool.");
                             }
-                            // Keep the wildcard route's source stage and placement 0.
-                            // The old reserved seat becomes an ordinary free seat.
+                            // Swap route metadata: the wildcard route takes the target
+                            // seat in the new pool; the normal qualification route from
+                            // that seat takes the wildcard's vacated seat in the old pool.
+                            // This preserves the number of qualifying places per source
+                            // pulje instead of sacrificing the second qualifier.
+                            int? displacedRouteMatchId = null;
+                            int? displacedRoutePlace = null;
+                            using (var route = new SqlCommand(@"SELECT AutoSelectMatchId, AutoSelectlPlace
+FROM Seat WITH (UPDLOCK) WHERE Id = @SeatId;", conn, transaction))
+                            {
+                                route.Parameters.Add("@SeatId", SqlDbType.Int).Value = destinationSeatId;
+                                using (var reader = route.ExecuteReader())
+                                {
+                                    if (!reader.Read()) throw new InvalidOperationException("Destination seat no longer exists.");
+                                    displacedRouteMatchId = reader.IsDBNull(0) ? (int?)null : reader.GetInt32(0);
+                                    displacedRoutePlace = reader.IsDBNull(1) ? (int?)null : reader.GetInt32(1);
+                                }
+                            }
+                            // The old reserved seat is unplayed and is safe to reuse.
                             ClearPlayerFromSeatAndChildren(conn, transaction, selection.SeatId);
                             using (var move = new SqlCommand(@"UPDATE Seat
-SET AutoSelectMatchId = NULL, AutoSelectlPlace = NULL
+SET AutoSelectMatchId = @DisplacedSource, AutoSelectlPlace = @DisplacedPlace
 WHERE Id = @OldSeatId;
 UPDATE Seat
 SET AutoSelectMatchId = @SourceStageId, AutoSelectlPlace = 0
-WHERE Id = @NewSeatId AND PlayerId IS NULL AND AutoSelectMatchId IS NULL;", conn, transaction))
+WHERE Id = @NewSeatId AND PlayerId IS NULL
+  AND ResultMatchPlace IS NULL AND ResultPoints IS NULL;", conn, transaction))
                             {
                                 move.Parameters.Add("@OldSeatId", SqlDbType.Int).Value = selection.SeatId;
                                 move.Parameters.Add("@NewSeatId", SqlDbType.Int).Value = destinationSeatId;
-                                move.Parameters.Add("@PlayerId", SqlDbType.Int).Value = playerId;
+                                move.Parameters.Add("@DisplacedSource", SqlDbType.Int).Value = (object)displacedRouteMatchId ?? DBNull.Value;
+                                move.Parameters.Add("@DisplacedPlace", SqlDbType.Int).Value = (object)displacedRoutePlace ?? DBNull.Value;
                                 move.Parameters.Add("@SourceStageId", SqlDbType.Int).Value = stageId.Value;
                                 move.ExecuteNonQuery();
                             }
@@ -658,12 +685,54 @@ VALUES (@NewSeatId, @PoolId);", conn, transaction))
                         {
                             FillWildcardRoundRobinMatches(conn, transaction, poolId);
                         }
+                        var qualifierRoutesAfter = SnapshotNormalRoutesForWildcardStages(
+                            conn, transaction, slots.Select(x => x.TargetStageMatchId));
+                        if (qualifierRoutesBefore.Count != qualifierRoutesAfter.Count ||
+                            qualifierRoutesBefore.Any(x => !qualifierRoutesAfter.ContainsKey(x.Key) ||
+                                qualifierRoutesAfter[x.Key] != x.Value))
+                        {
+                            throw new InvalidOperationException(
+                                "Wildcard assignment would change a normal qualifying place. " +
+                                "The save was cancelled to preserve both qualifiers.");
+                        }
                         transaction.Commit();
                     }
                     catch { transaction.Rollback(); throw; }
                 }
             }
             return GetManualAdvancement(sourcePoolId);
+        }
+
+
+        // Count each normal qualifier route independently of its destination seat.
+        // Moving a wildcard may swap route metadata between seats, but must not
+        // create, remove, or duplicate a source-pulje/place qualification route.
+        private static Dictionary<string, int> SnapshotNormalRoutesForWildcardStages(
+            SqlConnection conn, SqlTransaction transaction, IEnumerable<int> targetStageIds)
+        {
+            var counts = new Dictionary<string, int>();
+            foreach (int stageId in targetStageIds.Distinct())
+            {
+                using (var cmd = new SqlCommand(@"SELECT S.AutoSelectMatchId, S.AutoSelectlPlace, COUNT(*) AS RouteCount
+FROM Seat S
+INNER JOIN [Match] P ON P.Id = S.MatchId
+WHERE P.ParentMatchId = @TargetStageId
+  AND S.AutoSelectMatchId IS NOT NULL
+  AND S.AutoSelectlPlace > 0
+GROUP BY S.AutoSelectMatchId, S.AutoSelectlPlace;", conn, transaction))
+                {
+                    cmd.Parameters.Add("@TargetStageId", SqlDbType.Int).Value = stageId;
+                    using (var reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            string key = stageId + ":" + Convert.ToInt32(reader[0]) + ":" + Convert.ToInt32(reader[1]);
+                            counts[key] = Convert.ToInt32(reader[2]);
+                        }
+                    }
+                }
+            }
+            return counts;
         }
 
         public ManualAdvancementSaveResult SaveManualAdvancement(
