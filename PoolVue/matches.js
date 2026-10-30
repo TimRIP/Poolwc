@@ -3123,6 +3123,7 @@ window.addEventListener('message', async function(event) {
       if (!matchesApp.manualAdvanceState) throw new Error('Advancement data is not available for this pulje.');
       const state = matchesApp.manualAdvanceState;
       respond({ destinations:{...matchesApp.manualAdvanceAssignments}, wildcards:{...matchesApp.manualWildcardAssignments},
+        wildcardDestinations:{...matchesApp.manualWildcardDestinationAssignments},
         stageComplete:!!state.stageComplete, qualified:matchesApp.manualAdvanceEligiblePlayers().length,
         eliminated:matchesApp.manualAdvanceEliminatedPlayers().length,
         configuredDestinations:(state.destinations || []).length,
@@ -3141,6 +3142,7 @@ window.addEventListener('message', async function(event) {
       });
     }
     restore(matchesApp.manualWildcardAssignments,chosen.wildcards);
+    restore(matchesApp.manualWildcardDestinationAssignments,chosen.wildcardDestinations);
     restore(matchesApp.manualAdvanceAssignments,chosen.destinations);
     if (matchesApp.manualAdvanceState.stageComplete) {
       if (matchesApp.manualAdvanceEliminatedPlayers().length) {
