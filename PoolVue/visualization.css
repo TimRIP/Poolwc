@@ -67,3 +67,28 @@
 .vizSearchCandidate{width:100%;display:flex;justify-content:space-between;align-items:center;text-align:left;padding:11px 14px;border:0;border-bottom:1px solid #2b425d;background:#132338;color:#edf6ff;cursor:pointer}.vizSearchCandidate:hover{background:#274363}.vizSearchCandidate span:first-child{display:grid;gap:4px}.vizSearchCandidate small{color:#90b7df}
 .vizSearchError{color:#ffb3b3;margin:9px 0}.vizFinderMatches{margin-top:14px}.vizSelectedPlayer{display:flex;flex-direction:column;padding:9px 0;border-bottom:1px solid #344a65}.vizSelectedPlayer span{font-size:12px;color:#9abce2}
 .vizFinderMatch{display:block;width:100%;margin:8px 0;padding:12px;text-align:left;border:1px solid #344a65;border-radius:8px;background:#101f33;color:#eef6ff;cursor:pointer}.vizFinderMatch:hover{background:#1b3551;border-color:#679ee0}.vizFinderMatchTop{display:flex;justify-content:space-between;gap:8px;align-items:center}.vizFinderMatchTop em{font-style:normal;border-radius:16px;padding:3px 8px;font-size:11px}.vizPlayed{color:#60edac;background:#113f36}.vizPending{color:#ffcf65;background:#4d3d1c}.vizFinderMatch>small{display:block;color:#8fc1fa;margin:4px 0 8px}.vizFinderMatchMeta{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:12px;color:#bcd0e8}
+
+/* Pulje status colouring on the main Visualization board */
+.vizPoolMeta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.vizPoolStatus{display:inline-flex;align-items:center;justify-content:center;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.2px;white-space:nowrap}
+.vizPoolDone{background:#17372a;border-color:#2f8a61}
+.vizPoolDone .vizPoolTitle{background:#1b4333;border-bottom-color:#2f8a61}
+.vizPoolDone .vizPoolStatusDone{background:#0f5a39;color:#d6ffe9;border:1px solid #3cb07c}
+.vizPoolPending{background:#3a2916;border-color:#a7732f}
+.vizPoolPending .vizPoolTitle{background:#48311a;border-bottom-color:#a7732f}
+.vizPoolPending .vizPoolStatusPending{background:#6a461c;color:#ffe4b7;border:1px solid #d09a4c}
+.vizPoolDone .vizPlayers,.vizPoolDone .vizMatches{border-color:#2b6f53}
+.vizPoolPending .vizPlayers,.vizPoolPending .vizMatches{border-color:#7b5a2d}
+.vizPoolDone .vizMatch{background:#162d25;border-color:#2a6c50}
+.vizPoolPending .vizMatch{background:#2a2116;border-color:#7c5c32}
+
+/* Player advancement / elimination colouring inside each pulje */
+.vizPlayer{position:relative}
+.vizPlayerName{min-width:0;flex:1;overflow-wrap:anywhere}
+.vizPlayerState{margin-left:auto;font-size:11px;font-weight:800;letter-spacing:.2px;text-transform:uppercase}
+.vizPlayerAdvanced{background:#123829;border-radius:7px;padding:6px 8px;border:1px solid #2c8f62}
+.vizPlayerAdvanced .vizPlayerName,.vizPlayerAdvanced .vizPlayerState{color:#88f0bb}
+.vizPlayerAdvanced .vizPlayerNo{background:#1d6c4c;color:#effff6}
+.vizPlayerEliminated{background:#3a1d22;border-radius:7px;padding:6px 8px;border:1px solid #a04b5d}
+.vizPlayerEliminated .vizPlayerName,.vizPlayerEliminated .vizPlayerState{color:#ffb7c5}
+.vizPlayerEliminated .vizPlayerNo{background:#7c3947;color:#fff5f7}
