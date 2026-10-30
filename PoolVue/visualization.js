@@ -10,7 +10,7 @@ new Vue({
     selectedFinderPlayer: null, finderMatches: [], finderMatchesLoading: false,
     playerNamesOpen: false, renameablePlayers: [], playerNamesLoading: false,
     savingPlayerNameId: null, playerNameMessage: '', playerNameError: '',
-    poolAdvanceStates: {}
+    poolAdvanceStates: {}, playerDestinations: {}, wildcardStages: {}
   },
   computed: {
     stages() {
@@ -277,7 +277,13 @@ new Vue({
         else addStatus(playerName, 'eliminated');
       }
 
-      return { done, playerStatuses };
+      const reservedWildcardNames = [];
+      for (const slot of Array.isArray(state.wildcardSlots) ? state.wildcardSlots : []) {
+        if (slot.playerId === null || slot.playerId === undefined) continue;
+        const player = [...players, ...wildcardCandidates].find(p => Number(p.playerId) === Number(slot.playerId));
+        if (player && player.playerName) reservedWildcardNames.push(this.normalizePlayerName(player.playerName));
+      }
+      return { done, playerStatuses, reservedWildcardNames };
     },
     async loadPoolAdvanceStates() {
       const poolIds = this.stages.flatMap(stage => stage.pools.map(pool => Number(pool.matchId))).filter(id => Number.isFinite(id));
@@ -316,9 +322,21 @@ new Vue({
       const status = this.playerVisualStatus(pool, playerName);
       return status === 'advanced' ? 'vizPlayerAdvanced' : (status === 'eliminated' ? 'vizPlayerEliminated' : '');
     },
+    destinationLabel(poolId) {
+      const target = this.stages.flatMap(stage => stage.pools.map(p => ({stage, pool:p})))
+        .find(x => Number(x.pool.matchId) === Number(poolId));
+      return target ? target.stage.matchName + ' · ' + target.pool.matchName : null;
+    },
     playerStatusText(pool, playerName) {
       const status = this.playerVisualStatus(pool, playerName);
-      return status === 'advanced' ? 'advanced' : (status === 'eliminated' ? 'eliminated' : '');
+      if (status === 'eliminated') return 'eliminated';
+      if (status !== 'advanced') return '';
+      const source = this.playerDestinations[String(pool.matchId)] || {};
+      const targetPoolId = source[this.normalizePlayerName(playerName)];
+      const destination = targetPoolId ? this.destinationLabel(targetPoolId) : null;
+      if (destination) return '→ ' + destination;
+      const wildcardStage = (this.wildcardStages[String(pool.matchId)] || {})[this.normalizePlayerName(playerName)];
+      return wildcardStage ? '→ ' + wildcardStage + ' (wildcard)' : '→ destination not assigned';
     },
     openStage(stage) {
       if (!stage || !this.selectedTournamentId) return;
@@ -426,67 +444,97 @@ new Vue({
       this.editorError = '';
       this.editorMessage = '';
     },
-    async savePoolResults() {
-      if (this.editorSaving) return;
-      this.editorError = '';
-      this.editorMessage = '';
-      const changes = [];
-      for (const m of this.editorMatches) {
-        if (m.seats.length !== 2) continue;
-        const [a, b] = m.seats;
-        if (a.score === a.original && b.score === b.original) continue;
-        const bothEmpty = a.score === '' && b.score === '';
-        if (bothEmpty) {
-          changes.push({ id: m.matchId, clear: true });
-          continue;
+    async savePoolResults(skipRefresh=false){
+      if(this.editorSaving)return;
+      this.editorError='';this.editorMessage='';
+      const changes=[];
+      for(const m of this.editorMatches){
+        if(m.seats.length!==2)continue;
+        const [a,b]=m.seats;
+        if(a.score===a.original && b.score===b.original)continue;
+        const bothEmpty=a.score==='' && b.score==='';
+        if(bothEmpty){changes.push({id:m.matchId,clear:true});continue;}
+        const scoreA=Number(a.score),scoreB=Number(b.score);
+        if(a.score===''||b.score===''||!Number.isInteger(scoreA)||!Number.isInteger(scoreB)){
+          this.editorError=m.matchName+': enter two whole-number scores, or clear both.';return;
         }
-        const scoreA = Number(a.score), scoreB = Number(b.score);
-        if (a.score === '' || b.score === '' || !Number.isInteger(scoreA) || !Number.isInteger(scoreB)) {
-          this.editorError = m.matchName + ': enter two whole-number scores, or clear both.';
-          return;
+        if(m.minScore!==null&&(scoreA<m.minScore||scoreB<m.minScore||scoreA>m.maxScore||scoreB>m.maxScore)){
+          this.editorError=m.matchName+': scores must be between '+m.minScore+' and '+m.maxScore+'.';return;
         }
-        if (m.minScore !== null && (scoreA < m.minScore || scoreB < m.minScore || scoreA > m.maxScore || scoreB > m.maxScore)) {
-          this.editorError = m.matchName + ': scores must be between ' + m.minScore + ' and ' + m.maxScore + '.';
-          return;
+        if(m.playTo===null || (scoreA===m.playTo)===(scoreB===m.playTo)){
+          this.editorError=m.matchName+': exactly one player must finish on PlayTo ('+m.playTo+').';return;
         }
-        if (m.playTo === null || (scoreA === m.playTo) === (scoreB === m.playTo)) {
-          this.editorError = m.matchName + ': exactly one player must finish on PlayTo (' + m.playTo + ').';
-          return;
-        }
-        changes.push({
-          id: m.matchId,
-          clear: false,
-          payload: {
-            matchId: m.matchId,
-            results: [
-              { seatId: a.seatId, resultMatchPlace: scoreA === m.playTo ? 1 : 2, resultPoints: scoreA },
-              { seatId: b.seatId, resultMatchPlace: scoreB === m.playTo ? 1 : 2, resultPoints: scoreB }
-            ]
-          }
-        });
+        changes.push({id:m.matchId,clear:false,payload:{matchId:m.matchId,results:[
+          {seatId:a.seatId,resultMatchPlace:scoreA===m.playTo?1:2,resultPoints:scoreA},
+          {seatId:b.seatId,resultMatchPlace:scoreB===m.playTo?1:2,resultPoints:scoreB}
+        ]}});
       }
-      if (!changes.length) {
-        this.editorMessage = 'No scores have changed.';
+      if(!changes.length){if(!skipRefresh)this.editorMessage='No scores have changed.';return true;}
+      this.editorSaving=true;
+      try {
+        for(const c of changes){
+          if(c.clear)await axios.delete('http://localhost:5000/api/match/'+encodeURIComponent(c.id)+'/result',{headers:this.authHeaders()});
+          else await axios.post('http://localhost:5000/api/match/result',c.payload,{headers:Object.assign({'Content-Type':'application/json; charset=utf-8'},this.authHeaders())});
+        }
+        const pool=this.editorPool;
+        await this.loadMatches();
+        if(pool && !skipRefresh){const fresh=this.stages.flatMap(s=>s.pools).find(p=>p.matchId===pool.matchId);this.poolAdvanceRevision++;if(fresh)await this.openPool(fresh);this.editorMessage='Match results saved. Advancement options refreshed.';}
+        return true;
+      }catch(e){this.editorError='Could not save all results. Earlier matches may have saved; refresh to check.';return false;}
+      finally{this.editorSaving=false;}
+    },
+    async requestPoolEditorAction(action, poolId, savedSelections) {
+      const frame = this.$refs.poolAdvancementFrame;
+      if (!frame || !frame.contentWindow) throw new Error('The advancement panel has not loaded.');
+      const target = frame.contentWindow;
+      const requestId = 'pool-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+      return new Promise((resolve, reject) => {
+        const cleanup = () => { window.removeEventListener('message', handler); clearTimeout(timer); };
+        const handler = event => {
+          if (event.source !== target || !event.data || event.data.type !== 'pool-editor-response' || event.data.requestId !== requestId) return;
+          cleanup();
+          if (event.data.error) reject(new Error(event.data.error));
+          else resolve(event.data.result);
+        };
+        const timer = setTimeout(() => { cleanup(); reject(new Error('The advancement editor did not respond. Reopen the pulje and try again.')); }, 12000);
+        window.addEventListener('message', handler);
+        target.postMessage({ type:'pool-editor-request', requestId, action, poolId, savedSelections }, '*');
+      });
+    },
+    async saveAllPoolChanges(){
+      if (this.editorSaving || this.editorLoading || !this.editorPool) return;
+      this.editorError=''; this.editorMessage='';
+      const poolId = Number(this.editorPool.matchId);
+      let selections;
+      try {
+        // Snapshot user choices before saving scores: a results refresh can replace the editor state.
+        selections = await this.requestPoolEditorAction('snapshot', poolId);
+      } catch (e) {
+        this.editorError = e.message || 'Cannot access the advancement editor.';
         return;
       }
-      this.editorSaving = true;
+      if (!(await this.savePoolResults(true))) return;
       try {
-        for (const c of changes) {
-          if (c.clear) await axios.delete('http://localhost:5000/api/match/' + encodeURIComponent(c.id) + '/result', { headers: this.authHeaders() });
-          else await axios.post('http://localhost:5000/api/match/result', c.payload, { headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, this.authHeaders()) });
+        // Saving scores changes qualification status. Refresh that state
+        // inside Matches before deciding whether advancement can be saved.
+        const updated = await this.requestPoolEditorAction('refresh', poolId);
+        if (!updated.stageComplete) {
+          this.editorMessage = 'Match scores saved. Finish all matches in this pulje before assigning destination pools or wildcards.';
+          return;
         }
-        const pool = this.editorPool;
+        if (!updated.qualified && !updated.eliminated) {
+          this.editorError = 'Match scores saved, but no qualifying or eliminated players were returned for this pulje. Advancement was not saved.';
+          return;
+        }
+        const response = await this.requestPoolEditorAction('save', poolId, selections);
+        if (!response || !response.savedAdvancement) throw new Error('Advancement was not confirmed saved.');
         await this.loadMatches();
-        if (pool) {
-          const fresh = this.stages.flatMap(s => s.pools).find(p => p.matchId === pool.matchId);
-          this.poolAdvanceRevision++;
-          if (fresh) await this.openPool(fresh);
-          this.editorMessage = 'Match results saved. Advancement options refreshed.';
-        }
+        const fresh = this.stages.flatMap(stage=>stage.pools).find(p=>Number(p.matchId)===poolId);
+        this.poolAdvanceRevision++;
+        if (fresh) await this.openPool(fresh);
+        this.editorMessage = 'All match results, wildcard selections and destination pools saved.';
       } catch (e) {
-        this.editorError = 'Could not save all results. Earlier matches may have saved; refresh to check.';
-      } finally {
-        this.editorSaving = false;
+        this.editorError = 'Match scores were saved, but advancement changes could not all be saved: ' + (e.message || 'unknown error');
       }
     },
     scheduleLines() {
@@ -519,6 +567,8 @@ new Vue({
     },
     async loadRoutes() {
       this.routes = [];
+      this.playerDestinations = {};
+      this.wildcardStages = {};
       this.routeWarning = '';
       const ids = this.stages.map(s => s.matchId);
       if (ids.length < 2) {
@@ -528,21 +578,54 @@ new Vue({
       const requests = ids.slice(1).map(id => axios.get('http://localhost:5000/api/match/' + encodeURIComponent(id) + '/advancement/stage/incoming', { headers: this.authHeaders() }).then(r => r.data).catch(() => null));
       const results = await Promise.all(requests);
       const edges = new Map();
-      for (const state of results) {
+      const destinationMap = {};
+      const wildcardMap = {};
+      const assign = (from, name, to) => {
+        if (!(from > 0 && to > 0 && name)) return;
+        const key = String(from);
+        if (!destinationMap[key]) destinationMap[key] = {};
+        destinationMap[key][this.normalizePlayerName(name)] = to;
+      };
+      for (let stateIndex = 0; stateIndex < results.length; stateIndex++) {
+        const state = results[stateIndex];
         if (!state) continue;
+        const nextStageName = this.stages[stateIndex + 1] && this.stages[stateIndex + 1].matchName;
         for (const source of Array.isArray(state.sources) ? state.sources : []) {
           for (const player of Array.isArray(source.players) ? source.players : []) {
             const from = Number(player.sourcePoolMatchId), to = Number(player.currentDestinationPoolMatchId);
             if (from > 0 && to > 0) edges.set(from + '-' + to, { from, to });
+            assign(from, player.playerName, to);
           }
           for (const slot of Array.isArray(source.wildcardSlots) ? source.wildcardSlots : []) {
             const selected = (source.wildcardCandidates || []).find(p => Number(p.playerId) === Number(slot.playerId));
             const from = Number(selected && selected.sourcePoolMatchId), to = Number(slot.destinationPoolMatchId);
             if (from > 0 && to > 0) edges.set(from + '-' + to, { from, to });
+            assign(from, selected && selected.playerName, to);
+            if (from > 0 && selected && selected.playerName && nextStageName) {
+              const key = String(from);
+              if (!wildcardMap[key]) wildcardMap[key] = {};
+              wildcardMap[key][this.normalizePlayerName(selected.playerName)] = nextStageName;
+            }
           }
         }
       }
       this.routes = [...edges.values()];
+      this.playerDestinations = destinationMap;
+      // Source-pulje wildcard seats are authoritative even when an incoming-stage
+      // wildcard has not yet been assigned a specific destination pulje.
+      // The incoming-stage endpoint can omit those reserved-but-unplaced seats.
+      this.stages.forEach((stage, index) => {
+        const nextStage = this.stages[index + 1];
+        if (!nextStage) return;
+        for (const pool of stage.pools) {
+          const reserved = (this.poolAdvanceStates[String(pool.matchId)] || {}).reservedWildcardNames || [];
+          if (!reserved.length) continue;
+          const key = String(pool.matchId);
+          if (!wildcardMap[key]) wildcardMap[key] = {};
+          for (const name of reserved) wildcardMap[key][name] = nextStage.matchName;
+        }
+      });
+      this.wildcardStages = wildcardMap;
       if (results.every(x => !x)) this.routeWarning = 'Advancement routes could not be loaded.';
       else if (!this.routes.length) this.routeWarning = 'No assigned advancement routes yet. Connections appear when source and destination pools are assigned.';
       this.scheduleLines();

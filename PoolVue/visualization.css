@@ -92,3 +92,7 @@
 .vizPlayerEliminated{background:#3a1d22;border-radius:7px;padding:6px 8px;border:1px solid #a04b5d}
 .vizPlayerEliminated .vizPlayerName,.vizPlayerEliminated .vizPlayerState{color:#ffb7c5}
 .vizPlayerEliminated .vizPlayerNo{background:#7c3947;color:#fff5f7}
+/* Keep long player names readable beside advancement labels. */
+.vizPlayer{flex-wrap:wrap;gap:6px 8px}
+.vizPlayer .vizPlayerName{flex:1 1 90px;min-width:90px;overflow-wrap:break-word;word-break:normal}
+.vizPlayer .vizPlayerState{flex:1 0 100%;margin-left:30px;text-align:left;overflow-wrap:anywhere}

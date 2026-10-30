@@ -62,6 +62,7 @@
 <section class="vizModal vizStageEditorModal" role="dialog" aria-modal="true" :aria-label="'Incoming players for '+editorStage.matchName">
 <div class="vizModalHeader"><div><span class="vizEyebrow">INCOMING PLAYERS</span><h2>{{editorStage.matchName}}</h2><p>Assign players to seats, choose wildcards, randomize, and save—using the Matches editor.</p></div><button class="vizClose" type="button" @click="closeStage" aria-label="Close">×</button></div>
 <iframe class="vizStageEditorFrame" :src="stageEditorUrl" title="Stage incoming players editor"></iframe>
+
 </section></div>
 <div v-if="editorPool" class="vizModalOverlay" @click.self="closePool" @keydown.esc="closePool">
   <section class="vizModal" role="dialog" aria-modal="true" :aria-label="'Match results for '+editorPool.matchName">
@@ -93,10 +94,10 @@
       </div>
       <div v-if="!editorLoading && !editorMatches.length" class="vizEmpty">No playable matches are available in this pulje.</div>
       <div class="vizAdvancement"><h3>Choose destination pools and wildcards</h3><p>Use the same qualification and wildcard controls as Matches. Save each section before closing.</p>
-        <iframe v-if="poolAdvanceUrl" class="vizPoolAdvanceFrame" :src="poolAdvanceUrl" title="Choose destination pools and wildcard players"></iframe>
+        <iframe v-if="poolAdvanceUrl" class="vizPoolAdvanceFrame" ref="poolAdvancementFrame" :src="poolAdvanceUrl" title="Choose destination pools and wildcard players"></iframe>
       </div>
     </div>
-    <footer class="vizModalFooter"><button type="button" @click="closePool" :disabled="editorSaving">Close</button><button class="vizSave" type="button" @click="savePoolResults" :disabled="editorSaving || editorLoading || !editorMatches.length">{{editorSaving?'Saving…':'Save match results'}}</button></footer>
+    <footer class="vizModalFooter"><button type="button" @click="closePool" :disabled="editorSaving">Close</button><button class="vizSave" type="button" @click="saveAllPoolChanges" :disabled="editorSaving || editorLoading || !editorMatches.length">{{editorSaving?'Saving…':'Save all changes'}}</button></footer>
   </section>
 </div>
 </div><script src="visualization.js"></script></body></html>
