@@ -308,11 +308,33 @@ new Vue({
     poolIsDone(pool) {
       return !!this.poolVisualState(pool).done;
     },
+    poolLacksPlayers(pool) {
+      // Wildcards may be in the pulje before their scheduled match seats update.
+      // Assess available players at the pulje level instead of each match.
+      if (!pool || !Array.isArray(pool.matches) || !pool.matches.length) return true;
+      const assigned = new Set((pool.players || [])
+        .map(name => this.normalizePlayerName(name)).filter(Boolean));
+      if (assigned.size < 2) return true;
+
+      const count = pool.matches.length;
+      const roundRobinSize = (1 + Math.sqrt(1 + 8 * count)) / 2;
+      if (Number.isInteger(roundRobinSize) && roundRobinSize >= 3) {
+        const actualPairs = pool.matches.map(m => [...new Set((m.players || [])
+          .map(name => this.normalizePlayerName(name)).filter(Boolean))])
+          .filter(names => names.length === 2)
+          .map(names => names.sort().join('|'));
+        const isRepeatedSeries = actualPairs.length >= 2 && new Set(actualPairs).size === 1;
+        if (!isRepeatedSeries) return assigned.size < roundRobinSize;
+      }
+      return false;
+    },
     poolCardClass(pool) {
-      return this.poolIsDone(pool) ? 'vizPoolDone' : 'vizPoolPending';
+      if (this.poolIsDone(pool)) return 'vizPoolDone';
+      return this.poolLacksPlayers(pool) ? 'vizPoolWaiting' : 'vizPoolPending';
     },
     poolStatusText(pool) {
-      return this.poolIsDone(pool) ? 'Done' : 'Not done';
+      if (this.poolIsDone(pool)) return 'Done';
+      return this.poolLacksPlayers(pool) ? 'Not enough players' : 'Not done';
     },
     playerVisualStatus(pool, playerName) {
       const state = this.poolVisualState(pool);

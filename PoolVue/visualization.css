@@ -99,3 +99,10 @@
 
 /* Hide visual connectors between stages; keep all pulje functionality. */
 .vizLines { display: none !important; }
+
+/* Gray puljer: insufficient assigned players to start all scheduled matches. */
+.vizPoolWaiting{background:#292f39;border-color:#6b7887}
+.vizPoolWaiting .vizPoolTitle{background:#363f4b;border-bottom-color:#6b7887}
+.vizPoolWaiting .vizPoolStatus{background:#4b5663;color:#e0e5ed;border:1px solid #81909f}
+.vizPoolWaiting .vizPlayers,.vizPoolWaiting .vizMatches{border-color:#576575}
+.vizPoolWaiting .vizMatch{background:#262f3b;border-color:#526173}

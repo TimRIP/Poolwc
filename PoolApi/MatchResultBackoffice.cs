@@ -576,6 +576,88 @@ IF @@ROWCOUNT = 0 INSERT INTO WildcardDestinationPreference (SeatId, Destination
                                 cmd.ExecuteNonQuery();
                             }
                         }
+                        // A pulje-level wildcard destination is a real placement, not just
+                        // a preference. Move its reserved route to an available seat in
+                        // the selected pool and populate the linked individual matches.
+                        // Do not touch an occupied seat or previously played match.
+                        foreach (var selection in destinationSelections)
+                        {
+                            var original = slots.First(x => x.SeatId == selection.SeatId);
+                            if (original.DestinationPoolMatchId == selection.DestinationPoolMatchId)
+                            {
+                                SynchronizeMissingMatchPlayers(conn, transaction,
+                                    new int[] { selection.SeatId });
+                                continue;
+                            }
+
+                            int playerId = chosen.First(x => x.DestinationSeatId == selection.SeatId).PlayerId.Value;
+                            int destinationSeatId;
+                            using (var find = new SqlCommand(@"SELECT TOP 1 S.Id
+FROM Seat S
+WHERE S.MatchId = @PoolId
+  AND S.PlayerId IS NULL
+  AND S.AutoSelectMatchId IS NULL
+  AND S.AutoSelectlPlace IS NULL
+  AND NOT EXISTS (SELECT 1 FROM Seat Child
+                  WHERE Child.ParentSeatId = S.Id
+                    AND (Child.PlayerId IS NOT NULL OR Child.ResultMatchPlace IS NOT NULL OR Child.ResultPoints IS NOT NULL))
+ORDER BY S.Id;", conn, transaction))
+                            {
+                                find.Parameters.Add("@PoolId", SqlDbType.Int).Value = selection.DestinationPoolMatchId;
+                                object value = find.ExecuteScalar();
+                                if (value == null || value == DBNull.Value)
+                                    throw new InvalidOperationException("The selected wildcard destination pool has no free seat. Choose another pool.");
+                                destinationSeatId = Convert.ToInt32(value);
+                            }
+
+                            // Never move a player out of a match that already has a result.
+                            using (var played = new SqlCommand(@"SELECT COUNT(*) FROM Seat
+WHERE (Id = @SeatId OR ParentSeatId = @SeatId)
+  AND (ResultMatchPlace IS NOT NULL OR ResultPoints IS NOT NULL);", conn, transaction))
+                            {
+                                played.Parameters.Add("@SeatId", SqlDbType.Int).Value = selection.SeatId;
+                                if (Convert.ToInt32(played.ExecuteScalar()) > 0)
+                                    throw new InvalidOperationException("This wildcard has already played in its current destination pool.");
+                            }
+                            // Keep the wildcard route's source stage and placement 0.
+                            // The old reserved seat becomes an ordinary free seat.
+                            ClearPlayerFromSeatAndChildren(conn, transaction, selection.SeatId);
+                            using (var move = new SqlCommand(@"UPDATE Seat
+SET AutoSelectMatchId = NULL, AutoSelectlPlace = NULL
+WHERE Id = @OldSeatId;
+UPDATE Seat
+SET AutoSelectMatchId = @SourceStageId, AutoSelectlPlace = 0
+WHERE Id = @NewSeatId AND PlayerId IS NULL AND AutoSelectMatchId IS NULL;", conn, transaction))
+                            {
+                                move.Parameters.Add("@OldSeatId", SqlDbType.Int).Value = selection.SeatId;
+                                move.Parameters.Add("@NewSeatId", SqlDbType.Int).Value = destinationSeatId;
+                                move.Parameters.Add("@PlayerId", SqlDbType.Int).Value = playerId;
+                                move.Parameters.Add("@SourceStageId", SqlDbType.Int).Value = stageId.Value;
+                                move.ExecuteNonQuery();
+                            }
+                            SetPlayerOnSeatAndChildren(conn, transaction, destinationSeatId, playerId);
+                            SynchronizeMissingMatchPlayers(conn, transaction,
+                                new int[] { destinationSeatId });
+                            using (var preference = new SqlCommand(@"DELETE FROM WildcardDestinationPreference WHERE SeatId = @OldSeatId;
+DELETE FROM WildcardDestinationPreference WHERE SeatId = @NewSeatId;
+INSERT INTO WildcardDestinationPreference (SeatId, DestinationPoolMatchId)
+VALUES (@NewSeatId, @PoolId);", conn, transaction))
+                            {
+                                preference.Parameters.Add("@OldSeatId", SqlDbType.Int).Value = selection.SeatId;
+                                preference.Parameters.Add("@NewSeatId", SqlDbType.Int).Value = destinationSeatId;
+                                preference.Parameters.Add("@PoolId", SqlDbType.Int).Value = selection.DestinationPoolMatchId;
+                                preference.ExecuteNonQuery();
+                            }
+                        }
+                        // A wildcard placed from this pulje must also be assigned
+                        // to its scheduled round-robin match seats immediately.
+                        // Leave any scored match unchanged, and fail the transaction
+                        // if the existing schedule cannot be reconciled safely.
+                        foreach (int poolId in destinationSelections
+                            .Select(x => x.DestinationPoolMatchId).Distinct())
+                        {
+                            FillWildcardRoundRobinMatches(conn, transaction, poolId);
+                        }
                         transaction.Commit();
                     }
                     catch { transaction.Rollback(); throw; }
@@ -1265,6 +1347,11 @@ IF @@ROWCOUNT = 0 INSERT INTO WildcardDestinationPreference (SeatId, Destination
 
                         if (!normalChanged && !wildcardChanged)
                         {
+                            // Even unchanged incoming assignments may have been made
+                            // before the child match seats were filled. Repair only
+                            // missing child PlayerIds; do not touch recorded scores.
+                            SynchronizeMissingMatchPlayers(conn, transaction,
+                                managedSeatIds);
                             transaction.Commit();
                             return new StageManualAdvancementSaveResult
                             {
@@ -1790,6 +1877,11 @@ WHERE Id = @SeatId;", conn, transaction))
                                 targetSeatId,
                                 wildcardAssignmentBySeat[slot.SeatId].PlayerId);
                         }
+
+                        // Keep the scheduled matches in step with their pool seats,
+                        // including wildcard seats, without clearing played results.
+                        SynchronizeMissingMatchPlayers(conn, transaction,
+                            managedSeats.Select(x => x.SeatId).Distinct());
 
                         StageManualAdvancementState updated =
                             BuildStageManualAdvancementState(conn, transaction, sourceStageMatchId);
@@ -3796,6 +3888,188 @@ WHERE M.ParentMatchId = @StageMatchId
             }
         }
 
+        private sealed class WildcardMatchSeat
+        {
+            public int SeatId;
+            public int? ParentSeatId;
+            public int? PlayerId;
+            public bool HasResult;
+        }
+
+        private sealed class WildcardRoundRobinMatch
+        {
+            public int MatchId;
+            public List<WildcardMatchSeat> Seats = new List<WildcardMatchSeat>();
+        }
+
+        // Repair missing round-robin match assignments after a wildcard joins a
+        // destination pulje. This uses the already generated match records and
+        // existing pulje-seat identity; it does not create duplicate games.
+        // Refuse ambiguous structures rather than risk inventing pairings.
+        private static void FillWildcardRoundRobinMatches(
+            SqlConnection conn, SqlTransaction transaction, int poolId)
+        {
+            var players = new Dictionary<int, int>(); // player id -> pulje seat id
+            using (var cmd = new SqlCommand(@"SELECT Id, PlayerId FROM Seat
+WHERE MatchId = @PoolId AND PlayerId IS NOT NULL ORDER BY Id", conn, transaction))
+            {
+                cmd.Parameters.Add("@PoolId", SqlDbType.Int).Value = poolId;
+                using (var reader = cmd.ExecuteReader())
+                    while (reader.Read()) players.Add(reader.GetInt32(1), reader.GetInt32(0));
+            }
+            if (players.Count < 2) return;
+            var matches = new List<WildcardRoundRobinMatch>();
+            using (var cmd = new SqlCommand(@"SELECT M.Id, S.Id, S.ParentSeatId, S.PlayerId,
+S.ResultMatchPlace, S.ResultPoints FROM [Match] M
+LEFT JOIN Seat S ON S.MatchId = M.Id
+WHERE M.ParentMatchId = @PoolId AND M.IndividualMatch = 1
+ORDER BY M.Id, S.Id", conn, transaction))
+            {
+                cmd.Parameters.Add("@PoolId", SqlDbType.Int).Value = poolId;
+                using (var reader = cmd.ExecuteReader())
+                {
+                    int lastId = -1;
+                    WildcardRoundRobinMatch current = null;
+                    while (reader.Read())
+                    {
+                        int id = reader.GetInt32(0);
+                        if (id != lastId)
+                        {
+                            current = new WildcardRoundRobinMatch { MatchId = id };
+                            matches.Add(current);
+                            lastId = id;
+                        }
+                        if (!reader.IsDBNull(1)) current.Seats.Add(new WildcardMatchSeat {
+                            SeatId = reader.GetInt32(1),
+                            ParentSeatId = reader.IsDBNull(2) ? (int?)null : reader.GetInt32(2),
+                            PlayerId = reader.IsDBNull(3) ? (int?)null : reader.GetInt32(3),
+                            HasResult = !reader.IsDBNull(4) || !reader.IsDBNull(5)
+                        });
+                    }
+                }
+            }
+            // Only a complete single round-robin can be safely reconstructed
+            // from pairings. Best-of-X and Swiss schedules use other rules.
+            int n = players.Count;
+            if (matches.Count != n * (n - 1) / 2 || matches.Any(m => m.Seats.Count != 2)) return;
+
+            var usedPairs = new HashSet<string>();
+            var unresolved = new List<WildcardRoundRobinMatch>();
+            var seatToPlayer = players.ToDictionary(k => k.Value, v => v.Key);
+            foreach (var match in matches)
+            {
+                var known = new List<int>();
+                foreach (var seat in match.Seats)
+                {
+                    int playerId;
+                    if (seat.ParentSeatId.HasValue && seatToPlayer.TryGetValue(seat.ParentSeatId.Value, out playerId))
+                    {
+                        if (seat.PlayerId.HasValue && seat.PlayerId.Value != playerId) return;
+                        known.Add(playerId);
+                    }
+                    else if (seat.PlayerId.HasValue && players.ContainsKey(seat.PlayerId.Value)) known.Add(seat.PlayerId.Value);
+                    else if (seat.PlayerId.HasValue || seat.ParentSeatId.HasValue) return;
+                }
+                if (known.Count == 2)
+                {
+                    if (known[0] == known[1]) return;
+                    string pair = Math.Min(known[0], known[1]) + ":" + Math.Max(known[0], known[1]);
+                    if (!usedPairs.Add(pair)) return;
+                }
+                else
+                {
+                    if (match.Seats.Any(x => x.HasResult)) return;
+                    unresolved.Add(match);
+                }
+            }
+            if (unresolved.Count == 0) return;
+            var pairs = new List<Tuple<int, int>>();
+            var ids = players.Keys.OrderBy(x => x).ToList();
+            for (int i = 0; i < ids.Count; i++)
+                for (int j = i + 1; j < ids.Count; j++)
+                    if (!usedPairs.Contains(ids[i] + ":" + ids[j])) pairs.Add(Tuple.Create(ids[i], ids[j]));
+            if (pairs.Count != unresolved.Count) return;
+
+            // Constrain the remaining pair to the known player(s) on each match.
+            var assignment = new Dictionary<int, Tuple<int, int>>();
+            Func<int, HashSet<string>, bool> solve = null;
+            solve = (index, taken) => {
+                if (index == unresolved.Count) return true;
+                var match = unresolved[index];
+                var knownIds = match.Seats.Select(x => x.ParentSeatId.HasValue && seatToPlayer.ContainsKey(x.ParentSeatId.Value)
+                    ? seatToPlayer[x.ParentSeatId.Value] : (x.PlayerId ?? 0)).Where(x => x != 0).ToList();
+                foreach (var pair in pairs)
+                {
+                    string key = pair.Item1 + ":" + pair.Item2;
+                    if (taken.Contains(key) || knownIds.Any(x => x != pair.Item1 && x != pair.Item2)) continue;
+                    taken.Add(key); assignment[match.MatchId] = pair;
+                    if (solve(index + 1, taken)) return true;
+                    taken.Remove(key); assignment.Remove(match.MatchId);
+                }
+                return false;
+            };
+            if (!solve(0, new HashSet<string>())) return;
+
+            foreach (var match in unresolved)
+            {
+                var pair = assignment[match.MatchId];
+                var remaining = new List<int> { pair.Item1, pair.Item2 };
+                foreach (var seat in match.Seats)
+                {
+                    int existing = seat.ParentSeatId.HasValue && seatToPlayer.ContainsKey(seat.ParentSeatId.Value)
+                        ? seatToPlayer[seat.ParentSeatId.Value] : (seat.PlayerId ?? 0);
+                    if (existing != 0) remaining.Remove(existing);
+                }
+                foreach (var seat in match.Seats)
+                {
+                    int existing = seat.ParentSeatId.HasValue && seatToPlayer.ContainsKey(seat.ParentSeatId.Value)
+                        ? seatToPlayer[seat.ParentSeatId.Value] : (seat.PlayerId ?? 0);
+                    if (existing != 0) continue;
+                    int playerId = remaining[0]; remaining.RemoveAt(0);
+                    using (var cmd = new SqlCommand(@"UPDATE Seat
+SET ParentSeatId = @ParentId, PlayerId = @PlayerId
+WHERE Id = @SeatId AND PlayerId IS NULL AND ParentSeatId IS NULL
+AND ResultMatchPlace IS NULL AND ResultPoints IS NULL", conn, transaction))
+                    {
+                        cmd.Parameters.Add("@ParentId", SqlDbType.Int).Value = players[playerId];
+                        cmd.Parameters.Add("@PlayerId", SqlDbType.Int).Value = playerId;
+                        cmd.Parameters.Add("@SeatId", SqlDbType.Int).Value = seat.SeatId;
+                        if (cmd.ExecuteNonQuery() != 1)
+                            throw new InvalidOperationException("A wildcard match seat changed while assigning players.");
+                    }
+                }
+            }
+        }
+
+        // Some wildcard slots may receive their players after the match tree is
+        // created. Fill only still-empty child match seats linked to those slots.
+        // This never overwrites existing child players or recorded match results.
+        private static void SynchronizeMissingMatchPlayers(
+            SqlConnection conn,
+            SqlTransaction transaction,
+            IEnumerable<int> poolSeatIds)
+        {
+            foreach (int poolSeatId in poolSeatIds.Distinct())
+            {
+                using (SqlCommand cmd = new SqlCommand(@"
+UPDATE Child
+SET Child.PlayerId = Parent.PlayerId
+FROM Seat Child
+INNER JOIN Seat Parent ON Parent.Id = Child.ParentSeatId
+INNER JOIN [Match] M ON M.Id = Child.MatchId
+WHERE Parent.Id = @PoolSeatId
+  AND Parent.PlayerId IS NOT NULL
+  AND Child.PlayerId IS NULL
+  AND Child.ResultMatchPlace IS NULL
+  AND Child.ResultPoints IS NULL
+  AND M.IndividualMatch = 1;", conn, transaction))
+                {
+                    cmd.Parameters.Add("@PoolSeatId", SqlDbType.Int).Value = poolSeatId;
+                    cmd.ExecuteNonQuery();
+                }
+            }
+        }
+
         private static void SetPlayerOnSeatAndChildren(
             SqlConnection conn,
             SqlTransaction transaction,
@@ -5128,13 +5402,10 @@ ORDER BY S.Id;", conn, transaction))
 SELECT DISTINCT S.Id, S.MatchId, S.PlayerId, M.Name AS MatchName
 FROM Seat S
 INNER JOIN [Match] M ON M.Id = S.MatchId
+-- Only invalidate destinations owned by the source pool/stage.
+-- Wildcard reservations belong to the parent stage and must survive
+-- recalculation of a different pulje in that stage.
 WHERE S.AutoSelectMatchId = @SourceStageMatchId
-   OR (
-        S.AutoSelectlPlace = 0
-        AND S.AutoSelectMatchId = (
-            SELECT ParentMatchId FROM [Match] WHERE Id = @SourceStageMatchId
-        )
-      )
 ORDER BY S.Id;", conn, transaction))
             {
                 cmd.Parameters.Add("@SourceStageMatchId", SqlDbType.Int).Value = sourceStageMatchId;
