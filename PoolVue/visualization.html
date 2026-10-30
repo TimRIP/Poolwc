@@ -32,18 +32,23 @@
  </div>
 </section>
 <section class="vizFindPlayer" aria-label="Find player matches">
-  <div class="vizFindPlayerHeading"><div><h2><i class="fa fa-search" aria-hidden="true"></i> Find player matches</h2><p>Search for a player to find their puljer and matches in this tournament.</p></div><span class="vizPlayerCount">{{searchablePlayers.length}} players</span></div>
+  <div class="vizFindPlayerHeading"><div><h2><i class="fa fa-search"></i> Find player matches</h2><p>Search for a player to see their matches, opponents, scores and schedule.</p></div><span class="vizPlayerCount">{{finderPlayers.length}} players</span></div>
   <label for="vizPlayerSearch">Search player</label>
-  <input id="vizPlayerSearch" type="search" v-model="playerSearch" @focus="playerSearchOpen=true" @input="playerSearchOpen=true" @keydown.esc="onSearchEscape" autocomplete="off" placeholder="Type a player name…" :disabled="!selectedTournamentId || loading" />
-  <div v-if="playerSearch.trim() && playerSearchOpen" class="vizSearchResults" role="region" aria-label="Matching players">
-    <p v-if="!matchingPlayers.length" class="vizSearchEmpty">No players found in this tournament.</p>
-    <div v-for="player in matchingPlayers" :key="player.name" class="vizSearchPlayer">
-      <strong>{{player.name}}</strong>
-      <button type="button" v-for="entry in player.pools" :key="entry.poolId" class="vizSearchPool" @click="selectPlayerPool(entry.pool)">
-        <span><b>{{entry.stageName}} · {{entry.poolName}}</b><small>{{entry.matches.length ? entry.matches.map(m=>m.matchName).join(' · ') : 'Open pulje'}}</small></span><span aria-hidden="true">↗</span>
-      </button>
-    </div>
-    <p v-if="matchingPlayers.length === 40" class="vizSearchEmpty">Showing the first 40 matches. Refine your search to narrow the list.</p>
+  <div class="vizSearchInputRow"><input id="vizPlayerSearch" type="search" v-model="playerSearch" @input="onFinderInput" @keydown.esc="clearFinder" autocomplete="off" placeholder="Type a player name…" :disabled="!selectedTournamentId || finderLoading" /><button v-if="selectedFinderPlayer || playerSearch" type="button" @click="clearFinder">Clear</button></div>
+  <p v-if="finderLoading" class="vizSearchEmpty">Loading players…</p><p v-if="finderError" class="vizSearchError">{{finderError}}</p>
+  <div v-if="playerSearch.trim() && !selectedFinderPlayer && !finderLoading" class="vizSearchResults">
+    <button class="vizSearchCandidate" type="button" v-for="player in matchingPlayers" :key="player.playerId" @click="selectFinderPlayer(player)"><span><strong>{{player.playerName}}</strong><small>Player #{{player.playerId}}</small></span><span v-if="player.mmr != null">{{player.mmr}} MMR</span><span v-else>Guest</span></button>
+    <p v-if="!matchingPlayers.length" class="vizSearchEmpty">No players match that search.</p>
+  </div>
+  <div v-if="selectedFinderPlayer" class="vizFinderMatches">
+    <div class="vizSelectedPlayer"><strong>{{selectedFinderPlayer.playerName}}</strong><span>Player #{{selectedFinderPlayer.playerId}}</span></div>
+    <p v-if="finderMatchesLoading" class="vizSearchEmpty">Loading matches…</p>
+    <p v-else-if="!finderMatches.length" class="vizSearchEmpty">No matches are assigned to this player yet.</p>
+    <button type="button" class="vizFinderMatch" v-for="match in finderMatches" :key="match.matchId" @click="openFinderMatch(match)">
+      <span class="vizFinderMatchTop"><strong>{{match.matchName}}</strong><em :class="match.played?'vizPlayed':'vizPending'">{{match.played?'Played':'Pending'}}</em></span>
+      <small>{{match.stageName||'Stage'}}<template v-if="match.poolName"> · {{match.poolName}}</template></small>
+      <span class="vizFinderMatchMeta"><span><i class="fa fa-user"></i> vs {{match.opponents}}</span><span><i class="fa fa-map-marker"></i> {{match.venueName||'Venue not set'}}</span><span><i class="fa fa-clock-o"></i> {{finderSchedule(match)}}</span><span v-if="match.played"><i class="fa fa-trophy"></i> {{match.result}}<template v-if="match.score"> · {{match.score}}</template></span></span>
+    </button>
   </div>
 </section>
 <div v-if="error" class="vizError" role="alert">{{error}}</div><div v-if="loading" class="vizEmpty">Loading tournament…</div><div v-else-if="!selectedTournamentId" class="vizEmpty">Select a tournament to see its stages and puljer.</div><div v-else-if="!stages.length" class="vizEmpty">No tournament structure found.</div>

@@ -1,7 +1,7 @@
 /* Read-only tournament visualization. Shares the existing Matches API contract. */
 new Vue({
   el: '#visualization',
-  data: { tournaments: [], selectedTournamentId: '', rows: [], loading: false, error: '', routes: [], connections: [], routeWarning: '', editorStage: null, stageEditorUrl: '', editorPool: null, poolAdvanceUrl: '', poolAdvanceRevision: 0, editorMatches: [], editorLoading: false, editorSaving: false, editorError: '', editorMessage: '', playerSearch: '', playerSearchOpen: false, playerNamesOpen: false, renameablePlayers: [], playerNamesLoading: false, savingPlayerNameId: null, playerNameMessage: '', playerNameError: '' },
+  data: { tournaments: [], selectedTournamentId: '', rows: [], loading: false, error: '', routes: [], connections: [], routeWarning: '', editorStage: null, stageEditorUrl: '', editorPool: null, poolAdvanceUrl: '', poolAdvanceRevision: 0, editorMatches: [], editorLoading: false, editorSaving: false, editorError: '', editorMessage: '', playerSearch: '', playerSearchOpen: false, finderPlayers: [], finderLoading: false, finderError: '', selectedFinderPlayer: null, finderMatches: [], finderMatchesLoading: false, playerNamesOpen: false, renameablePlayers: [], playerNamesLoading: false, savingPlayerNameId: null, playerNameMessage: '', playerNameError: '' },
   computed: {
     stages() {
       const nodes = new Map();
@@ -41,25 +41,10 @@ new Vue({
         return {matchId:stage.matchId, matchName:stage.matchName, pools};
       });
     },
-    searchablePlayers() {
-      const map = new Map();
-      for (const stage of this.stages) for (const pool of stage.pools) {
-        for (const name of pool.players) {
-          const normalized = String(name || '').trim();
-          if (!normalized) continue;
-          const key = normalized.toLocaleLowerCase();
-          if (!map.has(key)) map.set(key, {name:normalized, pools:[]});
-          const item = map.get(key);
-          item.pools.push({stageName:stage.matchName, poolName:pool.matchName,
-            poolId:pool.matchId, pool, matches:pool.matches.filter(m => m.players.includes(normalized))});
-        }
-      }
-      return [...map.values()].sort((a,b)=>a.name.localeCompare(b.name, undefined, {numeric:true}));
-    },
     matchingPlayers() {
-      const query = this.playerSearch.trim().toLocaleLowerCase();
-      if (!query) return [];
-      return this.searchablePlayers.filter(p=>p.name.toLocaleLowerCase().includes(query)).slice(0,40);
+      const q = this.playerSearch.trim().toLowerCase();
+      if (!q) return [];
+      return this.finderPlayers.filter(p => [p.playerName, p.playerId, p.mmr == null ? '' : p.mmr].join(' ').toLowerCase().includes(q)).slice(0,60);
     },
     editorPlayers() {
       const names = new Map();
@@ -129,11 +114,40 @@ new Vue({
       } catch(e) {this.playerNameError=(e.response&&e.response.data&&e.response.data.message)||'Could not save player name.';}
       finally {this.savingPlayerNameId=null;}
     },
-    selectPlayerPool(pool) {
-      this.playerSearchOpen = false;
-      this.openPool(pool);
+    async loadFinderPlayers() {
+      this.finderPlayers=[]; this.finderMatches=[]; this.selectedFinderPlayer=null; this.playerSearch=''; this.finderError='';
+      if (!this.selectedTournamentId) return;
+      this.finderLoading=true;
+      try {
+        const res=await axios.get('http://localhost:5000/api/tournament/'+encodeURIComponent(this.selectedTournamentId)+'/player-match-search/players',{headers:this.authHeaders()});
+        this.finderPlayers=Array.isArray(res.data&&res.data.players)?res.data.players:[];
+      } catch(e) { this.finderError=(e.response&&e.response.data&&e.response.data.message)||'Could not load players for match search.'; }
+      finally { this.finderLoading=false; }
     },
-    onSearchEscape() { this.playerSearch=''; this.playerSearchOpen=false; },
+    onFinderInput() {
+      if(this.selectedFinderPlayer && this.playerSearch.trim().toLowerCase() !== String(this.selectedFinderPlayer.playerName||'').trim().toLowerCase()) {
+        this.selectedFinderPlayer=null; this.finderMatches=[];
+      }
+    },
+    clearFinder() {this.playerSearch='';this.selectedFinderPlayer=null;this.finderMatches=[];this.finderError='';},
+    async selectFinderPlayer(player) {
+      this.selectedFinderPlayer=player; this.playerSearch=player.playerName; this.finderMatches=[];this.finderError='';this.finderMatchesLoading=true;
+      try {
+        const res=await axios.get('http://localhost:5000/api/tournament/'+encodeURIComponent(this.selectedTournamentId)+'/player-match-search/players/'+encodeURIComponent(player.playerId)+'/matches',{headers:this.authHeaders()});
+        this.finderMatches=Array.isArray(res.data&&res.data.matches)?res.data.matches:[];
+      } catch(e) {this.finderError=(e.response&&e.response.data&&e.response.data.message)||'Could not load player matches.';}
+      finally {this.finderMatchesLoading=false;}
+    },
+    finderSchedule(match) {
+      if(!match||!match.fromTime)return 'Time not set';
+      const dt=new Date(match.fromTime);
+      return Number.isNaN(dt.getTime())?String(match.fromTime):dt.toLocaleString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+    },
+    openFinderMatch(match) {
+      const id=Number(match&&match.matchId);
+      for(const stage of this.stages)for(const pool of stage.pools)if(pool.matches.some(m=>m.matchId===id)) {this.openPool(pool);return;}
+      this.finderError='Match not found in the current visualization.';
+    },
     openStage(stage) {
       if (!stage || !this.selectedTournamentId) return;
       this.editorStage = stage;
@@ -315,7 +329,7 @@ new Vue({
       if(this.selectedTournamentId) await this.loadMatches();
     },
     async loadMatches() {
-      if(!this.selectedTournamentId) {this.rows=[];this.renameablePlayers=[];return;}
+      if(!this.selectedTournamentId) {this.rows=[];this.renameablePlayers=[];this.finderPlayers=[];return;}
       this.loading=true;this.error='';
       try {
         const res=await axios.post('http://localhost:5000/api/matches',Number(this.selectedTournamentId),
@@ -323,7 +337,7 @@ new Vue({
         let data=res.data && res.data.matches !== undefined ? res.data.matches : res.data;
         if(typeof data==='string') data=JSON.parse(data);
         if(!Array.isArray(data)) throw new Error('Unexpected tournament response');
-        this.rows=data; await this.loadRenameablePlayers(); localStorage.setItem('lastTournamentId',this.selectedTournamentId); await this.loadRoutes();
+        this.rows=data; await this.loadRenameablePlayers(); await this.loadFinderPlayers(); localStorage.setItem('lastTournamentId',this.selectedTournamentId); await this.loadRoutes();
       } catch(e) {this.rows=[];this.routes=[];this.connections=[];this.error='Could not load the tournament visualization: '+(e.response && e.response.status===401?'please log in again.':e.message);}
       finally {this.loading=false;}
     },
