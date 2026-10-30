@@ -2995,19 +2995,87 @@ const matchesApp = new Vue({
 
   async mounted() {
     const params = new URLSearchParams(location.search);
-    if (params.get('embeddedStage') !== '1') {
+    const embeddedStage = params.get('embeddedStage') === '1';
+    const embeddedPool = params.get('embeddedPool') === '1';
+    if (!embeddedStage && !embeddedPool) {
       this.loadTournamentOptions(false);
       return;
     }
     const tournamentId = Number(params.get('tournamentId'));
-    const stageId = Number(params.get('stageId'));
-    if (!Number.isFinite(tournamentId) || !Number.isFinite(stageId)) return;
+    const targetId = Number(params.get(embeddedPool ? 'poolId' : 'stageId'));
+    if (!Number.isFinite(tournamentId) || tournamentId <= 0 || !Number.isFinite(targetId) || targetId <= 0) return;
     await this.loadMatches(tournamentId, false);
-    // Use the same selection and API path as clicking the stage in Matches.
-    const stage = (() => {
-      const walk = items => { for (const node of items) { if (Number(node.matchId) === stageId) return node; const nested = walk(node.children || []); if (nested) return nested; } return null; };
+    // Select the real pulje or stage node so the ordinary Matches data loaders run.
+    const selected = (() => {
+      const walk = items => { for (const node of items) { if (Number(node.matchId) === targetId) return node; const nested = walk(node.children || []); if (nested) return nested; } return null; };
       return walk(this.roots);
     })();
-    if (stage) await this.selectMatch(stage);
+    if (selected) {
+      await this.selectMatch(selected);
+      // In embedded pulje mode, the advancement panel must load even when
+      // the generic match-node classifier does not recognize an unusual pool.
+      if (embeddedPool && !this.manualAdvanceState && !this.manualAdvanceLoading)
+        await this.loadManualAdvancement(targetId);
+    }
   }
+});
+
+// Allow the same-origin Visualization popup to call this editor's existing
+// save and refresh methods. The Vue instance is otherwise module-local.
+window.matchesApp = matchesApp;
+
+// Communication bridge for Visualization when an embedded frame has an opaque/file origin.
+// Never rely on direct cross-frame Vue access; browsers correctly block it.
+window.addEventListener('message', async function(event) {
+  const message = event.data;
+  if (!message || message.type !== 'pool-editor-request') return;
+  const params = new URLSearchParams(location.search);
+  if (params.get('embeddedPool') !== '1' || event.source !== window.parent) return;
+  const respond = (result, error) => event.source.postMessage({
+    type:'pool-editor-response', requestId:message.requestId, result, error
+  }, '*');
+  try {
+    const poolId=Number(message.poolId);
+    if (Number(params.get('poolId')) !== poolId || Number(matchesApp.selectedMatchId) !== poolId)
+      throw new Error('The selected pulje is not ready. Reopen it and try again.');
+    if (message.action === 'snapshot' || message.action === 'refresh') {
+      if (matchesApp.manualAdvanceLoading) throw new Error('Advancement options are loading. Try again.');
+      if (message.action === 'refresh' || !matchesApp.manualAdvanceState)
+        await matchesApp.loadManualAdvancement(poolId);
+      if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
+      if (!matchesApp.manualAdvanceState) throw new Error('Advancement data is not available for this pulje.');
+      const state = matchesApp.manualAdvanceState;
+      respond({ destinations:{...matchesApp.manualAdvanceAssignments}, wildcards:{...matchesApp.manualWildcardAssignments},
+        stageComplete:!!state.stageComplete, qualified:matchesApp.manualAdvanceEligiblePlayers().length,
+        eliminated:matchesApp.manualAdvanceEliminatedPlayers().length,
+        configuredDestinations:(state.destinations || []).length,
+        wildcardSeats:(state.wildcardSlots || []).length });
+      return;
+    }
+    if (message.action !== 'save') return;
+    if (!matchesApp.matchEditAllowed) throw new Error('You do not have permission to edit the selected pulje.');
+    const chosen = message.savedSelections || {};
+    await matchesApp.loadManualAdvancement(poolId);
+    if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
+    if (!matchesApp.manualAdvanceState) throw new Error('Destination and wildcard data did not load.');
+    function restore(target, source) {
+      Object.keys(source || {}).forEach(id => {
+        if (Object.prototype.hasOwnProperty.call(target,id)) matchesApp.$set(target,id,source[id]);
+      });
+    }
+    restore(matchesApp.manualWildcardAssignments,chosen.wildcards);
+    restore(matchesApp.manualAdvanceAssignments,chosen.destinations);
+    if (matchesApp.manualAdvanceState.stageComplete) {
+      if (matchesApp.manualAdvanceEliminatedPlayers().length) {
+        await matchesApp.saveManualWildcards();
+        if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
+      }
+      restore(matchesApp.manualAdvanceAssignments,chosen.destinations);
+      if (matchesApp.manualAdvanceEligiblePlayers().length) {
+        await matchesApp.saveManualAdvancement();
+        if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
+      }
+    }
+    respond({ok:true, savedAdvancement:!!matchesApp.manualAdvanceState.stageComplete});
+  } catch(e) { respond(null, e.message || 'Advancement save failed.'); }
 });

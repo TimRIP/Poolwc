@@ -65,11 +65,11 @@
         <p v-if="editorMatches.some(m=>m.seats.length!==2)" class="vizUnassigned">Some matches do not yet have two players and cannot be scored.</p>
       </div>
       <div v-if="!editorLoading && !editorMatches.length" class="vizEmpty">No playable matches are available in this pulje.</div>
-      <div class="vizAdvancement"><h3>Choose destination pools and wildcards</h3><p>Use the same qualification and wildcard controls as Matches. Save each section before closing.</p>
-        <iframe v-if="poolAdvanceUrl" class="vizPoolAdvanceFrame" :src="poolAdvanceUrl" title="Choose destination pools and wildcard players"></iframe>
+      <div class="vizAdvancement"><h3>Choose destination pools and wildcards</h3><p>Use the same qualification and wildcard controls as Matches. Save scores, wildcards and destination pools using the single button below.</p>
+        <iframe v-if="poolAdvanceUrl" ref="poolAdvancementFrame" class="vizPoolAdvanceFrame" :src="poolAdvanceUrl" title="Choose destination pools and wildcard players"></iframe>
       </div>
     </div>
-    <footer class="vizModalFooter"><button type="button" @click="closePool" :disabled="editorSaving">Close</button><button class="vizSave" type="button" @click="savePoolResults" :disabled="editorSaving || editorLoading || !editorMatches.length">{{editorSaving?'Saving…':'Save match results'}}</button></footer>
+    <footer class="vizModalFooter"><button type="button" @click="closePool" :disabled="editorSaving">Close</button><button class="vizSave" type="button" @click="saveAllPoolChanges" :disabled="editorSaving || editorLoading || !editorMatches.length">{{editorSaving?'Saving…':'Save all changes'}}</button></footer>
   </section>
 </div>
 </div><script src="visualization.js"></script></body></html>

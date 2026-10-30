@@ -54,7 +54,7 @@
 <style>
 /* Visualization popup: reuse the real Matches editor, with navigation hidden. */
 html.embeddedStage, html.embeddedStage body {width:100%;height:100%;overflow:auto;background:#172435}
-html.embeddedStage #vuematch > :not(.matchWorkspace),html.embeddedStage .matchTreeColumn,
+html.embeddedStage .topbar,html.embeddedStage .matchesHeader,html.embeddedStage .matchTreeColumn,
 html.embeddedStage .matchResultPanel > div > .resultPanelHeader,
 html.embeddedStage .matchResultPanel .resultSection:not(.embeddedIncomingSection),
 html.embeddedStage .emptyState {display:none!important}
@@ -62,16 +62,18 @@ html.embeddedStage .matchWorkspace{display:block!important;width:100%!important;
 html.embeddedStage .matchResultPanel{display:block!important;width:100%!important;min-width:0!important;max-width:none!important;overflow:visible!important;border:0!important;background:#172435!important;padding:16px!important}
 html.embeddedStage #vuematch{min-width:0!important;width:100%!important;padding:0!important;margin:0!important}
 html.embeddedStage .stageAdvancePanel{max-width:none!important;width:100%!important}
-/* Embedded pulje editor: isolate the full advancement component, not just its title. */
+/* Embedded pool advancement: show original Matches destination and wildcard editors only. */
 html.embeddedPool,html.embeddedPool body{height:100%;width:100%;background:#172435;overflow:auto}
-html.embeddedPool #vuematch > :not(.matchWorkspace),
-html.embeddedPool .matchTreeColumn,
-html.embeddedPool .matchResultPanel > div > :not(.poolAdvancementSection),
-html.embeddedPool .poolAdvancementSection > :not(.manualAdvancePanel){display:none!important}
+html.embeddedPool .topbar,html.embeddedPool .matchesHeader,html.embeddedPool .matchTreeColumn,
+html.embeddedPool .resultPanelHeader,html.embeddedPool .emptyState,
+html.embeddedPool .matchResultPanel > div > .resultSection:not(:has(.manualAdvancePanel)),
+html.embeddedPool .resultSection > :not(.manualAdvancePanel),
+html.embeddedPool .matchResultPanel > div > :not(.resultSection){display:none!important}
 html.embeddedPool .matchWorkspace{display:block!important;width:100%!important;max-width:none!important;overflow:visible!important}
 html.embeddedPool .matchResultPanel{display:block!important;width:100%!important;min-width:0!important;max-width:none!important;overflow:visible!important;border:0!important;background:#172435!important;padding:10px!important}
-html.embeddedPool .poolAdvancementSection{display:block!important;border:0!important;margin:0!important;padding:0!important;background:transparent!important}
-html.embeddedPool .poolAdvancementSection .manualAdvancePanel{display:block!important;width:100%;max-width:none!important}
+html.embeddedPool .resultSection{border:0!important;margin:0!important;padding:0!important;background:transparent!important}
+html.embeddedPool .manualAdvancePanel{width:100%;max-width:none!important}
+html.embeddedPool .manualAdvanceActions{display:none!important}
 html.embeddedPool #vuematch{min-width:0!important;width:100%!important;padding:0!important;margin:0!important}
 </style>
 <script>{const p=new URLSearchParams(location.search);if(p.get('embeddedStage')==='1')document.documentElement.classList.add('embeddedStage');if(p.get('embeddedPool')==='1')document.documentElement.classList.add('embeddedPool');}</script>
@@ -614,7 +616,7 @@ html.embeddedPool #vuematch{min-width:0!important;width:100%!important;padding:0
               </div>
             </section>
 
-            <section class="resultSection poolAdvancementSection" v-else-if="selectedIsPool">
+            <section class="resultSection" v-else-if="selectedIsPool">
               <div class="resultSectionTitle">Pool results</div>
 
               <div class="resultNote poolMatrixHelp">
@@ -779,8 +781,6 @@ html.embeddedPool #vuematch{min-width:0!important;width:100%!important;padding:0
                       </label>
                     </div>
                   </div>
-
-                  <div v-else-if="manualAdvanceState.stageComplete && !manualAdvanceEligiblePlayers().length && !manualAdvanceEliminatedPlayers().length" class="resultNote">No qualified or eliminated players were returned for this pulje. Check the source pulje results and advancement routes in Matches.</div>
 
                   <div v-else-if="manualAdvanceState.stageComplete && manualAdvanceState.destinations && manualAdvanceState.destinations.length" class="resultNote">
                     The next-stage seats exist, but the qualifying places have not been resolved yet.

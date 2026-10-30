@@ -189,7 +189,7 @@ new Vue({
       finally {this.editorLoading=false;}
     },
     closePool(){if(this.editorSaving)return;this.editorPool=null;this.poolAdvanceUrl='';this.editorMatches=[];this.editorError='';this.editorMessage='';},
-    async savePoolResults(){
+    async savePoolResults(skipRefresh=false){
       if(this.editorSaving)return;
       this.editorError='';this.editorMessage='';
       const changes=[];
@@ -214,7 +214,7 @@ new Vue({
           {seatId:b.seatId,resultMatchPlace:scoreB===m.playTo?1:2,resultPoints:scoreB}
         ]}});
       }
-      if(!changes.length){this.editorMessage='No scores have changed.';return;}
+      if(!changes.length){if(!skipRefresh)this.editorMessage='No scores have changed.';return true;}
       this.editorSaving=true;
       try {
         for(const c of changes){
@@ -223,9 +223,64 @@ new Vue({
         }
         const pool=this.editorPool;
         await this.loadMatches();
-        if(pool){const fresh=this.stages.flatMap(s=>s.pools).find(p=>p.matchId===pool.matchId);this.poolAdvanceRevision++;if(fresh)await this.openPool(fresh);this.editorMessage='Match results saved. Advancement options refreshed.';}
-      }catch(e){this.editorError='Could not save all results. Earlier matches may have saved; refresh to check.';}
+        if(pool && !skipRefresh){const fresh=this.stages.flatMap(s=>s.pools).find(p=>p.matchId===pool.matchId);this.poolAdvanceRevision++;if(fresh)await this.openPool(fresh);this.editorMessage='Match results saved. Advancement options refreshed.';}
+        return true;
+      }catch(e){this.editorError='Could not save all results. Earlier matches may have saved; refresh to check.';return false;}
       finally{this.editorSaving=false;}
+    },
+    async requestPoolEditorAction(action, poolId, savedSelections) {
+      const frame = this.$refs.poolAdvancementFrame;
+      if (!frame || !frame.contentWindow) throw new Error('The advancement panel has not loaded.');
+      const target = frame.contentWindow;
+      const requestId = 'pool-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+      return new Promise((resolve, reject) => {
+        const cleanup = () => { window.removeEventListener('message', handler); clearTimeout(timer); };
+        const handler = event => {
+          if (event.source !== target || !event.data || event.data.type !== 'pool-editor-response' || event.data.requestId !== requestId) return;
+          cleanup();
+          if (event.data.error) reject(new Error(event.data.error));
+          else resolve(event.data.result);
+        };
+        const timer = setTimeout(() => { cleanup(); reject(new Error('The advancement editor did not respond. Reopen the pulje and try again.')); }, 12000);
+        window.addEventListener('message', handler);
+        target.postMessage({ type:'pool-editor-request', requestId, action, poolId, savedSelections }, '*');
+      });
+    },
+    async saveAllPoolChanges(){
+      if (this.editorSaving || this.editorLoading || !this.editorPool) return;
+      this.editorError=''; this.editorMessage='';
+      const poolId = Number(this.editorPool.matchId);
+      let selections;
+      try {
+        // Snapshot user choices before saving scores: a results refresh can replace the editor state.
+        selections = await this.requestPoolEditorAction('snapshot', poolId);
+      } catch (e) {
+        this.editorError = e.message || 'Cannot access the advancement editor.';
+        return;
+      }
+      if (!(await this.savePoolResults(true))) return;
+      try {
+        // Saving scores changes qualification status. Refresh that state
+        // inside Matches before deciding whether advancement can be saved.
+        const updated = await this.requestPoolEditorAction('refresh', poolId);
+        if (!updated.stageComplete) {
+          this.editorMessage = 'Match scores saved. Finish all matches in this pulje before assigning destination pools or wildcards.';
+          return;
+        }
+        if (!updated.qualified && !updated.eliminated) {
+          this.editorError = 'Match scores saved, but no qualifying or eliminated players were returned for this pulje. Advancement was not saved.';
+          return;
+        }
+        const response = await this.requestPoolEditorAction('save', poolId, selections);
+        if (!response || !response.savedAdvancement) throw new Error('Advancement was not confirmed saved.');
+        await this.loadMatches();
+        const fresh = this.stages.flatMap(stage=>stage.pools).find(p=>Number(p.matchId)===poolId);
+        this.poolAdvanceRevision++;
+        if (fresh) await this.openPool(fresh);
+        this.editorMessage = 'All match results, wildcard selections and destination pools saved.';
+      } catch (e) {
+        this.editorError = 'Match scores were saved, but advancement changes could not all be saved: ' + (e.message || 'unknown error');
+      }
     },
     scheduleLines() {
       this.$nextTick(() => { if (this._isDestroyed) return; requestAnimationFrame(() => this.drawLines()); });
