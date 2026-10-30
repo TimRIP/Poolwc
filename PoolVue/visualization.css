@@ -48,3 +48,16 @@
 .vizSearchPool:hover,.vizSearchPool:focus-visible{background:#2c4867;outline:1px solid #79baff}
 .vizSearchPool span:first-child{display:grid;gap:4px;min-width:0}.vizSearchPool b{font-size:13px}.vizSearchPool small{font-size:11px;color:#a9c4df;overflow-wrap:anywhere}
 .vizSearchEmpty{padding:12px;color:#b4c6d8;font-size:13px;margin:0}
+
+/* Player names, on the main Visualization page only */
+.vizNamesPanel{background:#172435;border:1px solid #344a65;border-radius:12px;margin:0 0 12px;overflow:hidden}
+.vizNamesToggle{display:flex;width:100%;align-items:center;justify-content:space-between;padding:15px 20px;color:#f4f8ff;background:transparent;border:0;text-align:left;font-size:16px;font-weight:750;cursor:pointer}
+.vizNamesToggle:hover,.vizNamesToggle:focus-visible{background:#20344d;outline:1px solid #76b3ee}
+.vizNamesToggle .fa-user{color:#78b8ff;margin-right:8px}.vizNamesToggle small{font-size:11px;font-weight:500;color:#bad4ed;margin-left:12px}
+.vizNamesBody{border-top:1px solid #344a65;padding:14px 18px;max-height:250px;overflow-y:auto}
+.vizNamesBody p{margin:3px 0;color:#b4c6d8;font-size:13px}
+.vizNamesGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:8px}
+.vizNameButton{background:#20334b;border:1px solid #3a5676;border-radius:7px;color:#e5f2ff;cursor:pointer;text-align:left;padding:9px 11px;font-size:12px}
+.vizNameButton:hover,.vizNameButton:focus-visible{background:#2c4b6e;border-color:#7bbaff;outline:none}
+
+.vizRenameRows{display:grid;gap:9px}.vizRenameRow{display:grid;grid-template-columns:minmax(145px,1fr) minmax(180px,2fr) auto;gap:12px;align-items:center;background:#112033;border:1px solid #304761;border-radius:8px;padding:11px}.vizRenameIdentity{display:flex;flex-direction:column;gap:4px}.vizRenameIdentity small{color:#a8bdd1}.vizRenameRow input{min-width:0;width:100%;box-sizing:border-box;background:#0d1929;color:#f5f9ff;border:1px solid #496483;border-radius:6px;padding:10px}.vizRenameRow button{background:#5087e5;border:0;border-radius:6px;color:#fff;font-weight:700;padding:10px 17px;cursor:pointer}.vizRenameRow button:disabled{opacity:.45;cursor:default}.vizRenameNote{margin-bottom:14px!important}.vizRenameError{color:#ffb4b4!important}.vizRenameSuccess{color:#9de2c0!important}@media(max-width:650px){.vizRenameRow{grid-template-columns:1fr auto}.vizRenameIdentity{grid-column:1/-1}}

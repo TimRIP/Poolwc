@@ -1,7 +1,7 @@
 /* Read-only tournament visualization. Shares the existing Matches API contract. */
 new Vue({
   el: '#visualization',
-  data: { tournaments: [], selectedTournamentId: '', rows: [], loading: false, error: '', routes: [], connections: [], routeWarning: '', editorStage: null, stageEditorUrl: '', editorPool: null, poolAdvanceUrl: '', poolAdvanceRevision: 0, editorMatches: [], editorLoading: false, editorSaving: false, editorError: '', editorMessage: '', playerSearch: '', playerSearchOpen: false },
+  data: { tournaments: [], selectedTournamentId: '', rows: [], loading: false, error: '', routes: [], connections: [], routeWarning: '', editorStage: null, stageEditorUrl: '', editorPool: null, poolAdvanceUrl: '', poolAdvanceRevision: 0, editorMatches: [], editorLoading: false, editorSaving: false, editorError: '', editorMessage: '', playerSearch: '', playerSearchOpen: false, playerNamesOpen: false, renameablePlayers: [], playerNamesLoading: false, savingPlayerNameId: null, playerNameMessage: '', playerNameError: '' },
   computed: {
     stages() {
       const nodes = new Map();
@@ -104,6 +104,31 @@ new Vue({
     },
   },
   methods: {
+    playerNameChanged(player) { return !!player && !!String(player.editName||'').trim() && String(player.editName).trim() !== String(player.playerName||'').trim(); },
+    async loadRenameablePlayers() {
+      this.renameablePlayers=[]; this.playerNameError=''; this.playerNameMessage='';
+      if (!this.selectedTournamentId) return;
+      this.playerNamesLoading=true;
+      try {
+        const r=await axios.get('http://localhost:5000/api/tournament/'+encodeURIComponent(this.selectedTournamentId)+'/players',{headers:this.authHeaders()});
+        const list=Array.isArray(r.data && r.data.players)?r.data.players:[];
+        this.renameablePlayers=list.map(x=>({playerId:Number(x.playerId),playerName:x.playerName||('Player #'+x.playerId),editName:x.playerName||('Player #'+x.playerId)}));
+      } catch(e) { this.playerNameError=(e.response && e.response.data && e.response.data.message)||'Could not load player names. Administrator access may be required.'; }
+      finally { this.playerNamesLoading=false; }
+    },
+    async savePlayerName(player) {
+      if (!this.playerNameChanged(player) || this.savingPlayerNameId!==null) return;
+      const name=String(player.editName||'').trim();
+      if (!name || name.length>255) {this.playerNameError='Name must contain 1–255 characters.'; return;}
+      this.savingPlayerNameId=player.playerId;this.playerNameError='';this.playerNameMessage='';
+      try {
+        const r=await axios.put('http://localhost:5000/api/tournament/'+encodeURIComponent(this.selectedTournamentId)+'/players/'+encodeURIComponent(player.playerId)+'/name',{name},{headers:Object.assign({'Content-Type':'application/json; charset=utf-8'},this.authHeaders())});
+        player.playerName=name;player.editName=name;
+        await this.loadMatches();
+        this.playerNameMessage=(r.data&&r.data.message)||'Player name saved.';
+      } catch(e) {this.playerNameError=(e.response&&e.response.data&&e.response.data.message)||'Could not save player name.';}
+      finally {this.savingPlayerNameId=null;}
+    },
     selectPlayerPool(pool) {
       this.playerSearchOpen = false;
       this.openPool(pool);
@@ -189,7 +214,7 @@ new Vue({
       finally {this.editorLoading=false;}
     },
     closePool(){if(this.editorSaving)return;this.editorPool=null;this.poolAdvanceUrl='';this.editorMatches=[];this.editorError='';this.editorMessage='';},
-    async savePoolResults(skipRefresh=false){
+    async savePoolResults(){
       if(this.editorSaving)return;
       this.editorError='';this.editorMessage='';
       const changes=[];
@@ -214,7 +239,7 @@ new Vue({
           {seatId:b.seatId,resultMatchPlace:scoreB===m.playTo?1:2,resultPoints:scoreB}
         ]}});
       }
-      if(!changes.length){if(!skipRefresh)this.editorMessage='No scores have changed.';return true;}
+      if(!changes.length){this.editorMessage='No scores have changed.';return;}
       this.editorSaving=true;
       try {
         for(const c of changes){
@@ -223,64 +248,9 @@ new Vue({
         }
         const pool=this.editorPool;
         await this.loadMatches();
-        if(pool && !skipRefresh){const fresh=this.stages.flatMap(s=>s.pools).find(p=>p.matchId===pool.matchId);this.poolAdvanceRevision++;if(fresh)await this.openPool(fresh);this.editorMessage='Match results saved. Advancement options refreshed.';}
-        return true;
-      }catch(e){this.editorError='Could not save all results. Earlier matches may have saved; refresh to check.';return false;}
+        if(pool){const fresh=this.stages.flatMap(s=>s.pools).find(p=>p.matchId===pool.matchId);this.poolAdvanceRevision++;if(fresh)await this.openPool(fresh);this.editorMessage='Match results saved. Advancement options refreshed.';}
+      }catch(e){this.editorError='Could not save all results. Earlier matches may have saved; refresh to check.';}
       finally{this.editorSaving=false;}
-    },
-    async requestPoolEditorAction(action, poolId, savedSelections) {
-      const frame = this.$refs.poolAdvancementFrame;
-      if (!frame || !frame.contentWindow) throw new Error('The advancement panel has not loaded.');
-      const target = frame.contentWindow;
-      const requestId = 'pool-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-      return new Promise((resolve, reject) => {
-        const cleanup = () => { window.removeEventListener('message', handler); clearTimeout(timer); };
-        const handler = event => {
-          if (event.source !== target || !event.data || event.data.type !== 'pool-editor-response' || event.data.requestId !== requestId) return;
-          cleanup();
-          if (event.data.error) reject(new Error(event.data.error));
-          else resolve(event.data.result);
-        };
-        const timer = setTimeout(() => { cleanup(); reject(new Error('The advancement editor did not respond. Reopen the pulje and try again.')); }, 12000);
-        window.addEventListener('message', handler);
-        target.postMessage({ type:'pool-editor-request', requestId, action, poolId, savedSelections }, '*');
-      });
-    },
-    async saveAllPoolChanges(){
-      if (this.editorSaving || this.editorLoading || !this.editorPool) return;
-      this.editorError=''; this.editorMessage='';
-      const poolId = Number(this.editorPool.matchId);
-      let selections;
-      try {
-        // Snapshot user choices before saving scores: a results refresh can replace the editor state.
-        selections = await this.requestPoolEditorAction('snapshot', poolId);
-      } catch (e) {
-        this.editorError = e.message || 'Cannot access the advancement editor.';
-        return;
-      }
-      if (!(await this.savePoolResults(true))) return;
-      try {
-        // Saving scores changes qualification status. Refresh that state
-        // inside Matches before deciding whether advancement can be saved.
-        const updated = await this.requestPoolEditorAction('refresh', poolId);
-        if (!updated.stageComplete) {
-          this.editorMessage = 'Match scores saved. Finish all matches in this pulje before assigning destination pools or wildcards.';
-          return;
-        }
-        if (!updated.qualified && !updated.eliminated) {
-          this.editorError = 'Match scores saved, but no qualifying or eliminated players were returned for this pulje. Advancement was not saved.';
-          return;
-        }
-        const response = await this.requestPoolEditorAction('save', poolId, selections);
-        if (!response || !response.savedAdvancement) throw new Error('Advancement was not confirmed saved.');
-        await this.loadMatches();
-        const fresh = this.stages.flatMap(stage=>stage.pools).find(p=>Number(p.matchId)===poolId);
-        this.poolAdvanceRevision++;
-        if (fresh) await this.openPool(fresh);
-        this.editorMessage = 'All match results, wildcard selections and destination pools saved.';
-      } catch (e) {
-        this.editorError = 'Match scores were saved, but advancement changes could not all be saved: ' + (e.message || 'unknown error');
-      }
     },
     scheduleLines() {
       this.$nextTick(() => { if (this._isDestroyed) return; requestAnimationFrame(() => this.drawLines()); });
@@ -345,7 +315,7 @@ new Vue({
       if(this.selectedTournamentId) await this.loadMatches();
     },
     async loadMatches() {
-      if(!this.selectedTournamentId) {this.rows=[];return;}
+      if(!this.selectedTournamentId) {this.rows=[];this.renameablePlayers=[];return;}
       this.loading=true;this.error='';
       try {
         const res=await axios.post('http://localhost:5000/api/matches',Number(this.selectedTournamentId),
@@ -353,7 +323,7 @@ new Vue({
         let data=res.data && res.data.matches !== undefined ? res.data.matches : res.data;
         if(typeof data==='string') data=JSON.parse(data);
         if(!Array.isArray(data)) throw new Error('Unexpected tournament response');
-        this.rows=data; localStorage.setItem('lastTournamentId',this.selectedTournamentId); await this.loadRoutes();
+        this.rows=data; await this.loadRenameablePlayers(); localStorage.setItem('lastTournamentId',this.selectedTournamentId); await this.loadRoutes();
       } catch(e) {this.rows=[];this.routes=[];this.connections=[];this.error='Could not load the tournament visualization: '+(e.response && e.response.status===401?'please log in again.':e.message);}
       finally {this.loading=false;}
     },
