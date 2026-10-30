@@ -187,8 +187,28 @@ var dash = new Vue({
     },
     matchingTemplates: function () {
       var count = Number(this.formdata.tournamentplayers);
+      var seen = new Set();
+      // The API returns newest tournaments first. Show the latest copy of each
+      // distinct FormData configuration, ignoring name, scheduling, and venue settings.
+      function canonical(value, isRoot) {
+        if (Array.isArray(value)) {
+          return '[' + value.map(function (item) { return canonical(item, false); }).join(',') + ']';
+        }
+        if (value !== null && typeof value === 'object') {
+          return '{' + Object.keys(value).filter(function (key) {
+            return !isRoot || !['tournamentname', 'schedulestart', 'gamelengthminutes', 'venueopentime', 'venueclosetime', 'venues'].includes(key.toLowerCase());
+          }).sort().map(function (key) {
+            return JSON.stringify(key) + ':' + canonical(value[key], false);
+          }).join(',') + '}';
+        }
+        return JSON.stringify(value);
+      }
       return this.tournamentTemplates.filter(function (template) {
-        return Number(template.playerCount) === count;
+        if (Number(template.playerCount) !== count) return false;
+        var signature = canonical(template.form, true);
+        if (seen.has(signature)) return false;
+        seen.add(signature);
+        return true;
       });
     },
     isValid: function () {

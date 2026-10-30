@@ -96,3 +96,6 @@
 .vizPlayer{flex-wrap:wrap;gap:6px 8px}
 .vizPlayer .vizPlayerName{flex:1 1 90px;min-width:90px;overflow-wrap:break-word;word-break:normal}
 .vizPlayer .vizPlayerState{flex:1 0 100%;margin-left:30px;text-align:left;overflow-wrap:anywhere}
+
+/* Hide visual connectors between stages; keep all pulje functionality. */
+.vizLines { display: none !important; }
