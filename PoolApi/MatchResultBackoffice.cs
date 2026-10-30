@@ -194,6 +194,7 @@ namespace DrukDatabaseLayer
         public List<ManualAdvancementDestinationDetails> Destinations { get; set; } = new List<ManualAdvancementDestinationDetails>();
         public List<StageManualWildcardSlotDetails> WildcardSlots { get; set; } = new List<StageManualWildcardSlotDetails>();
         public List<StageManualWildcardCandidateDetails> WildcardCandidates { get; set; } = new List<StageManualWildcardCandidateDetails>();
+        public List<StageManualAdvancementPoolDetails> WildcardDestinationPools { get; set; } = new List<StageManualAdvancementPoolDetails>();
     }
 
     public class ManualAdvancementAssignment
@@ -220,7 +221,6 @@ namespace DrukDatabaseLayer
         public int TargetStageMatchId { get; set; }
         public string TargetStageName { get; set; }
         public int CurrentDestinationPoolMatchId { get; set; }
-        public int CurrentDestinationSeatId { get; set; }
         public string CurrentDestinationPoolName { get; set; }
     }
 
@@ -234,7 +234,6 @@ namespace DrukDatabaseLayer
         public int CurrentAssignedCount { get; set; }
         public int WildcardCapacity { get; set; }
         public int WildcardAssignedCount { get; set; }
-        public List<int> SeatIds { get; set; } = new List<int>();
     }
 
     public class StageManualWildcardSlotDetails
@@ -244,6 +243,7 @@ namespace DrukDatabaseLayer
         public string TargetStageName { get; set; }
         public int DestinationPoolMatchId { get; set; }
         public string DestinationPoolName { get; set; }
+        public int? PreferredDestinationPoolMatchId { get; set; }
         public int? PlayerId { get; set; }
         public string PlayerName { get; set; }
     }
@@ -281,7 +281,6 @@ namespace DrukDatabaseLayer
     {
         public int PlayerId { get; set; }
         public int DestinationPoolMatchId { get; set; }
-        public int? DestinationSeatId { get; set; }
     }
 
     public class StageManualWildcardAssignment
@@ -289,7 +288,6 @@ namespace DrukDatabaseLayer
         public int SeatId { get; set; }
         public int PlayerId { get; set; }
         public int DestinationPoolMatchId { get; set; }
-        public int? DestinationSeatId { get; set; }
     }
 
     public class StageManualAdvancementSaveResult
@@ -453,6 +451,7 @@ OPTION (MAXRECURSION 1000);";
                         if (parentStageId.HasValue)
                         {
                             state.WildcardSlots = GetStageWildcardSlots(conn, transaction, parentStageId.Value);
+                            state.WildcardDestinationPools = BuildStageManualAdvancementState(conn, transaction, parentStageId.Value).Pools;
                             state.WildcardCandidates = GetStageWildcardCandidates(conn, transaction, parentStageId.Value)
                                 .Where(x => x.SourcePoolMatchId == sourceStageMatchId).ToList();
                         }
@@ -480,9 +479,17 @@ OPTION (MAXRECURSION 1000);";
             }
         }
 
-        // Assign wildcard player identities now; destination pools are finalized in the incoming stage.
+        public class PoolWildcardDestinationSelection
+        {
+            public int SeatId { get; set; }
+            public int DestinationPoolMatchId { get; set; }
+        }
+
+        // Reserve wildcard players now. Store the user's preferred destination
+        // separately from the physical reserved seat, which is moved only when
+        // the incoming stage is saved. This avoids disturbing active matches.
         // A source pool can change only its own wildcard choices, never another pool's choices.
-        public ManualAdvancementState SavePoolWildcards(int sourcePoolId, IList<ManualAdvancementAssignment> assignments)
+        public ManualAdvancementState SavePoolWildcards(int sourcePoolId, IList<ManualAdvancementAssignment> assignments, IList<PoolWildcardDestinationSelection> destinationSelections = null)
         {
             if (assignments == null) throw new ArgumentException("Wildcard assignments are required.");
             using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
@@ -506,6 +513,22 @@ OPTION (MAXRECURSION 1000);";
                             chosen.Select(x => x.PlayerId.Value).Distinct().Count() != chosen.Count ||
                             chosen.Select(x => x.DestinationSeatId).Distinct().Count() != chosen.Count)
                             throw new InvalidOperationException("Select distinct eliminated players and valid wildcard seats.");
+
+                        // Validate requested destinations against the exact target stage
+                        // of each reserved wildcard seat. A pool need not have a wildcard
+                        // seat itself, but must have capacity managed by the incoming stage.
+                        destinationSelections = destinationSelections ?? new List<PoolWildcardDestinationSelection>();
+                        if (destinationSelections.Select(x => x.SeatId).Distinct().Count() != destinationSelections.Count ||
+                            destinationSelections.Any(x => !chosen.Any(a => a.DestinationSeatId == x.SeatId)))
+                            throw new InvalidOperationException("Choose one destination for each selected wildcard seat.");
+                        var possiblePools = BuildStageManualAdvancementState(conn, transaction, stageId.Value).Pools;
+                        foreach (var selection in destinationSelections)
+                        {
+                            var slot = slots.First(x => x.SeatId == selection.SeatId);
+                            if (!possiblePools.Any(x => x.MatchId == selection.DestinationPoolMatchId &&
+                                                        x.TargetStageMatchId == slot.TargetStageMatchId))
+                                throw new InvalidOperationException("The destination pool is not available in the wildcard's target stage.");
+                        }
 
                         var ownPlayerIds = new HashSet<int>(validPlayers);
                         foreach (var slot in slots)
@@ -531,6 +554,26 @@ OPTION (MAXRECURSION 1000);";
                                 cmd.Parameters.Add("@PlayerId", SqlDbType.Int).Value = item.PlayerId.Value;
                                 if (cmd.ExecuteNonQuery() != 1)
                                     throw new InvalidOperationException("A wildcard seat was assigned by another pool. Refresh and try again.");
+                            }
+                        }
+                        // Preferences remain attached to reserved seat IDs. Removing a
+                        // wildcard also removes its previously selected destination.
+                        foreach (var slot in slots.Where(x => x.PlayerId.HasValue && ownPlayerIds.Contains(x.PlayerId.Value)))
+                        {
+                            using (var cmd = new SqlCommand("DELETE FROM WildcardDestinationPreference WHERE SeatId = @SeatId", conn, transaction))
+                            {
+                                cmd.Parameters.Add("@SeatId", SqlDbType.Int).Value = slot.SeatId;
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
+                        foreach (var selection in destinationSelections)
+                        {
+                            using (var cmd = new SqlCommand(@"UPDATE WildcardDestinationPreference SET DestinationPoolMatchId = @PoolId WHERE SeatId = @SeatId;
+IF @@ROWCOUNT = 0 INSERT INTO WildcardDestinationPreference (SeatId, DestinationPoolMatchId) VALUES (@SeatId, @PoolId);", conn, transaction))
+                            {
+                                cmd.Parameters.Add("@SeatId", SqlDbType.Int).Value = selection.SeatId;
+                                cmd.Parameters.Add("@PoolId", SqlDbType.Int).Value = selection.DestinationPoolMatchId;
+                                cmd.ExecuteNonQuery();
                             }
                         }
                         transaction.Commit();
@@ -881,8 +924,6 @@ OPTION (MAXRECURSION 1000);";
                             TargetStageName = targetStageName,
                             Pools = targetPools
                         };
-                        foreach (StageManualAdvancementPoolDetails pool in incoming.Pools)
-                            pool.SeatIds = candidateSeats.Where(x => x.MatchId == pool.MatchId).OrderBy(x => x.SeatId).Select(x => x.SeatId).ToList();
 
                         foreach (int sourceStageId in sourceStageIds)
                         {
@@ -1144,30 +1185,13 @@ OPTION (MAXRECURSION 1000);";
                         Dictionary<int, int> destinationSeatByWildcardSeat = new Dictionary<int, int>();
                         HashSet<int> usedSeatIds = new HashSet<int>();
 
-                        // An explicit destination seat takes precedence over the legacy pool-only routing.
-                        // Reject duplicates and seats outside the destination pool before modifying any row.
-                        foreach (StageManualAdvancementAssignment assignment in assignments.Where(x => x.DestinationSeatId.HasValue))
-                        {
-                            StageManualCandidateSeat requested = candidateSeats.FirstOrDefault(x => x.SeatId == assignment.DestinationSeatId.Value);
-                            if (requested == null || requested.MatchId != assignment.DestinationPoolMatchId || !usedSeatIds.Add(requested.SeatId))
-                                throw new InvalidOperationException("A selected qualifier seat is invalid or already used.");
-                            destinationSeatByPlayer[assignment.PlayerId] = requested.SeatId;
-                        }
-                        foreach (StageManualWildcardAssignment assignment in wildcardAssignments.Where(x => x.DestinationSeatId.HasValue))
-                        {
-                            StageManualCandidateSeat requested = candidateSeats.FirstOrDefault(x => x.SeatId == assignment.DestinationSeatId.Value);
-                            if (requested == null || requested.MatchId != assignment.DestinationPoolMatchId || !usedSeatIds.Add(requested.SeatId))
-                                throw new InvalidOperationException("A selected wildcard seat is invalid or already used.");
-                            destinationSeatByWildcardSeat[assignment.SeatId] = requested.SeatId;
-                        }
-
                         // First keep every route that is already in its selected pool.
                         // Because all source stages are saved together, the remaining free
                         // seats form the exact capacity available for cross-source moves.
                         foreach (StageManualRouteRecord route in routes.Where(x => x.PlayerId.HasValue))
                         {
                             int chosenPoolId = assignmentByPlayer[route.PlayerId.Value].DestinationPoolMatchId;
-                            if (!destinationSeatByPlayer.ContainsKey(route.PlayerId.Value) && chosenPoolId == route.DestinationPoolMatchId &&
+                            if (chosenPoolId == route.DestinationPoolMatchId &&
                                 candidateSeats.Any(x => x.SeatId == route.SeatId) &&
                                 !usedSeatIds.Contains(route.SeatId))
                             {
@@ -1179,7 +1203,7 @@ OPTION (MAXRECURSION 1000);";
                         foreach (StageManualWildcardSlotDetails slot in wildcardSlots)
                         {
                             StageManualWildcardAssignment assignment = wildcardAssignmentBySeat[slot.SeatId];
-                            if (!destinationSeatByWildcardSeat.ContainsKey(slot.SeatId) && assignment.DestinationPoolMatchId == slot.DestinationPoolMatchId &&
+                            if (assignment.DestinationPoolMatchId == slot.DestinationPoolMatchId &&
                                 candidateSeats.Any(x => x.SeatId == slot.SeatId) &&
                                 !usedSeatIds.Contains(slot.SeatId))
                             {
@@ -4364,8 +4388,10 @@ SELECT
     DP.ParentMatchId AS TargetStageMatchId,
     TS.Name AS TargetStageName,
     S.PlayerId,
-    P.Name AS PlayerName
+    P.Name AS PlayerName,
+    WD.DestinationPoolMatchId AS PreferredDestinationPoolMatchId
 FROM Seat S
+LEFT JOIN WildcardDestinationPreference WD ON WD.SeatId = S.Id
 INNER JOIN [Match] DP ON DP.Id = S.MatchId
 LEFT JOIN [Match] TS ON TS.Id = DP.ParentMatchId
 LEFT JOIN Player P ON P.Id = S.PlayerId
@@ -4384,6 +4410,7 @@ ORDER BY DP.Id, S.Id;", conn, transaction))
                         {
                             SeatId = Convert.ToInt32(reader["SeatId"]),
                             DestinationPoolMatchId = destinationPoolId,
+                            PreferredDestinationPoolMatchId = ToNullableInt(reader["PreferredDestinationPoolMatchId"]),
                             DestinationPoolName = ToNullableString(reader["DestinationPoolName"]),
                             TargetStageMatchId = targetStageId ?? destinationPoolId,
                             TargetStageName = targetStageId.HasValue
@@ -4549,7 +4576,6 @@ FROM (
                     TargetStageMatchId = x.TargetStageMatchId,
                     TargetStageName = x.TargetStageName,
                     CurrentDestinationPoolMatchId = x.DestinationPoolMatchId,
-                    CurrentDestinationSeatId = x.SeatId,
                     CurrentDestinationPoolName = x.DestinationPoolName
                 })
                 .OrderBy(x => x.TargetStageMatchId)
@@ -5102,11 +5128,13 @@ ORDER BY S.Id;", conn, transaction))
 SELECT DISTINCT S.Id, S.MatchId, S.PlayerId, M.Name AS MatchName
 FROM Seat S
 INNER JOIN [Match] M ON M.Id = S.MatchId
--- Only invalidate destinations routed from the stage being recalculated.
--- Wildcard seats use the PARENT stage as AutoSelectMatchId, so they
--- must not be cleared when another individual pulje changes/finishes.
--- Recalculating that parent stage itself can still invalidate its seats.
 WHERE S.AutoSelectMatchId = @SourceStageMatchId
+   OR (
+        S.AutoSelectlPlace = 0
+        AND S.AutoSelectMatchId = (
+            SELECT ParentMatchId FROM [Match] WHERE Id = @SourceStageMatchId
+        )
+      )
 ORDER BY S.Id;", conn, transaction))
             {
                 cmd.Parameters.Add("@SourceStageMatchId", SqlDbType.Int).Value = sourceStageMatchId;

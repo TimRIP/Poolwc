@@ -1040,3 +1040,16 @@ BEGIN
 END
 GO
 
+IF OBJECT_ID(N'dbo.WildcardDestinationPreference', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.WildcardDestinationPreference
+    (
+        SeatId INT NOT NULL PRIMARY KEY,
+        DestinationPoolMatchId INT NOT NULL,
+        CONSTRAINT FK_WildcardDestinationPreference_Seat
+            FOREIGN KEY (SeatId) REFERENCES dbo.Seat(Id),
+        CONSTRAINT FK_WildcardDestinationPreference_Match
+            FOREIGN KEY (DestinationPoolMatchId) REFERENCES dbo.[Match](Id)
+    );
+END;
+GO

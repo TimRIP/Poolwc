@@ -794,7 +794,7 @@ html.embeddedPool #vuematch{min-width:0!important;width:100%!important;padding:0
                   <div v-if="manualAdvanceState.stageComplete && manualAdvanceEliminatedPlayers().length" class="manualAdvanceRoutes" style="margin-top:16px">
                     <div class="manualAdvanceTitle">Eliminated players · wildcard selection</div>
                     <div class="manualAdvanceSub" style="margin-bottom:10px">
-                      Assign a reserved wildcard place to an eliminated player now. Select the destination pool later in the incoming stage.
+                      Select a wildcard and its destination pulje. The choice can be changed later in the incoming stage.
                     </div>
                     <div v-for="player in manualAdvanceEliminatedPlayers()"
                          :key="'wildcard-pool-player-' + player.playerId"
@@ -814,6 +814,19 @@ html.embeddedPool #vuematch{min-width:0!important;width:100%!important;padding:0
                                   :value="slot.seatId"
                                   :disabled="manualWildcardSelectedElsewhere(slot.seatId, player.playerId)">
                             Wildcard #{{ slot.seatId }} · {{ slot.targetStageName || 'Next stage' }}
+                          </option>
+                        </select>
+                      </label>
+                      <label class="manualAdvanceSelect" v-if="manualWildcardAssignments[player.playerId] != null">
+                        <span>Destination pulje</span>
+                        <select :value="manualWildcardPoolSelection(player)"
+                                @change="setManualWildcardPool(player, $event.target.value)"
+                                :disabled="!matchEditAllowed || savingManualWildcards">
+                          <option v-for="pool in manualWildcardPoolOptions(player)"
+                                  :key="'wildcard-pool-'+player.playerId+'-'+pool.poolId"
+                                  :value="pool.poolId"
+>
+                            {{ pool.name }}
                           </option>
                         </select>
                       </label>
