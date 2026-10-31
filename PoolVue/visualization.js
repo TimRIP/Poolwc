@@ -10,7 +10,7 @@ new Vue({
     selectedFinderPlayer: null, finderMatches: [], finderMatchesLoading: false,
     playerNamesOpen: false, renameablePlayers: [], playerNamesLoading: false,
     savingPlayerNameId: null, playerNameMessage: '', playerNameError: '',
-    poolAdvanceStates: {}, playerDestinations: {}, wildcardStages: {}, tournamentPodium: null, podiumLoading: false
+    poolScheduleDetails: {}, poolAdvanceStates: {}, playerDestinations: {}, wildcardStages: {}, tournamentPodium: null, podiumLoading: false
   },
   computed: {
     stages() {
@@ -289,6 +289,7 @@ new Vue({
       const poolIds = this.stages.flatMap(stage => stage.pools.map(pool => Number(pool.matchId))).filter(id => Number.isFinite(id));
       if (!poolIds.length) {
         this.poolAdvanceStates = {};
+        this.poolScheduleDetails = {};
         this.tournamentPodium = null;
         return;
       }
@@ -721,12 +722,52 @@ new Vue({
         this.podiumLoading = false;
       }
     },
+    async loadPoolScheduleDetails() {
+      const selected = String(this.selectedTournamentId);
+      const ids = this.stages.flatMap(stage => stage.pools.map(pool => Number(pool.matchId)));
+      const details = {};
+      // Read the same pulje details endpoint used by Matches.
+      // Use limited parallelism to avoid flooding the API on large tournaments.
+      let next = 0;
+      const workers = Array.from({length: Math.min(6, ids.length)}, async () => {
+        while (next < ids.length) {
+          const id = ids[next++];
+          try {
+            const response = await axios.get('http://localhost:5000/api/match/' + encodeURIComponent(id), {headers:this.authHeaders()});
+            const value = response.data || {};
+            const venue = value.venue || {};
+            const schedule = value.schedule || {};
+            details[String(id)] = {
+              venueName: venue.facilityName || venue.venueName || venue.name || value.venueName || '',
+              fromTime: schedule.fromTime || value.fromTime || ''
+            };
+          } catch (e) {
+            details[String(id)] = {venueName:'',fromTime:''};
+          }
+        }
+      });
+      await Promise.all(workers);
+      if (selected === String(this.selectedTournamentId)) this.poolScheduleDetails = details;
+    },
+    poolSchedule(pool) {
+      return (pool && this.poolScheduleDetails[String(pool.matchId)]) || {};
+    },
+    poolStartTime(pool) {
+      const value = this.poolSchedule(pool).fromTime;
+      if (!value) return 'Start time not set';
+      const text = String(value);
+      const time = /T(\d{2}:\d{2})/.exec(text);
+      const date = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
+      const dateText = date && date[1] !== '2000' ? date[3]+'/'+date[2]+'/'+date[1] : '';
+      return [dateText, time ? 'Starts '+time[1] : ''].filter(Boolean).join(' · ') || text;
+    },
     async loadMatches() {
       if (!this.selectedTournamentId) {
         this.rows = [];
         this.renameablePlayers = [];
         this.finderPlayers = [];
         this.poolAdvanceStates = {};
+        this.poolScheduleDetails = {};
         this.tournamentPodium = null;
         return;
       }
@@ -743,6 +784,7 @@ new Vue({
         await this.loadRenameablePlayers();
         await this.loadFinderPlayers();
         await this.loadPoolAdvanceStates();
+        await this.loadPoolScheduleDetails();
         await this.loadTournamentPodium();
         localStorage.setItem('lastTournamentId', this.selectedTournamentId);
         await this.loadRoutes();
@@ -751,6 +793,7 @@ new Vue({
         this.routes = [];
         this.connections = [];
         this.poolAdvanceStates = {};
+        this.poolScheduleDetails = {};
         this.tournamentPodium = null;
         this.error = 'Could not load the tournament visualization: ' + ((e.response && e.response.status === 401) ? 'please log in again.' : e.message);
       } finally {

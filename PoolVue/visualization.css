@@ -110,3 +110,12 @@
 .vizPodiumPlaces small{display:block;font-size:10px;letter-spacing:1px;color:#c6d1df;font-weight:800;margin-bottom:5px}
 .vizPodiumPlaces strong{display:block;font-size:20px;color:#fff;overflow-wrap:anywhere}
 @media(max-width:650px){.vizPodiumPlaces{grid-template-columns:1fr}}
+
+/* Compact stage spacing; keep connector lines hidden. */
+.vizStages { gap: 32px !important; }
+.vizLines { display: none !important; }
+
+/* Venue and scheduled start on each pulje card */
+.vizPoolSchedule{display:grid;gap:5px;padding:9px 12px;border-bottom:1px solid #44566b;font-size:12px;color:#d7e5f7;overflow-wrap:anywhere}
+.vizPoolSchedule span{display:flex;align-items:center;gap:7px;min-width:0}
+.vizPoolSchedule i{width:14px;text-align:center;color:#85bdf4;flex-shrink:0}
