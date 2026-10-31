@@ -10,7 +10,7 @@ new Vue({
     selectedFinderPlayer: null, finderMatches: [], finderMatchesLoading: false,
     playerNamesOpen: false, renameablePlayers: [], playerNamesLoading: false,
     savingPlayerNameId: null, playerNameMessage: '', playerNameError: '',
-    poolAdvanceStates: {}, playerDestinations: {}, wildcardStages: {}
+    poolAdvanceStates: {}, playerDestinations: {}, wildcardStages: {}, tournamentPodium: null, podiumLoading: false
   },
   computed: {
     stages() {
@@ -289,6 +289,7 @@ new Vue({
       const poolIds = this.stages.flatMap(stage => stage.pools.map(pool => Number(pool.matchId))).filter(id => Number.isFinite(id));
       if (!poolIds.length) {
         this.poolAdvanceStates = {};
+        this.tournamentPodium = null;
         return;
       }
       const nextStates = {};
@@ -673,12 +674,60 @@ new Vue({
       }
       if (this.selectedTournamentId) await this.loadMatches();
     },
+    async loadTournamentPodium() {
+      this.tournamentPodium = null;
+      const stages = this.stages;
+      const lastStage = stages.length ? stages[stages.length - 1] : null;
+      // Do not invent a champion if the last stage has multiple independent puljer.
+      if (!lastStage || lastStage.pools.length !== 1) return;
+      const finalPool = lastStage.pools[0];
+      if (!finalPool.matches || !finalPool.matches.length) return;
+      this.podiumLoading = true;
+      try {
+        const response = await Promise.all(finalPool.matches.map(match =>
+          axios.get('http://localhost:5000/api/match/' + encodeURIComponent(match.matchId),
+            { headers: this.authHeaders() })));
+        const victories = new Map();
+        let complete = true;
+        for (const item of response) {
+          const detail = item.data || {};
+          const seats = (Array.isArray(detail.seats) ? detail.seats : [])
+            .filter(seat => seat.playerId !== null && seat.playerId !== undefined);
+          const rules = detail.matchRules || {};
+          const playTo = rules.playTo == null ? null : Number(rules.playTo);
+          if (seats.length !== 2 || !Number.isFinite(playTo) ||
+            seats.some(seat => seat.resultPoints === null || seat.resultPoints === undefined)) {
+            complete = false;
+            break;
+          }
+          const winnerSeats = seats.filter(seat => Number(seat.resultPoints) === playTo);
+          if (winnerSeats.length !== 1) { complete = false; break; }
+          for (const seat of seats) {
+            const key = String(seat.playerId);
+            if (!victories.has(key)) victories.set(key, {
+              playerId: seat.playerId, playerName: seat.playerName || ('Player #' + seat.playerId), wins: 0
+            });
+          }
+          victories.get(String(winnerSeats[0].playerId)).wins++;
+        }
+        if (!complete || victories.size !== 2) return;
+        const ranked = [...victories.values()].sort((a, b) => b.wins - a.wins);
+        if (ranked[0].wins === ranked[1].wins) return;
+        this.tournamentPodium = { winner: ranked[0], runnerUp: ranked[1], stageName: lastStage.matchName };
+      } catch (e) {
+        // Missing or unfinished final results should not display a guessed winner.
+        this.tournamentPodium = null;
+      } finally {
+        this.podiumLoading = false;
+      }
+    },
     async loadMatches() {
       if (!this.selectedTournamentId) {
         this.rows = [];
         this.renameablePlayers = [];
         this.finderPlayers = [];
         this.poolAdvanceStates = {};
+        this.tournamentPodium = null;
         return;
       }
       this.loading = true;
@@ -694,6 +743,7 @@ new Vue({
         await this.loadRenameablePlayers();
         await this.loadFinderPlayers();
         await this.loadPoolAdvanceStates();
+        await this.loadTournamentPodium();
         localStorage.setItem('lastTournamentId', this.selectedTournamentId);
         await this.loadRoutes();
       } catch (e) {
@@ -701,6 +751,7 @@ new Vue({
         this.routes = [];
         this.connections = [];
         this.poolAdvanceStates = {};
+        this.tournamentPodium = null;
         this.error = 'Could not load the tournament visualization: ' + ((e.response && e.response.status === 401) ? 'please log in again.' : e.message);
       } finally {
         this.loading = false;

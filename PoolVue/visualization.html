@@ -8,6 +8,13 @@
 <header class="vizNav"><nav><a href="index.htm">Tournament</a><a href="matches.html">Matches</a><a class="active" href="visualization.html">Visualization</a></nav>
 <div class="vizPicker"><label for="vizTournament">Tournament</label><select id="vizTournament" v-model="selectedTournamentId" @change="loadMatches" :disabled="loading"><option value="">Select tournament</option><option v-for="t in tournaments" :key="t.tournamentId" :value="String(t.tournamentId)">{{t.name}}</option></select><button type="button" @click="refresh" :disabled="loading">↻ Refresh</button></div></header>
 <main class="vizMain"><div class="vizHeading"><div><span class="vizEyebrow">TOURNAMENT OVERVIEW</span><h1>Visualization</h1><p>Click a pulje to enter match results, or follow the tournament paths.</p></div><span class="vizReadonly"><i class="fa fa-pencil"></i> Click a pulje to edit scores</span></div>
+<section v-if="tournamentPodium" class="vizPodium" aria-label="Tournament results">
+  <div class="vizPodiumHeading"><span class="vizEyebrow">FINAL RESULTS</span><strong>{{tournamentPodium.stageName}}</strong></div>
+  <div class="vizPodiumPlaces">
+    <div class="vizPodiumWinner"><span class="vizPodiumIcon">🏆</span><div><small>TOURNAMENT WINNER</small><strong>{{tournamentPodium.winner.playerName}}</strong></div></div>
+    <div class="vizPodiumRunner"><span class="vizPodiumIcon">🥈</span><div><small>SECOND PLACE</small><strong>{{tournamentPodium.runnerUp.playerName}}</strong></div></div>
+  </div>
+</section>
 <section class="vizNamesPanel" aria-label="Player names">
  <button type="button" class="vizNamesToggle" @click="playerNamesOpen=!playerNamesOpen" :aria-expanded="String(playerNamesOpen)">
   <span><i class="fa fa-user" aria-hidden="true"></i> Player names <small>{{renameablePlayers.length}} players</small></span>

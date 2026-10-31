@@ -614,7 +614,31 @@ ORDER BY CASE WHEN S.AutoSelectMatchId IS NOT NULL AND S.AutoSelectlPlace > 0 TH
                                 find.Parameters.Add("@PoolId", SqlDbType.Int).Value = selection.DestinationPoolMatchId;
                                 object value = find.ExecuteScalar();
                                 if (value == null || value == DBNull.Value)
-                                    throw new InvalidOperationException("The selected wildcard destination pool has no free seat. Choose another pool.");
+                                {
+                                    // All seats may already contain normal qualifiers. In that
+                                    // case exchange one *unplayed normal qualifier* for this
+                                    // wildcard instead of rejecting the destination.
+                                    // The displaced qualifier travels to the wildcard's old
+                                    // pulje, retaining its normal qualification route.
+                                    using (var swapFind = new SqlCommand(@"SELECT TOP 1 S.Id
+FROM Seat S WITH (UPDLOCK)
+WHERE S.MatchId = @PoolId
+  AND S.PlayerId IS NOT NULL
+  AND S.AutoSelectMatchId IS NOT NULL
+  AND S.AutoSelectlPlace > 0
+  AND S.ResultMatchPlace IS NULL AND S.ResultPoints IS NULL
+  AND NOT EXISTS (SELECT 1 FROM WildcardDestinationPreference W WHERE W.SeatId = S.Id)
+  AND NOT EXISTS (SELECT 1 FROM Seat Child
+                  WHERE Child.ParentSeatId = S.Id
+                    AND (Child.ResultMatchPlace IS NOT NULL OR Child.ResultPoints IS NOT NULL))
+ORDER BY S.Id;", conn, transaction))
+                                    {
+                                        swapFind.Parameters.Add("@PoolId", SqlDbType.Int).Value = selection.DestinationPoolMatchId;
+                                        value = swapFind.ExecuteScalar();
+                                    }
+                                }
+                                if (value == null || value == DBNull.Value)
+                                    throw new InvalidOperationException("The selected wildcard destination pool has no free or safely swappable qualifier seat.");
                                 destinationSeatId = Convert.ToInt32(value);
                             }
 
@@ -626,6 +650,18 @@ WHERE (Id = @SeatId OR ParentSeatId = @SeatId)
                                 played.Parameters.Add("@SeatId", SqlDbType.Int).Value = selection.SeatId;
                                 if (Convert.ToInt32(played.ExecuteScalar()) > 0)
                                     throw new InvalidOperationException("This wildcard has already played in its current destination pool.");
+                            }
+                            // Capture the normal player occupying the target (if any).
+                            // No played result may be displaced. The destination's parent
+                            // route is moved to the wildcard's old pulje together with
+                            // its player, so both normal qualifying places remain intact.
+                            int? displacedPlayerId = null;
+                            using (var occupied = new SqlCommand(@"SELECT PlayerId FROM Seat WITH (UPDLOCK) WHERE Id = @SeatId", conn, transaction))
+                            {
+                                occupied.Parameters.Add("@SeatId", SqlDbType.Int).Value = destinationSeatId;
+                                object value = occupied.ExecuteScalar();
+                                if (value != null && value != DBNull.Value)
+                                    displacedPlayerId = Convert.ToInt32(value);
                             }
                             // Swap route metadata: the wildcard route takes the target
                             // seat in the new pool; the normal qualification route from
@@ -646,7 +682,11 @@ FROM Seat WITH (UPDLOCK) WHERE Id = @SeatId;", conn, transaction))
                                 }
                             }
                             // The old reserved seat is unplayed and is safe to reuse.
+                            // When swapping with an occupied normal qualifier, clear its
+                            // unplayed match seats before transferring both players.
                             ClearPlayerFromSeatAndChildren(conn, transaction, selection.SeatId);
+                            if (displacedPlayerId.HasValue)
+                                ClearPlayerFromSeatAndChildren(conn, transaction, destinationSeatId);
                             using (var move = new SqlCommand(@"UPDATE Seat
 SET AutoSelectMatchId = @DisplacedSource, AutoSelectlPlace = @DisplacedPlace
 WHERE Id = @OldSeatId;
@@ -663,8 +703,12 @@ WHERE Id = @NewSeatId AND PlayerId IS NULL
                                 move.ExecuteNonQuery();
                             }
                             SetPlayerOnSeatAndChildren(conn, transaction, destinationSeatId, playerId);
+                            if (displacedPlayerId.HasValue)
+                                SetPlayerOnSeatAndChildren(conn, transaction, selection.SeatId, displacedPlayerId.Value);
                             SynchronizeMissingMatchPlayers(conn, transaction,
-                                new int[] { destinationSeatId });
+                                displacedPlayerId.HasValue
+                                    ? new int[] { destinationSeatId, selection.SeatId }
+                                    : new int[] { destinationSeatId });
                             using (var preference = new SqlCommand(@"DELETE FROM WildcardDestinationPreference WHERE SeatId = @OldSeatId;
 DELETE FROM WildcardDestinationPreference WHERE SeatId = @NewSeatId;
 INSERT INTO WildcardDestinationPreference (SeatId, DestinationPoolMatchId)
@@ -681,7 +725,9 @@ VALUES (@NewSeatId, @PoolId);", conn, transaction))
                         // Leave any scored match unchanged, and fail the transaction
                         // if the existing schedule cannot be reconciled safely.
                         foreach (int poolId in destinationSelections
-                            .Select(x => x.DestinationPoolMatchId).Distinct())
+                            .Select(x => x.DestinationPoolMatchId)
+                            .Concat(destinationSelections.Select(x => slots.First(y => y.SeatId == x.SeatId).DestinationPoolMatchId))
+                            .Distinct())
                         {
                             FillWildcardRoundRobinMatches(conn, transaction, poolId);
                         }

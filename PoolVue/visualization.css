@@ -100,9 +100,13 @@
 /* Hide visual connectors between stages; keep all pulje functionality. */
 .vizLines { display: none !important; }
 
-/* Gray puljer: insufficient assigned players to start all scheduled matches. */
-.vizPoolWaiting{background:#292f39;border-color:#6b7887}
-.vizPoolWaiting .vizPoolTitle{background:#363f4b;border-bottom-color:#6b7887}
-.vizPoolWaiting .vizPoolStatus{background:#4b5663;color:#e0e5ed;border:1px solid #81909f}
-.vizPoolWaiting .vizPlayers,.vizPoolWaiting .vizMatches{border-color:#576575}
-.vizPoolWaiting .vizMatch{background:#262f3b;border-color:#526173}
+/* Winner and runner-up, displayed only after the final is complete. */
+.vizPodium{background:#172435;border:1px solid #46617a;border-radius:12px;padding:17px 20px;margin:0 0 16px}
+.vizPodiumHeading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;color:#a9c2dd;font-size:12px}
+.vizPodiumPlaces{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.vizPodiumWinner,.vizPodiumRunner{display:flex;align-items:center;gap:15px;padding:16px;border-radius:9px;border:1px solid #6a602b;background:#302b19}
+.vizPodiumRunner{background:#25303b;border-color:#576979}
+.vizPodiumIcon{font-size:26px}
+.vizPodiumPlaces small{display:block;font-size:10px;letter-spacing:1px;color:#c6d1df;font-weight:800;margin-bottom:5px}
+.vizPodiumPlaces strong{display:block;font-size:20px;color:#fff;overflow-wrap:anywhere}
+@media(max-width:650px){.vizPodiumPlaces{grid-template-columns:1fr}}
