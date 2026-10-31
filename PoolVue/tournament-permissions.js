@@ -13,6 +13,14 @@
     if (!response.ok) throw Error(data.message || 'Request failed (' + response.status + ')');
     return data;
   }
+  function tournamentListDate(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const pad = n => String(n).padStart(2, '0');
+    return pad(date.getDate()) + '/' + pad(date.getMonth() + 1) + '/' + date.getFullYear() +
+      ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+  }
   function fill(select, entries, placeholder) {
     select.replaceChildren(new Option(placeholder, ''));
     entries.forEach(x => select.add(new Option(x.label, x.id)));
@@ -23,7 +31,7 @@
     try {
       const data = await get('/api/matches/tournaments');
       const rows = data.tournaments || [];
-      fill(tournament, rows.filter(x => x.isAdmin).map(x => ({ id:x.tournamentId, label:x.name })), 'Select your tournament');
+      fill(tournament, rows.filter(x => x.isAdmin).map(x => ({ id:x.tournamentId, label:x.name + (tournamentListDate(x.createdAt) ? ' — ' + tournamentListDate(x.createdAt) : '') })), 'Select your tournament');
       show('Select a tournament to configure its editors.');
     } catch(e) { show(e); }
   }
