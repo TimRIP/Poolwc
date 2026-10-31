@@ -12,6 +12,7 @@
     <link rel="stylesheet" type="text/css" href="example.css">
     <link rel="stylesheet" type="text/css" href="match-results.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+  <link rel="stylesheet" href="top-navigation.css?v=20261031-1">
   <style>
 .stageSeatPools{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin:16px 0}
 .stageSeatPool{background:#101c2d;border:1px solid #354b68;border-radius:9px;padding:14px;min-width:0}
@@ -54,7 +55,7 @@
 <style>
 /* Visualization popup: reuse the real Matches editor, with navigation hidden. */
 html.embeddedStage, html.embeddedStage body {width:100%;height:100%;overflow:auto;background:#172435}
-html.embeddedStage .topbar,html.embeddedStage .matchesHeader,html.embeddedStage .matchTreeColumn,
+html.embeddedStage .admin-panel,html.embeddedStage .topbar,html.embeddedStage .matchesHeader,html.embeddedStage .matchTreeColumn,
 html.embeddedStage .matchResultPanel > div > .resultPanelHeader,
 html.embeddedStage .matchResultPanel .resultSection:not(.embeddedIncomingSection),
 html.embeddedStage .emptyState {display:none!important}
@@ -65,7 +66,7 @@ html.embeddedStage .stageAdvancePanel{max-width:none!important;width:100%!import
 /* Embedded pool advancement: show original Matches destination and wildcard editors only. */
 html.embeddedPool,html.embeddedPool body{height:100%;width:100%;background:#172435;overflow:auto}
 html.embeddedPool details.venueManager,html.embeddedStage details.venueManager,
-html.embeddedPool .topbar,html.embeddedPool .matchesHeader,html.embeddedPool .matchTreeColumn,
+html.embeddedPool .admin-panel,html.embeddedPool .topbar,html.embeddedPool .matchesHeader,html.embeddedPool .matchTreeColumn,
 html.embeddedPool .resultPanelHeader,html.embeddedPool .emptyState,
 html.embeddedPool .matchResultPanel > div > .resultSection:not(:has(.manualAdvancePanel)),
 html.embeddedPool .resultSection > :not(.manualAdvancePanel),
@@ -81,10 +82,15 @@ html.embeddedPool #vuematch{min-width:0!important;width:100%!important;padding:0
 </head>
 
   <body>
+    <div class="admin-panel"><div class="slidebar"><ul>
+<li><a href="index.htm" class="dashboard">Tournament builder<i class="sideicon fa fa-sitemap"></i></a></li>
+<li class="selectedbutton"><a href="matches.html" class="vuematch">Matches<i class="sideicon fa fa-area-chart"></i></a></li>
+<li><a href="visualization.html" class="visualization">Visualization<i class="sideicon fa fa-object-group"></i></a></li>
+<li><a href="index.htm#app" class="app">Ruler board<i class="sideicon fa fa-trophy"></i></a></li>
+<li><a href="index.htm#vueformapp" class="vueformapp">Login &amp; token<i class="sideicon fa fa-file-text-o"></i></a></li>
+</ul></div></div>
     <div id="vuematch">
     <div class="topbar">
-      <a href="index.htm"><i class="fa fa-arrow-left"></i> Back</a>
-
       <div class="matchesTopControls">
         <label for="tournamentSelect">Tournament:</label>
         <select id="tournamentSelect"
@@ -825,7 +831,7 @@ html.embeddedPool #vuematch{min-width:0!important;width:100%!important;padding:0
                           <option v-for="pool in manualWildcardPoolOptions(player)"
                                   :key="'wildcard-pool-'+player.playerId+'-'+pool.poolId"
                                   :value="pool.poolId"
->
+                                  :disabled="pool.seats.every(slot => manualWildcardSelectedElsewhere(slot.seatId, player.playerId))">
                             {{ pool.name }}
                           </option>
                         </select>

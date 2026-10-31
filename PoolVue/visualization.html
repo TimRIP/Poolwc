@@ -3,10 +3,15 @@
 <title>Visualization · Pool</title>
 <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.min.js"></script><script src="https://unpkg.com/axios/dist/axios.min.js"></script>
 <link rel="stylesheet" href="example.css"><link rel="stylesheet" href="visualization.css">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css"></head>
-<body><div id="visualization" class="vizApp">
-<header class="vizNav"><nav><a href="index.htm">Tournament</a><a href="matches.html">Matches</a><a class="active" href="visualization.html">Visualization</a></nav>
-<div class="vizPicker"><label for="vizTournament">Tournament</label><select id="vizTournament" v-model="selectedTournamentId" @change="loadMatches" :disabled="loading"><option value="">Select tournament</option><option v-for="t in tournaments" :key="t.tournamentId" :value="String(t.tournamentId)">{{t.name}}</option></select><button type="button" @click="refresh" :disabled="loading">↻ Refresh</button></div></header>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css"><link rel="stylesheet" href="top-navigation.css?v=20261031-1"></head>
+<body><div class="admin-panel"><div class="slidebar"><ul>
+<li><a href="index.htm" class="dashboard">Tournament builder<i class="sideicon fa fa-sitemap"></i></a></li>
+<li><a href="matches.html" class="vuematch">Matches<i class="sideicon fa fa-area-chart"></i></a></li>
+<li class="selectedbutton"><a href="visualization.html" class="visualization">Visualization<i class="sideicon fa fa-object-group"></i></a></li>
+<li><a href="index.htm#app" class="app">Ruler board<i class="sideicon fa fa-trophy"></i></a></li>
+<li><a href="index.htm#vueformapp" class="vueformapp">Login &amp; token<i class="sideicon fa fa-file-text-o"></i></a></li>
+</ul></div></div><div id="visualization" class="vizApp">
+<div class="vizControls"><div class="vizPicker"><label for="vizTournament">Tournament</label><select id="vizTournament" v-model="selectedTournamentId" @change="loadMatches" :disabled="loading"><option value="">Select tournament</option><option v-for="t in tournaments" :key="t.tournamentId" :value="String(t.tournamentId)">{{t.name}}</option></select><button type="button" @click="refresh" :disabled="loading">↻ Refresh</button></div></div>
 <main class="vizMain"><div class="vizHeading"><div><span class="vizEyebrow">TOURNAMENT OVERVIEW</span><h1>Visualization</h1><p>Click a pulje to enter match results, or follow the tournament paths.</p></div><span class="vizReadonly"><i class="fa fa-pencil"></i> Click a pulje to edit scores</span></div>
 <section v-if="tournamentPodium" class="vizPodium" aria-label="Tournament results">
   <div class="vizPodiumHeading"><span class="vizEyebrow">FINAL RESULTS</span><strong>{{tournamentPodium.stageName}}</strong></div>

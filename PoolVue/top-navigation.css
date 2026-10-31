@@ -47,3 +47,9 @@ html body .admin-panel .slidebar ul > li > a > i.sideicon {
   vertical-align: baseline !important;
   transform: none !important;
 }
+
+
+html.embeddedStage .admin-panel,
+html.embeddedPool .admin-panel {
+  display: none !important;
+}
