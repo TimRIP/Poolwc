@@ -53,3 +53,10 @@ html.embeddedStage .admin-panel,
 html.embeddedPool .admin-panel {
   display: none !important;
 }
+
+/* Login indicator shared across Matches and Visualization. */
+.poolLoginStatus{display:flex;align-items:center;justify-content:flex-end;padding:6px 18px;
+ background:#111c2d;color:#bcd0e8;border-bottom:1px solid #30435b;font:600 12px/1.5 Arial,sans-serif}
+.poolLoginStatus .statusText{border:1px solid #30435b;padding:4px 10px;border-radius:999px}
+.poolLoginStatus .statusText.isLoggedIn{color:#4fe5b0}
+html.embeddedStage .poolLoginStatus,html.embeddedPool .poolLoginStatus{display:none!important}

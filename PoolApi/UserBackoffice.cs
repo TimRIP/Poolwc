@@ -76,6 +76,22 @@ namespace DrukDatabaseLayer
                 conn.Close();
             }
         }
+        public string CreateRegisteredUser(string username, string password)
+        {
+            using (SqlConnection conn = new SqlConnection(Configuration["connectionstring"]))
+            using (SqlCommand cmd = new SqlCommand("Sp_Create_User", conn))
+            {
+                cmd.CommandType = CommandType.StoredProcedure;
+                cmd.Parameters.Add("@pUserName", SqlDbType.NVarChar, 30).Value = username;
+                cmd.Parameters.Add("@pPassword", SqlDbType.NVarChar, 50).Value = password;
+                var response = cmd.Parameters.Add("@responseMessage", SqlDbType.NVarChar, 250);
+                response.Direction = ParameterDirection.Output;
+                conn.Open();
+                cmd.ExecuteNonQuery();
+                return Convert.ToString(response.Value) ?? "Registration failed";
+            }
+        }
+
         public int GetUserIdFromCredentials(string UserName, string PassWord)
         {
             int UserID = -1;

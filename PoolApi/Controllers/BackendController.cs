@@ -31,6 +31,39 @@ namespace TournamentBackend.Controllers
             public string Password { get; set; }
         }
 
+        public class RegisterUserModel
+        {
+            [Required]
+            [StringLength(30, MinimumLength = 3)]
+            public string Username { get; set; }
+
+            [Required]
+            [StringLength(50, MinimumLength = 8)]
+            public string Password { get; set; }
+        }
+
+        [AllowAnonymous]
+        [HttpPost("register")]
+        public IActionResult Register([FromBody]RegisterUserModel model)
+        {
+            if (!ModelState.IsValid) return BadRequest(new { message = "Enter a username (3–30 characters) and a password (8–50 characters)." });
+            try
+            {
+                var backoffice = new UserBackoffice();
+                string result = backoffice.CreateRegisteredUser(model.Username.Trim(), model.Password);
+                if (result == "Success") return Ok(new { message = "User created. You can now log in." });
+                // The stored procedure reports duplicate usernames through responseMessage.
+                if (result.IndexOf("UNIQUE", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    result.IndexOf("duplicate", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return Conflict(new { message = "That username is already taken." });
+                return BadRequest(new { message = "Could not create user. Please check the supplied information." });
+            }
+            catch (Exception)
+            {
+                return StatusCode(500, new { message = "User registration failed. Check the server and database." });
+            }
+        }
+
         [AllowAnonymous]
         [HttpPost]
         public IActionResult Post([FromBody]UserModel loginViewModel)

@@ -55,10 +55,48 @@ new Vue({
     return {
       username: '',
       password: '',
-      message: ''
+      message: '',
+      newUsername: '',
+      newPassword: '',
+      confirmPassword: '',
+      creatingUser: false,
+      registrationSuccess: false,
+      registrationMessage: ''
     };
   },
   methods: {
+    createUser: async function () {
+      if (this.creatingUser) return;
+      this.registrationMessage = '';
+      this.registrationSuccess = false;
+      if (this.newPassword !== this.confirmPassword) {
+        this.registrationMessage = 'Passwords do not match.';
+        return;
+      }
+      if (this.newUsername.length < 3 || this.newUsername.length > 30 ||
+          this.newPassword.length < 8 || this.newPassword.length > 50) {
+        this.registrationMessage = 'Username must be 3–30 characters and password 8–50 characters.';
+        return;
+      }
+      this.creatingUser = true;
+      try {
+        var response = await axios.post('http://localhost:5000/api/token/register', {
+          username: this.newUsername,
+          password: this.newPassword
+        }, { headers: { 'Content-type': 'application/json; charset=utf-8' } });
+        this.registrationSuccess = true;
+        this.registrationMessage = response.data.message || 'User created. You can now log in.';
+        this.username = this.newUsername;
+        this.password = '';
+        this.newPassword = '';
+        this.confirmPassword = '';
+      } catch (error) {
+        this.registrationMessage = (error.response && error.response.data && error.response.data.message) ||
+          'Could not create user. Check the server connection.';
+      } finally {
+        this.creatingUser = false;
+      }
+    },
     apipost: function () {
       this.message = '';
 
@@ -71,14 +109,22 @@ new Vue({
       .then(function (response) {
         var auth = 'Bearer ' + response.data.token;
         localStorage.setItem('token', auth);
+        localStorage.setItem('poolLoggedInUsername', this.username.trim());
+        if (typeof dash !== 'undefined') dash.loggedInUsername = this.username.trim();
+        window.dispatchEvent(new Event('pool-login-changed'));
         axios.defaults.headers.common['Authorization'] = auth;
 
         if (typeof dash !== 'undefined') {
           dash.authToken = auth;
           dash.apiError = '';
+          // Template results belong to the active login. Never keep the
+          // previous user's list after switching accounts in the same tab.
+          dash.tournamentTemplates = [];
+          dash.selectedTemplateId = '';
+          dash.loadTournamentTemplates();
         }
 
-        this.message = 'Login successful. You can now create tournaments.';
+        this.message = 'Login successful. Your tournament templates are being refreshed.';
       }.bind(this))
       .catch(function (error) {
         this.message = error.response && error.response.status === 401
@@ -132,6 +178,7 @@ var dash = new Vue({
   el: '#dashboard',
   data: {
     authToken: localStorage.getItem('token') || '',
+    loggedInUsername: localStorage.getItem('poolLoggedInUsername') || '',
     activePreset: 'custom',
     uiMessage: '',
     apiError: '',
@@ -234,13 +281,19 @@ var dash = new Vue({
               playerCount: Number(form.tournamentplayers), form: form };
           } catch (e) { return null; }
         }).filter(Boolean);
+        if (rows.length && !this.tournamentTemplates.length) {
+          this.templateMessage = 'The server returned ' + rows.length + ' tournaments, but none contains usable tournament setup data (FormData).';
+        } else if (this.tournamentTemplates.length && !this.matchingTemplates.length) {
+          this.templateMessage = this.tournamentTemplates.length + ' saved tournaments found, but none has ' + Number(this.formdata.tournamentplayers) + ' players. Change the player count to view other templates.';
+        }
         if (!this.matchingTemplates.some(function(t){ return String(t.tournamentId) === this.selectedTemplateId; }, this)) {
           this.selectedTemplateId = '';
         }
       }.bind(this)).catch(function (error) {
-        this.templateMessage = error.response && error.response.status === 401
+        var status = error.response && error.response.status;
+        this.templateMessage = status === 401
           ? 'Please log in to load your previous tournaments.'
-          : 'Could not retrieve templates from the server.';
+          : 'Could not retrieve templates from the server' + (status ? ' (HTTP ' + status + ')' : ' (connection error)') + '. Check that PoolApi has been rebuilt and restarted.';
       }.bind(this)).finally(function () { this.templatesLoading = false; }.bind(this));
     },
     applyTournamentTemplate: function () {
@@ -1819,6 +1872,9 @@ var dash = new Vue({
           localStorage.removeItem('lastTournamentJoinCode');
         }
         match.TurnamentId = id;
+        // Newly created tournaments are valid templates immediately.
+        // Reload using the creator's current authentication token.
+        this.loadTournamentTemplates();
 
         var scheduledPools = Number(response.data.scheduledPools || 0);
         var venueCount = Number(response.data.venueCount || 0);
@@ -1854,21 +1910,25 @@ var dash = new Vue({
 /* =========================
    Navigation
    ========================= */
-function showSection(sectionId) {
-  var sections = $('#dashboard, #app, #vueformapp, #vuematch');
-  sections.hide();
-  $('#' + sectionId).show();
+var poolSections = ['dashboard', 'app', 'vueformapp'];
 
+function showSection(sectionId) {
+  if (poolSections.indexOf(sectionId) === -1) sectionId = 'dashboard';
+  $('#dashboard, #app, #vueformapp, #vuematch').hide();
+  $('#' + sectionId).show();
   $('.admin-panel .slidebar li').removeClass('selectedbutton');
   $('#' + sectionId + 'Item').parent().addClass('selectedbutton');
 }
 
+function syncSectionFromUrl() {
+  var requested = decodeURIComponent(window.location.hash.slice(1));
+  showSection(requested);
+}
+
 $(document).ready(function () {
   $('.mainContent').show();
-  showSection('dashboard');
-
-  $('.admin-panel .slidebar a[href="#"]').on('click', function (event) {
-    event.preventDefault();
-    showSection($(this).attr('class'));
-  });
+  syncSectionFromUrl();
+  $(window).on('hashchange', syncSectionFromUrl);
+  // Browser navigation now follows real links (#app, #dashboard, #vueformapp).
+  // Never infer the destination from the anchor's styling class.
 });

@@ -1250,8 +1250,26 @@ const matchesApp = new Vue({
       const slots = this.manualWildcardSeatsForPlayer(player);
       const availablePools = this.manualAdvanceState && this.manualAdvanceState.wildcardDestinationPools || [];
       const targetStages = new Set(slots.map(slot => Number(slot.targetStageMatchId)));
+      const selectedSeatId = Number(this.manualWildcardAssignments[String(player.playerId)]);
+      const currentSlot = slots.find(slot => Number(slot.seatId) === selectedSeatId);
+      // A player's own currently occupied destination is not a new swap.
+      // Use the saved physical seat, rather than the editable dropdown preference.
+      const currentPoolId = currentSlot ? Number(currentSlot.destinationPoolMatchId) : null;
       return availablePools.filter(pool => targetStages.has(Number(pool.targetStageMatchId)))
-        .map(pool => ({ poolId: Number(pool.matchId), name: (pool.targetStageName || 'Next stage') + ' · ' + (pool.matchName || ('pulje #' + pool.matchId)), seats: slots }));
+        .map(pool => {
+          const capacity = Number(pool.capacity || 0) + Number(pool.wildcardCapacity || 0);
+          const occupied = Number(pool.currentAssignedCount || 0) + Number(pool.wildcardAssignedCount || 0);
+          const requiresSwap = capacity > 0 && occupied >= capacity &&
+            Number(pool.matchId) !== currentPoolId;
+          return {
+            poolId: Number(pool.matchId),
+            name: (pool.targetStageName || 'Next stage') + ' · ' +
+              (pool.matchName || ('pulje #' + pool.matchId)) +
+              (requiresSwap ? ' (Swap with player)' : ''),
+            requiresSwap,
+            seats: slots
+          };
+        });
     },
 
     manualWildcardPoolOptionsLegacy(player) {
