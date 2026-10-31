@@ -225,9 +225,10 @@ WHERE Id = @PlayerId
         {
             using (SqlCommand cmd = new SqlCommand(@"
 SELECT COUNT(1)
-FROM Tournament
-WHERE Id = @TournamentId
-  AND [Admin] = @UserId;", conn, transaction))
+FROM Tournament T
+LEFT JOIN TournamentMatchEditor E ON E.TournamentId = T.Id AND E.RegisteredUserId = @UserId
+WHERE T.Id = @TournamentId
+  AND (T.[Admin] = @UserId OR (E.RegisteredUserId IS NOT NULL AND E.VenueId IS NULL));", conn, transaction))
             {
                 cmd.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
                 cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;

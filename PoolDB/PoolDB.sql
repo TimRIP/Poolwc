@@ -1053,3 +1053,9 @@ BEGIN
     );
 END;
 GO
+
+-- Run once before deploying the permission API. NULL VenueId = full MATCH editing access.
+IF COL_LENGTH('dbo.TournamentMatchEditor','VenueId') IS NULL
+    ALTER TABLE dbo.TournamentMatchEditor ADD VenueId INT NULL;
+GO
+-- Existing editor rows remain full match editors. Venue grants are checked in the API.

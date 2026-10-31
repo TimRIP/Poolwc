@@ -14,6 +14,7 @@ namespace DrukDatabaseLayer
         public bool IsAdmin { get; set; }
         public bool IsMatchEditor { get; set; }
         public bool CanEditMatches { get; set; }
+        public int? VenueId { get; set; }
     }
 
     public class TournamentEditorDetails
@@ -23,6 +24,8 @@ namespace DrukDatabaseLayer
         public string RegisteredName { get; set; }
         public string RegisteredEmail { get; set; }
         public DateTime CreatedAt { get; set; }
+        public int? VenueId { get; set; }
+        public string VenueName { get; set; }
     }
 
     public class TournamentMatchPickerItem
@@ -99,28 +102,6 @@ ORDER BY T.CreatedAt DESC, T.Id DESC;";
             return tournaments;
         }
 
-        public List<TournamentTemplateItem> GetTournamentTemplates(int userId)
-        {
-            const string sql = @"SELECT T.Id, T.[name], T.FormData FROM Tournament T
-WHERE T.Admin = @UserId AND T.FormData IS NOT NULL AND LEN(LTRIM(RTRIM(T.FormData))) > 0
-ORDER BY T.Id DESC";
-            var result = new List<TournamentTemplateItem>();
-            using (var conn = new SqlConnection(_configuration["connectionstring"]))
-            using (var cmd = new SqlCommand(sql, conn))
-            {
-                cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
-                conn.Open();
-                using (var reader = cmd.ExecuteReader())
-                    while (reader.Read())
-                        result.Add(new TournamentTemplateItem {
-                            TournamentId = Convert.ToInt32(reader["Id"]),
-                            Name = Convert.ToString(reader["name"]),
-                            FormData = Convert.ToString(reader["FormData"])
-                        });
-            }
-            return result;
-        }
-
         public bool IsTournamentAdmin(int tournamentId, int userId)
         {
             const string sql = @"
@@ -139,13 +120,30 @@ WHERE Id = @TournamentId
             }
         }
 
+        public bool CanEditWholeTournament(int tournamentId, int userId)
+        {
+            const string sql = @"SELECT COUNT(1)
+FROM Tournament T
+LEFT JOIN TournamentMatchEditor E ON E.TournamentId = T.Id AND E.RegisteredUserId = @UserId
+WHERE T.Id = @TournamentId AND (T.Admin = @UserId OR (E.RegisteredUserId IS NOT NULL AND E.VenueId IS NULL))";
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
+                cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                conn.Open();
+                return Convert.ToInt32(cmd.ExecuteScalar()) > 0;
+            }
+        }
+
         public TournamentEditorAccess GetAccess(int tournamentId, int userId)
         {
             const string sql = @"
 SELECT
     T.Id,
     CASE WHEN T.Admin = @UserId THEN 1 ELSE 0 END AS IsAdmin,
-    CASE WHEN E.RegisteredUserId IS NULL THEN 0 ELSE 1 END AS IsMatchEditor
+    CASE WHEN E.RegisteredUserId IS NULL THEN 0 ELSE 1 END AS IsMatchEditor,
+    E.VenueId
 FROM Tournament T
 LEFT JOIN TournamentMatchEditor E
     ON E.TournamentId = T.Id
@@ -170,7 +168,8 @@ WHERE T.Id = @TournamentId;";
                         TournamentId = Convert.ToInt32(reader["Id"]),
                         IsAdmin = isAdmin,
                         IsMatchEditor = isEditor,
-                        CanEditMatches = isAdmin || isEditor
+                        CanEditMatches = isAdmin || isEditor,
+                        VenueId = reader["VenueId"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["VenueId"])
                     };
                 }
             }
@@ -186,9 +185,10 @@ SELECT
     U.UserName,
     U.RegisteredName,
     U.RegisteredEMail,
-    E.CreatedAt
+    E.CreatedAt, E.VenueId, F.Name AS VenueName
 FROM TournamentMatchEditor E
 INNER JOIN RegisteredUsers U ON U.RegisteredUserID = E.RegisteredUserId
+LEFT JOIN Facility F ON F.Id = E.VenueId AND F.TournamentId = E.TournamentId
 WHERE E.TournamentId = @TournamentId
 ORDER BY U.UserName;";
 
@@ -210,7 +210,9 @@ ORDER BY U.UserName;";
                             UserName = Convert.ToString(reader["UserName"]),
                             RegisteredName = reader["RegisteredName"] == DBNull.Value ? null : Convert.ToString(reader["RegisteredName"]),
                             RegisteredEmail = reader["RegisteredEMail"] == DBNull.Value ? null : Convert.ToString(reader["RegisteredEMail"]),
-                            CreatedAt = Convert.ToDateTime(reader["CreatedAt"])
+                            CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
+                            VenueId = reader["VenueId"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["VenueId"]),
+                            VenueName = reader["VenueName"] == DBNull.Value ? null : Convert.ToString(reader["VenueName"])
                         });
                     }
                 }
@@ -219,7 +221,7 @@ ORDER BY U.UserName;";
             return editors;
         }
 
-        public TournamentEditorDetails AddEditor(int tournamentId, int adminUserId, string userName)
+        public TournamentEditorDetails AddEditor(int tournamentId, int adminUserId, string userName, int? venueId = null)
         {
             EnsureTournamentAdmin(tournamentId, adminUserId);
 
@@ -268,24 +270,27 @@ WHERE UserName = @UserName;";
                 throw new InvalidOperationException("The tournament administrator already has match-edit access.");
             }
 
-            const string insertSql = @"
-IF NOT EXISTS (
-    SELECT 1
-    FROM TournamentMatchEditor
-    WHERE TournamentId = @TournamentId
-      AND RegisteredUserId = @EditorUserId
-)
-BEGIN
-    INSERT INTO TournamentMatchEditor
-        (TournamentId, RegisteredUserId, AddedByUserId, CreatedAt)
-    VALUES
-        (@TournamentId, @EditorUserId, @AdminUserId, GETUTCDATE());
-END
+            if (venueId.HasValue)
+            {
+                const string verifyVenue = "SELECT COUNT(1) FROM Facility WHERE Id = @VenueId AND TournamentId = @TournamentId";
+                using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+                using (SqlCommand cmd = new SqlCommand(verifyVenue, conn))
+                {
+                    cmd.Parameters.Add("@VenueId", SqlDbType.Int).Value = venueId.Value;
+                    cmd.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
+                    conn.Open();
+                    if (Convert.ToInt32(cmd.ExecuteScalar()) == 0)
+                        throw new ArgumentException("This venue does not belong to the tournament.");
+                }
+            }
 
-SELECT CreatedAt
-FROM TournamentMatchEditor
-WHERE TournamentId = @TournamentId
-  AND RegisteredUserId = @EditorUserId;";
+            const string insertSql = @"
+IF EXISTS (SELECT 1 FROM TournamentMatchEditor WHERE TournamentId = @TournamentId AND RegisteredUserId = @EditorUserId)
+    UPDATE TournamentMatchEditor SET VenueId = @VenueId WHERE TournamentId = @TournamentId AND RegisteredUserId = @EditorUserId;
+ELSE
+    INSERT INTO TournamentMatchEditor (TournamentId, RegisteredUserId, AddedByUserId, CreatedAt, VenueId)
+    VALUES (@TournamentId, @EditorUserId, @AdminUserId, GETUTCDATE(), @VenueId);
+SELECT CreatedAt FROM TournamentMatchEditor WHERE TournamentId = @TournamentId AND RegisteredUserId = @EditorUserId;";
 
             DateTime createdAt;
             using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
@@ -294,6 +299,7 @@ WHERE TournamentId = @TournamentId
                 cmd.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
                 cmd.Parameters.Add("@EditorUserId", SqlDbType.Int).Value = editorUserId;
                 cmd.Parameters.Add("@AdminUserId", SqlDbType.Int).Value = adminUserId;
+                cmd.Parameters.Add("@VenueId", SqlDbType.Int).Value = venueId.HasValue ? (object)venueId.Value : DBNull.Value;
                 conn.Open();
                 createdAt = Convert.ToDateTime(cmd.ExecuteScalar());
             }
@@ -304,8 +310,30 @@ WHERE TournamentId = @TournamentId
                 UserName = foundUserName,
                 RegisteredName = registeredName,
                 RegisteredEmail = registeredEmail,
-                CreatedAt = createdAt
+                CreatedAt = createdAt,
+                VenueId = venueId
             };
+        }
+
+        public List<TournamentEditorDetails> GetRegisteredUsers(int tournamentId, int adminUserId)
+        {
+            EnsureTournamentAdmin(tournamentId, adminUserId);
+            const string sql = @"SELECT RegisteredUserID, UserName, RegisteredName, RegisteredEMail FROM RegisteredUsers WHERE RegisteredUserID <> @AdminId ORDER BY UserName";
+            var users = new List<TournamentEditorDetails>();
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.Add("@AdminId", SqlDbType.Int).Value = adminUserId;
+                conn.Open();
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                    while (reader.Read()) users.Add(new TournamentEditorDetails {
+                        UserId = Convert.ToInt32(reader["RegisteredUserID"]),
+                        UserName = Convert.ToString(reader["UserName"]),
+                        RegisteredName = reader["RegisteredName"] == DBNull.Value ? null : Convert.ToString(reader["RegisteredName"]),
+                        RegisteredEmail = reader["RegisteredEMail"] == DBNull.Value ? null : Convert.ToString(reader["RegisteredEMail"])
+                    });
+            }
+            return users;
         }
 
         public void RemoveEditor(int tournamentId, int adminUserId, int editorUserId)
@@ -325,6 +353,28 @@ WHERE TournamentId = @TournamentId
                 conn.Open();
                 cmd.ExecuteNonQuery();
             }
+        }
+
+        public List<TournamentTemplateItem> GetTournamentTemplates(int userId)
+        {
+            const string sql = @"SELECT T.Id, T.[name], T.FormData FROM Tournament T
+WHERE T.Admin = @UserId AND T.FormData IS NOT NULL AND LEN(LTRIM(RTRIM(T.FormData))) > 0
+ORDER BY T.Id DESC";
+            var result = new List<TournamentTemplateItem>();
+            using (var conn = new SqlConnection(_configuration["connectionstring"]))
+            using (var cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                conn.Open();
+                using (var reader = cmd.ExecuteReader())
+                    while (reader.Read())
+                        result.Add(new TournamentTemplateItem {
+                            TournamentId = Convert.ToInt32(reader["Id"]),
+                            Name = Convert.ToString(reader["name"]),
+                            FormData = Convert.ToString(reader["FormData"])
+                        });
+            }
+            return result;
         }
 
         private void EnsureTournamentAdmin(int tournamentId, int userId)

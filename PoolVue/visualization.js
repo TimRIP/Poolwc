@@ -529,6 +529,27 @@ new Vue({
       if (this.editorSaving || this.editorLoading || !this.editorPool) return;
       this.editorError=''; this.editorMessage='';
       const poolId = Number(this.editorPool.matchId);
+      // Venue editors may save scores in their venue but must not attempt
+      // tournament-wide qualification/wildcard mutations.
+      try {
+        const permissionResponse = await axios.get(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(this.selectedTournamentId) + '/match-editors/access',
+          { headers: this.authHeaders() }
+        );
+        const permission = (permissionResponse.data || {}).access || {};
+        if (!permission.isAdmin && permission.venueId != null) {
+          const saved = await this.savePoolResults(true);
+          if (!saved) return;
+          const fresh = this.stages.flatMap(stage => stage.pools).find(p => Number(p.matchId) === poolId);
+          this.poolAdvanceRevision++;
+          if (fresh) await this.openPool(fresh);
+          this.editorMessage = 'Scores saved for your assigned venue. Tournament-wide qualification and wildcard editing remain restricted.';
+          return;
+        }
+      } catch (error) {
+        this.editorError = 'Could not verify tournament editing permissions. Please refresh and sign in again.';
+        return;
+      }
       let selections;
       try {
         // Snapshot user choices before saving scores: a results refresh can replace the editor state.
@@ -781,11 +802,17 @@ new Vue({
         if (typeof data === 'string') data = JSON.parse(data);
         if (!Array.isArray(data)) throw new Error('Unexpected tournament response');
         this.rows = data;
-        await this.loadRenameablePlayers();
-        await this.loadFinderPlayers();
-        await this.loadPoolAdvanceStates();
-        await this.loadPoolScheduleDetails();
-        await this.loadTournamentPodium();
+        // Auxiliary lookups must not hide the tournament from venue-limited editors.
+        const optionalLookups = [
+          () => this.loadRenameablePlayers(),
+          () => this.loadFinderPlayers(),
+          () => this.loadPoolAdvanceStates(),
+          () => this.loadPoolScheduleDetails(),
+          () => this.loadTournamentPodium()
+        ];
+        for (const lookup of optionalLookups) {
+          try { await lookup(); } catch (err) { console.warn('Optional visualization data unavailable:', err); }
+        }
         localStorage.setItem('lastTournamentId', this.selectedTournamentId);
         await this.loadRoutes();
       } catch (e) {

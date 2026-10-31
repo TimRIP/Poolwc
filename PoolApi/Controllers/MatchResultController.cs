@@ -19,12 +19,6 @@ namespace TournamentBackend.Controllers
         public List<ManualAdvancementAssignment> Assignments { get; set; }
     }
 
-    public class PoolWildcardAssignmentRequest
-    {
-        public List<ManualAdvancementAssignment> Assignments { get; set; }
-        public List<MatchResultBackoffice.PoolWildcardDestinationSelection> PreferredDestinations { get; set; }
-    }
-
     public class StageManualAdvancementRequest
     {
         public List<StageManualAdvancementAssignment> Assignments { get; set; }
@@ -193,7 +187,7 @@ namespace TournamentBackend.Controllers
             }
 
             MatchResultBackoffice backoffice = new MatchResultBackoffice();
-            if (!backoffice.CanEditMatchResults(stageMatchId, userId))
+            if (!backoffice.CanViewTournamentMatch(stageMatchId, userId))
             {
                 return StatusCode(403, new { message = "You do not have permission to manage advancement for this tournament." });
             }
@@ -257,21 +251,6 @@ namespace TournamentBackend.Controllers
             }
         }
 
-        [HttpPost("{stageMatchId:int}/advancement/wildcards")]
-        public IActionResult SavePoolWildcards(int stageMatchId, [FromBody] PoolWildcardAssignmentRequest model)
-        {
-            if (!TryGetUserId(out int userId)) return Unauthorized();
-            if (model == null || model.Assignments == null)
-                return BadRequest(new { message = "Wildcard assignments are required." });
-            MatchResultBackoffice backoffice = new MatchResultBackoffice();
-            if (!backoffice.CanEditMatchResults(stageMatchId, userId))
-                return StatusCode(403, new { message = "You do not have permission to manage wildcards for this pool." });
-            try { return Ok(new { state = backoffice.SavePoolWildcards(stageMatchId, model.Assignments, model.PreferredDestinations), message = "Wildcard players saved." }); }
-            catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
-            catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
-            catch (Exception ex) { Console.WriteLine(ex); return StatusCode(500, new { message = "Could not save wildcard players." }); }
-        }
-
         [HttpGet("{stageMatchId:int}/advancement/stage")]
         public IActionResult GetStageManualAdvancement(int stageMatchId)
         {
@@ -281,7 +260,7 @@ namespace TournamentBackend.Controllers
             }
 
             MatchResultBackoffice backoffice = new MatchResultBackoffice();
-            if (!backoffice.CanEditMatchResults(stageMatchId, userId))
+            if (!backoffice.CanViewTournamentMatch(stageMatchId, userId))
             {
                 return StatusCode(403, new { message = "You do not have permission to manage advancement for this tournament." });
             }
@@ -312,7 +291,7 @@ namespace TournamentBackend.Controllers
             }
 
             MatchResultBackoffice backoffice = new MatchResultBackoffice();
-            if (!backoffice.CanEditMatchResults(stageMatchId, userId))
+            if (!backoffice.CanViewTournamentMatch(stageMatchId, userId))
             {
                 return StatusCode(403, new { message = "You do not have permission to manage advancement for this tournament." });
             }

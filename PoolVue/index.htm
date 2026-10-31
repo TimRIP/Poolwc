@@ -625,10 +625,24 @@
           <button class="primary-btn" type="submit" :disabled="creatingUser">{{creatingUser?'Creating user…':'Create user'}}</button>
           <p class="api-message" :class="registrationSuccess?'success':'error'" v-if="registrationMessage" role="status">{{ registrationMessage }}</p>
         </form>
+
+        <section id="tournament-permission-manager" style="margin-top:26px;padding:18px;border:1px solid #38506b;border-radius:12px;background:#152439;max-width:660px;">
+          <h2>Tournament permissions</h2>
+          <p>Grant another registered user full tournament editing access, or restrict them to recording results in puljer at one selected venue.</p>
+          <label class="field"><span>Tournament</span><select id="perm-tournament"><option value="">Select tournament</option></select></label>
+          <button id="perm-load" type="button" class="secondary-btn">Refresh tournaments</button>
+          <label class="field"><span>User</span><select id="perm-user"><option value="">Select user</option></select></label>
+          <label class="field"><span>Access</span><select id="perm-venue"><option value="">Full tournament editing access</option></select></label>
+          <button id="perm-save" type="button" class="primary-btn">Save permission</button>
+          <p id="perm-message" role="status" aria-live="polite"></p>
+          <h3>Current editors</h3><div id="perm-editors"></div>
+          <small>Venue-limited users can enter match results only for puljer at the selected venue; player transfers, wildcard assignments and scheduling stay restricted to full-access editors. Only the tournament owner can grant or remove access.</small>
+        </section>
       </div>
     </div>
 
     <script src="index.js"></script>
+    <script src="tournament-permissions.js"></script>
     <script src="login-status.js"></script>
   </body>
 </html>

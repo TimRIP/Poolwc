@@ -377,6 +377,35 @@ OPTION (MAXRECURSION 1000);";
             }
         }
 
+        public bool CanViewTournamentMatch(int matchId, int userId)
+        {
+            const string sql = @"
+;WITH TournamentTree AS
+(
+    SELECT T.Id AS TournamentId, M.Id AS MatchId,
+           CAST('|' + CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX)) AS [Path]
+    FROM Tournament T INNER JOIN [Match] M ON M.Id = T.MatchId
+    UNION ALL
+    SELECT TT.TournamentId, M.Id,
+           CAST(TT.[Path] + CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX))
+    FROM TournamentTree TT INNER JOIN [Match] M ON M.ParentMatchId = TT.MatchId
+    WHERE CHARINDEX('|' + CAST(M.Id AS VARCHAR(20)) + '|', TT.[Path]) = 0
+)
+SELECT COUNT(1) FROM TournamentTree TT
+INNER JOIN Tournament T ON T.Id = TT.TournamentId
+LEFT JOIN TournamentMatchEditor E ON E.TournamentId = T.Id AND E.RegisteredUserId = @UserId
+WHERE TT.MatchId = @MatchId AND (T.Admin = @UserId OR E.RegisteredUserId IS NOT NULL)
+OPTION (MAXRECURSION 1000);";
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.Add("@MatchId", SqlDbType.Int).Value = matchId;
+                cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                conn.Open();
+                return Convert.ToInt32(cmd.ExecuteScalar()) > 0;
+            }
+        }
+
         public bool CanEditMatchResults(int matchId, int userId)
         {
             const string sql = @"
@@ -409,7 +438,28 @@ LEFT JOIN TournamentMatchEditor E
     ON E.TournamentId = T.Id
    AND E.RegisteredUserId = @UserId
 WHERE TT.MatchId = @MatchId
-  AND (T.Admin = @UserId OR E.RegisteredUserId IS NOT NULL)
+  AND (
+      T.Admin = @UserId OR
+      (E.RegisteredUserId IS NOT NULL AND
+       (E.VenueId IS NULL OR
+         EXISTS (
+            SELECT 1
+            FROM [Match] Target
+            INNER JOIN [Match] Pool ON Pool.Id = Target.ParentMatchId
+            INNER JOIN Schedule PS ON PS.Id = Pool.ScheduleId
+            WHERE Target.Id = @MatchId AND Target.IndividualMatch = 1 AND PS.FacilityId = E.VenueId
+         ) OR
+         EXISTS (
+            SELECT 1 FROM TournamentTree Ancestor
+            INNER JOIN [Match] CurrentMatch ON CurrentMatch.Id = @MatchId
+            INNER JOIN [Match] ScheduledPool ON ScheduledPool.Id = Ancestor.MatchId
+            INNER JOIN Schedule PS ON PS.Id = ScheduledPool.ScheduleId
+            WHERE Ancestor.TournamentId = TT.TournamentId
+              AND CurrentMatch.IndividualMatch = 1
+              AND PS.FacilityId = E.VenueId
+              AND TT.[Path] LIKE Ancestor.[Path] + '%'
+         )))
+  )
 OPTION (MAXRECURSION 1000);";
 
             using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))

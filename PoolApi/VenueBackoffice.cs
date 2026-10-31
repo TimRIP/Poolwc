@@ -78,9 +78,10 @@ namespace DrukDatabaseLayer
         {
             const string sql = @"
 SELECT COUNT(1)
-FROM Tournament
-WHERE Id = @TournamentId
-  AND Admin = @UserId;";
+FROM Tournament T
+LEFT JOIN TournamentMatchEditor E ON E.TournamentId = T.Id AND E.RegisteredUserId = @UserId
+WHERE T.Id = @TournamentId
+  AND (T.Admin = @UserId OR (E.RegisteredUserId IS NOT NULL AND E.VenueId IS NULL));";
 
             using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
             using (SqlCommand cmd = new SqlCommand(sql, conn))
@@ -920,9 +921,10 @@ OPTION (MAXRECURSION 1000);";
 SELECT COUNT(1)
 FROM Facility F
 INNER JOIN Tournament T ON T.Id = F.TournamentId
+LEFT JOIN TournamentMatchEditor E ON E.TournamentId = T.Id AND E.RegisteredUserId = @UserId
 WHERE F.Id = @FacilityId
   AND F.TournamentId = @TournamentId
-  AND T.Admin = @UserId;";
+  AND (T.Admin = @UserId OR (E.RegisteredUserId IS NOT NULL AND E.VenueId IS NULL));";
 
             using (SqlCommand cmd = new SqlCommand(sql, conn, transaction))
             {

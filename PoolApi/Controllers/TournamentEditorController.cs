@@ -9,6 +9,7 @@ namespace TournamentBackend.Controllers
     public class AddTournamentMatchEditorRequest
     {
         public string UserName { get; set; }
+        public int? VenueId { get; set; }
     }
 
     [Authorize]
@@ -33,6 +34,15 @@ namespace TournamentBackend.Controllers
                 Console.WriteLine(ex);
                 return StatusCode(500, new { message = "Tournament access could not be loaded." });
             }
+        }
+
+        [HttpGet("users")]
+        public IActionResult GetUsers(int tournamentId)
+        {
+            if (!TryGetUserId(out int userId)) return Unauthorized();
+            try { return Ok(new { users = new TournamentEditorBackoffice().GetRegisteredUsers(tournamentId, userId) }); }
+            catch (UnauthorizedAccessException ex) { return StatusCode(403, new { message = ex.Message }); }
+            catch (Exception ex) { Console.WriteLine(ex); return StatusCode(500, new { message = "Users could not be loaded." }); }
         }
 
         [HttpGet]
@@ -69,11 +79,11 @@ namespace TournamentBackend.Controllers
             try
             {
                 TournamentEditorBackoffice backoffice = new TournamentEditorBackoffice();
-                TournamentEditorDetails editor = backoffice.AddEditor(tournamentId, userId, model.UserName);
+                TournamentEditorDetails editor = backoffice.AddEditor(tournamentId, userId, model.UserName, model.VenueId);
                 return Ok(new
                 {
                     editor = editor,
-                    message = editor.UserName + " can now edit match results for this tournament."
+                    message = editor.UserName + " permissions saved."
                 });
             }
             catch (UnauthorizedAccessException ex)
