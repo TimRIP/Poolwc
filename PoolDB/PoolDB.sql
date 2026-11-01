@@ -1059,3 +1059,16 @@ IF COL_LENGTH('dbo.TournamentMatchEditor','VenueId') IS NULL
     ALTER TABLE dbo.TournamentMatchEditor ADD VenueId INT NULL;
 GO
 -- Existing editor rows remain full match editors. Venue grants are checked in the API.
+
+-- Save one manual two-player Swiss tie-break per pulje.
+CREATE TABLE dbo.SwissManualTieBreak (
+ StageMatchId INT NOT NULL PRIMARY KEY,
+ FirstSeatId INT NOT NULL,
+ SecondSeatId INT NOT NULL,
+ CONSTRAINT FK_SwissTieBreak_Stage FOREIGN KEY(StageMatchId) REFERENCES dbo.[Match](Id),
+ CONSTRAINT FK_SwissTieBreak_First FOREIGN KEY(FirstSeatId) REFERENCES dbo.Seat(Id),
+ CONSTRAINT FK_SwissTieBreak_Second FOREIGN KEY(SecondSeatId) REFERENCES dbo.Seat(Id),
+ CONSTRAINT CK_SwissTieBreak_Different CHECK(FirstSeatId<>SecondSeatId)
+);
+
+GO

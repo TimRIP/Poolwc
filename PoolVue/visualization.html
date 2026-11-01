@@ -79,9 +79,58 @@
 </section></div>
 <div v-if="editorPool" class="vizModalOverlay" @click.self="closePool" @keydown.esc="closePool">
   <section class="vizModal" role="dialog" aria-modal="true" :aria-label="'Match results for '+editorPool.matchName">
-    <div class="vizModalHeader"><div><span class="vizEyebrow">MATCH RESULTS</span><h2>{{editorPool.matchName}}</h2><p>Edit scores in the result matrix. Point, Score and Placering update automatically.</p></div><button class="vizClose" type="button" @click="closePool" aria-label="Close">×</button></div>
+    <div class="vizModalHeader"><div><span class="vizEyebrow">MATCH RESULTS</span><h2>{{editorPool.matchName}}</h2><p>Enter each player’s finishing place for a beer-pot, or edit scores in the result matrix for regular matches.</p></div><button class="vizClose" type="button" @click="closePool" aria-label="Close">×</button></div>
     <div class="vizModalBody"><div v-if="editorLoading" class="vizEmpty">Loading matches…</div><div v-if="editorError" class="vizError" role="alert">{{editorError}}</div><div v-if="editorMessage" class="vizSuccess" role="status">{{editorMessage}}</div>
-      <div v-if="!editorLoading && editorPlayers.length" class="vizMatrixScroll">
+      <div v-if="!editorLoading && editorIsBeerPot" class="vizMatrixScroll">
+        <p class="vizMatrixHint">Beer-pot: enter the finishing place (1 = winner) for every player. All places must be different. Saving the places determines qualification and progression.</p>
+        <table class="vizMatrix vizBeerPotTable">
+          <thead><tr><th>Player</th><th>Placering</th></tr></thead>
+          <tbody><tr v-for="seat in editorBeerPotSeats" :key="seat.seatId">
+            <th scope="row">{{seat.playerName}}</th>
+            <td class="vizMatrixEditable">
+              <input type="number" min="1" :max="editorBeerPotSeats.length" step="1"
+                v-model="seat.place" :disabled="editorSaving"
+                :aria-label="'Finishing place for '+seat.playerName" placeholder="Place" />
+            </td>
+          </tr></tbody>
+        </table>
+      </div>
+      <section v-if="!editorLoading && editorIsSwiss" class="vizSwissPanel">
+        <h3>Swiss standings</h3>
+        <p class="vizMatrixHint">Rank: wins → Buchholz (opponents’ total wins) → score difference (scored minus conceded) → head-to-head, when two tied players have met. Fully tied players share the same place. Values include saved results and scores currently entered below; save results to generate the next round.</p>
+        <div class="vizMatrixScroll"><table class="vizMatrix">
+          <thead><tr><th>Place</th><th>Player</th><th>Wins</th><th>Buchholz</th><th>Score</th><th>Score diff.</th><th>Head-to-head</th></tr></thead>
+          <tbody><tr v-for="p in editorSwissStandings" :key="p.key"><td class="vizMatrixTotal">{{p.tied ? ('T' + p.place) : p.place}}</td><th>{{p.name}}</th><td class="vizMatrixTotal">{{p.points}}</td><td class="vizMatrixTotal">{{p.buchholz}}</td><td class="vizMatrixTotal">{{p.score}}</td><td class="vizMatrixTotal">{{p.difference > 0 ? '+' + p.difference : p.difference}}</td><td class="vizMatrixTotal">{{p.headToHead === null ? '—' : p.headToHead}}</td></tr></tbody>
+        </table></div>
+        <section v-if="swissTieReady && swissTieSetupRequired && editorSwissUnresolvedTies.length" class="vizSwissTieChoice">
+          Tie-break storage has not been installed. Run database/003_swiss_manual_tiebreak.sql on the tournament database.
+        </section>
+        <section v-for="group in (swissTieReady && !swissTieSetupRequired ? editorSwissUnresolvedTies : [])" :key="'tie-'+group[0].place" class="vizSwissTieChoice">
+          <h4>Resolve tie for places {{group[0].place}} and {{Number(group[0].place)+1}}</h4>
+          <p class="vizMatrixHint">Choose who takes the higher place. The other player receives the next place. Save this decision after all Swiss rounds are finished.</p>
+          <label>Higher place
+            <select v-model="swissTieFirstPlayerId" :disabled="swissTieSaving || editorSaving">
+              <option value="">Choose player</option>
+              <option v-for="player in group" :key="player.key" :value="String(player.key.slice(3))">{{player.name}}</option>
+            </select>
+          </label>
+          <button type="button" class="vizSave" :disabled="!swissTieFirstPlayerId || swissTieSaving || editorSaving" @click="saveSwissTieBreak(group)">{{swissTieSaving?'Saving…':'Save tie-break choice'}}</button>
+        </section>
+        <div v-for="round in editorSwissRounds" :key="round.number" class="vizSwissRound">
+          <h4>Round {{round.number}} <small>{{round.completed}} of {{round.matches.length}} completed</small></h4>
+          <div v-for="match in round.matches" :key="match.matchId" class="vizSwissMatch">
+            <div class="vizSwissMatchHeading">{{match.matchName}}</div>
+            <p v-if="match.seats.length !== 2" class="vizMatrixHint">Waiting for two assigned players</p>
+            <div v-else class="vizSwissMatchPlayers">
+              <label v-for="seat in match.seats" :key="seat.seatId" :class="matchCellClass(match, seat)">{{seat.playerName}}
+                <input type="number" step="1" :value="seat.score" :disabled="editorSaving" :aria-label="seat.playerName+' score in '+match.matchName" @input="setMatchScore(match,seat,$event.target.value)" />
+              </label>
+            </div>
+          </div>
+        </div>
+        <p class="vizMatrixHint">Save all changes after entering the scores for a round. Visualization will refresh to show newly generated Swiss matches.</p>
+      </section>
+      <div v-if="!editorLoading && editorPlayers.length && !editorIsBeerPot && !editorIsSwiss" class="vizMatrixScroll">
         <table class="vizMatrix"><thead><tr><th class="vizMatrixCorner"></th>
           <template v-if="editorIsSeries"><th v-for="(game,i) in editorMatches" :key="'g'+game.matchId">kamp{{i+1}}</th></template>
           <template v-else><th v-for="p in editorPlayers" :key="p.key">{{p.playerName}}</th></template>

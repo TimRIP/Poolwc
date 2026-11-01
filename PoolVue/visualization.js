@@ -6,6 +6,8 @@ new Vue({
     routes: [], connections: [], routeWarning: '',
     editorStage: null, stageEditorUrl: '', editorPool: null, poolAdvanceUrl: '', poolAdvanceRevision: 0,
     editorMatches: [], editorLoading: false, editorSaving: false, editorError: '', editorMessage: '',
+    swissTieFirstPlayerId: '', swissTieSaving: false, swissTieSaved: null,
+    swissTieReady: false, swissTieSetupRequired: false, swissTieRoundProgress: null,
     playerSearch: '', playerSearchOpen: false, finderPlayers: [], finderLoading: false, finderError: '',
     selectedFinderPlayer: null, finderMatches: [], finderMatchesLoading: false,
     playerNamesOpen: false, renameablePlayers: [], playerNamesLoading: false,
@@ -82,6 +84,112 @@ new Vue({
       }
       return [...names.values()];
     },
+    editorIsSwiss() {
+      return this.editorMatches.some(m => /\bswiss round\s+\d+\b/i.test(m.matchName || ''));
+    },
+    editorSwissRounds() {
+      const groups = new Map();
+      for (const match of this.editorMatches) {
+        const found = /\bswiss round\s+(\d+)\b/i.exec(match.matchName || '');
+        if (!found) continue;
+        const round = Number(found[1]);
+        if (!groups.has(round)) groups.set(round, []);
+        groups.get(round).push(match);
+      }
+      return [...groups.entries()].sort((a,b) => a[0]-b[0]).map(([number,matches]) => ({
+        number, matches, completed: matches.filter(m => m.seats.length === 2 && m.seats.every(s => s.score !== '')).length
+      }));
+    },
+    editorSwissStandings() {
+      // Standings are computed from the same saved or currently edited games
+      // shown below. Tied players share a place until a real tie-break separates them.
+      const stats = new Map(this.editorPlayers.map(p => [p.key, {
+        key:p.key, name:p.playerName, points:0, score:0, conceded:0,
+        buchholz:0, difference:0, headToHead:null, place:'–', tied:false
+      }]));
+      const games = [];
+      for (const m of this.editorMatches) {
+        if (m.seats.length !== 2 || !Number.isFinite(m.playTo)) continue;
+        const [a,b] = m.seats;
+        if (a.score === '' || b.score === '') continue;
+        const av=Number(a.score), bv=Number(b.score);
+        if (!Number.isFinite(av) || !Number.isFinite(bv)) continue;
+        const aw=av===m.playTo, bw=bv===m.playTo;
+        if (aw === bw) continue;
+        const ak=this.seatKey(a), bk=this.seatKey(b);
+        const x=stats.get(ak), y=stats.get(bk);
+        if (!x || !y) continue;
+        x.score+=av; x.conceded+=bv;
+        y.score+=bv; y.conceded+=av;
+        if (aw) x.points++; else y.points++;
+        games.push({a:ak,b:bk,winner:aw?ak:bk});
+      }
+      for (const row of stats.values()) row.difference=row.score-row.conceded;
+      // Buchholz = sum of opponents' current match-win totals, once per game.
+      for (const game of games) {
+        stats.get(game.a).buchholz+=stats.get(game.b).points;
+        stats.get(game.b).buchholz+=stats.get(game.a).points;
+      }
+      const rows=[...stats.values()].sort((a,b)=>
+        b.points-a.points || b.buchholz-a.buchholz || b.difference-a.difference
+      );
+      const signature=r=>[r.points,r.buchholz,r.difference].join('|');
+      let i=0;
+      while (i<rows.length) {
+        let j=i+1;
+        while (j<rows.length && signature(rows[j])===signature(rows[i])) j++;
+        const group=rows.slice(i,j);
+        if (group.length===2) {
+          const [left,right]=group;
+          const direct=games.filter(g=>
+            (g.a===left.key && g.b===right.key)||(g.a===right.key && g.b===left.key));
+          const leftWins=direct.filter(g=>g.winner===left.key).length;
+          const rightWins=direct.filter(g=>g.winner===right.key).length;
+          if (direct.length && leftWins!==rightWins) {
+            left.headToHead=leftWins+'–'+rightWins;
+            right.headToHead=rightWins+'–'+leftWins;
+            if (rightWins>leftWins) { rows[i]=right; rows[i+1]=left; }
+            rows[i].place=i+1; rows[i+1].place=i+2;
+            i=j;continue;
+          }
+          if (direct.length) {
+            left.headToHead=leftWins+'–'+rightWins;
+            right.headToHead=rightWins+'–'+leftWins;
+          }
+        }
+        if (group.length===2 && this.swissTieSaved &&
+            [group[0].key,group[1].key].every(key=>key.startsWith('id:')) &&
+            [group[0].key,group[1].key].some(key=>Number(key.slice(3))===this.swissTieSaved.firstPlayerId) &&
+            [group[0].key,group[1].key].some(key=>Number(key.slice(3))===this.swissTieSaved.secondPlayerId)) {
+          const first=group.find(x=>Number(x.key.slice(3))===this.swissTieSaved.firstPlayerId);
+          const second=group.find(x=>Number(x.key.slice(3))===this.swissTieSaved.secondPlayerId);
+          rows.splice(i,2,first,second);
+          first.place=i+1;first.tied=false;
+          second.place=i+2;second.tied=false;
+        } else group.forEach(r=>{r.place=i+1;r.tied=group.length>1;});
+        i=j;
+      }
+      return rows;
+    },
+    editorSwissUnresolvedTies() {
+      // Show the choice again after saving so the owner can reverse it.
+      const groups = new Map();
+      this.editorSwissStandings.forEach(x => {
+        const signature=[x.points,x.buchholz,x.difference].join('|');
+        if(!groups.has(signature)) groups.set(signature,[]);
+        groups.get(signature).push(x);
+      });
+      return [...groups.values()].filter(group =>
+        group.length===2 && group.every(p=>p.key.startsWith('id:')) &&
+        (group[0].headToHead===group[1].headToHead ||
+         (group[0].headToHead===null && group[1].headToHead===null)));
+    },
+    editorIsBeerPot() {
+      return this.editorMatches.length === 1 && this.editorMatches[0].seats.length > 2;
+    },
+    editorBeerPotSeats() {
+      return this.editorIsBeerPot ? this.editorMatches[0].seats : [];
+    },
     editorIsSeries() {
       const seen = new Set();
       for (const m of this.editorMatches) {
@@ -93,6 +201,14 @@ new Vue({
       return false;
     },
     editorStandings() {
+      if (this.editorIsBeerPot) {
+        const seats = this.editorBeerPotSeats;
+        const valid = seats.length > 1 && seats.every(x => /^\d+$/.test(String(x.place)) && Number(x.place) >= 1 && Number(x.place) <= seats.length)
+          && new Set(seats.map(x => Number(x.place))).size === seats.length;
+        return Object.fromEntries(seats.map(seat => [this.seatKey(seat), {
+          points: '–', score: '–', place: valid ? Number(seat.place) : (seat.place || '–')
+        }]));
+      }
       const stats = this.editorPlayers.map(p => ({ key: p.key, points: 0, score: 0, played: 0, place: '–' }));
       const byKey = new Map(stats.map(x => [x.key, x]));
       for (const m of this.editorMatches) {
@@ -438,6 +554,22 @@ new Vue({
       this.editorLoading = true;
       try {
         const response = await Promise.all(pool.matches.map(m => axios.get('http://localhost:5000/api/match/' + encodeURIComponent(m.matchId), { headers: this.authHeaders() })));
+        this.swissTieSaved = null;
+        this.swissTieFirstPlayerId = '';
+        this.swissTieReady = false;
+        this.swissTieSetupRequired = false;
+        this.swissTieRoundProgress = null;
+        try {
+          const tieResponse = await axios.get('http://localhost:5000/api/match/' + encodeURIComponent(pool.matchId) + '/swiss-tiebreak', {headers:this.authHeaders()});
+          const tie = tieResponse.data || {};
+          this.swissTieReady = tie.ready === true;
+          this.swissTieSetupRequired = tie.setupRequired === true;
+          this.swissTieRoundProgress = {completed:Number(tie.completedRounds || 0), total:Number(tie.totalRounds || 0)};
+          if (tie.firstPlayerId && tie.secondPlayerId) {
+            this.swissTieSaved={firstPlayerId:Number(tie.firstPlayerId),secondPlayerId:Number(tie.secondPlayerId)};
+            this.swissTieFirstPlayerId=String(tie.firstPlayerId);
+          }
+        } catch (ignored) { /* Missing migration shows an error when attempting to save. */ }
         this.editorMatches = response.map((res, i) => {
           const details = res.data || {};
           const rules = details.matchRules || {};
@@ -458,7 +590,8 @@ new Vue({
                 playerName: x.playerName || ('Player #' + x.playerId),
                 score: x.resultPoints === null || x.resultPoints === undefined ? '' : String(x.resultPoints),
                 original: x.resultPoints === null || x.resultPoints === undefined ? '' : String(x.resultPoints),
-                originalPlace: x.resultMatchPlace
+                originalPlace: x.resultMatchPlace,
+                place: x.resultMatchPlace == null ? '' : String(x.resultMatchPlace)
               }))
           };
         });
@@ -481,6 +614,23 @@ new Vue({
       this.editorError='';this.editorMessage='';
       const changes=[];
       for(const m of this.editorMatches){
+        if (this.editorIsBeerPot && m === this.editorMatches[0]) {
+          const seats = m.seats;
+          if (seats.every(seat => String(seat.place || '') === (seat.originalPlace == null ? '' : String(seat.originalPlace)))) continue;
+          if (seats.every(seat => seat.place === '')) {
+            changes.push({id:m.matchId,clear:true});
+            continue;
+          }
+          const places = seats.map(seat => Number(seat.place));
+          if (seats.some((seat, index) => !/^[1-9]\d*$/.test(String(seat.place)) || places[index] > seats.length) || new Set(places).size !== seats.length) {
+            this.editorError = 'Beer-pot: assign each player a different placing from 1 to ' + seats.length + ', or clear every place.';
+            return false;
+          }
+          changes.push({id:m.matchId,clear:false,payload:{matchId:m.matchId,results:seats.map(seat => ({
+            seatId:seat.seatId,resultMatchPlace:Number(seat.place),resultPoints:null
+          }))}});
+          continue;
+        }
         if(m.seats.length!==2)continue;
         const [a,b]=m.seats;
         if(a.score===a.original && b.score===b.original)continue;
@@ -501,7 +651,7 @@ new Vue({
           {seatId:b.seatId,resultMatchPlace:scoreB===m.playTo?1:2,resultPoints:scoreB}
         ]}});
       }
-      if(!changes.length){if(!skipRefresh)this.editorMessage='No scores have changed.';return true;}
+      if(!changes.length){if(!skipRefresh){await this.refreshOpenPoolAfterSave(this.editorPool && this.editorPool.matchId);this.editorMessage='Scores are up to date.';}return true;}
       this.editorSaving=true;
       try {
         for(const c of changes){
@@ -533,6 +683,34 @@ new Vue({
         target.postMessage({ type:'pool-editor-request', requestId, action, poolId, savedSelections }, '*');
       });
     },
+    async refreshOpenPoolAfterSave(poolId) {
+      await this.loadMatches();
+      const fresh = this.stages.flatMap(stage => stage.pools)
+        .find(pool => Number(pool.matchId) === Number(poolId));
+      if (fresh) {
+        this.poolAdvanceRevision++;
+        await this.openPool(fresh);
+      }
+      return fresh;
+    },
+    async saveSwissTieBreak(group) {
+      if (!this.editorPool || !this.swissTieReady || !group || !this.swissTieFirstPlayerId || this.swissTieSaving) return;
+      const first=Number(this.swissTieFirstPlayerId);
+      const all=group.map(p=>Number(p.key.slice(3)));
+      if (!all.includes(first)) {this.editorError='Choose a tied player.';return;}
+      const second=all.find(x=>x!==first);
+      this.swissTieSaving=true;this.editorError='';
+      try {
+        await axios.post('http://localhost:5000/api/match/'+encodeURIComponent(this.editorPool.matchId)+'/swiss-tiebreak',
+          {firstPlayerId:first,secondPlayerId:second},
+          {headers:Object.assign({'Content-Type':'application/json'},this.authHeaders())});
+        this.swissTieSaved={firstPlayerId:first,secondPlayerId:second};
+        await this.refreshOpenPoolAfterSave(this.editorPool.matchId);
+        this.editorMessage='Swiss placing saved and qualification refreshed.';
+      } catch(e) {
+        this.editorError=(e.response && e.response.data && e.response.data.message) || ('Could not save Swiss tie-break choice' + (e.response ? ' (HTTP ' + e.response.status + ')' : ': server unavailable') + '. Check that database/003_swiss_manual_tiebreak.sql was applied to the active database.');
+      } finally {this.swissTieSaving=false;}
+    },
     async saveAllPoolChanges(){
       if (this.editorSaving || this.editorLoading || !this.editorPool) return;
       this.editorError=''; this.editorMessage='';
@@ -563,7 +741,15 @@ new Vue({
         // Snapshot user choices before saving scores: a results refresh can replace the editor state.
         selections = await this.requestPoolEditorAction('snapshot', poolId);
       } catch (e) {
-        this.editorError = e.message || 'Cannot access the advancement editor.';
+        if (!this.editorIsSwiss) {
+          this.editorError = e.message || 'Cannot access the advancement editor.';
+          return;
+        }
+        // Swiss results can be saved before there are any qualification choices.
+        const saved = await this.savePoolResults(true);
+        if (!saved) return;
+        await this.refreshOpenPoolAfterSave(poolId);
+        this.editorMessage = 'Swiss scores saved. Newly generated round matches are shown above.';
         return;
       }
       if (!(await this.savePoolResults(true))) return;
@@ -572,7 +758,10 @@ new Vue({
         // inside Matches before deciding whether advancement can be saved.
         const updated = await this.requestPoolEditorAction('refresh', poolId);
         if (!updated.stageComplete) {
-          this.editorMessage = 'Match scores saved. Finish all matches in this pulje before assigning destination pools or wildcards.';
+          // Swiss rounds are generated server-side when a round finishes. Rebuild
+          // this open editor from the latest tree; do not require closing it.
+          await this.refreshOpenPoolAfterSave(poolId);
+          this.editorMessage = 'Match scores saved. Newly generated matches are shown above when available.';
           return;
         }
         if (!updated.qualified && !updated.eliminated) {
@@ -581,10 +770,7 @@ new Vue({
         }
         const response = await this.requestPoolEditorAction('save', poolId, selections);
         if (!response || !response.savedAdvancement) throw new Error('Advancement was not confirmed saved.');
-        await this.loadMatches();
-        const fresh = this.stages.flatMap(stage=>stage.pools).find(p=>Number(p.matchId)===poolId);
-        this.poolAdvanceRevision++;
-        if (fresh) await this.openPool(fresh);
+        await this.refreshOpenPoolAfterSave(poolId);
         this.editorMessage = 'All match results, wildcard selections and destination pools saved.';
       } catch (e) {
         this.editorError = 'Match scores were saved, but advancement changes could not all be saved: ' + (e.message || 'unknown error');

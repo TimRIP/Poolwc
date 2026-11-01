@@ -2961,11 +2961,158 @@ WHERE S.Id = @StageMatchId;", conn, transaction))
             return stageSeats;
         }
 
+
+        // The tie selector must not be available until every configured Swiss round is saved.
+        public (bool ready, int completedRounds, int totalRounds) GetSwissTieBreakReadiness(int stageMatchId)
+        {
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            {
+                conn.Open();
+                var seats = GetStageSeats(conn, null, stageMatchId);
+                var matches = GetSwissMatches(conn, null, stageMatchId);
+                int total = GetSwissTotalRounds(conn, null, stageMatchId, seats.Count);
+                if (seats.Count < 2 || matches.Count == 0)
+                    return (false, 0, total);
+                var results = GetChildResults(conn, null, stageMatchId);
+                int completed = 0;
+                for (int round = 1; round <= total; round++)
+                {
+                    var roundMatches = matches.Where(x => x.Round == round).ToList();
+                    if (roundMatches.Count == 0) break;
+                    bool finished = true;
+                    foreach (var match in roundMatches)
+                    {
+                        var players = results.Where(x => x.MatchId == match.MatchId && x.PlayerId > 0).ToList();
+                        if (players.Count == 0 || players.Any(x => !x.ResultMatchPlace.HasValue))
+                        { finished = false; break; }
+                    }
+                    if (!finished) break;
+                    completed++;
+                }
+                return (completed == total, completed, total);
+            }
+        }
+
+        public (int? firstPlayerId, int? secondPlayerId) GetSwissTieBreak(int stageMatchId)
+        {
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            using (SqlCommand cmd = new SqlCommand(@"
+SELECT a.PlayerId, b.PlayerId FROM SwissManualTieBreak t
+JOIN Seat a ON a.Id=t.FirstSeatId JOIN Seat b ON b.Id=t.SecondSeatId
+WHERE t.StageMatchId=@stageId", conn))
+            {
+                cmd.Parameters.Add("@stageId", SqlDbType.Int).Value=stageMatchId;
+                conn.Open();
+                using (SqlDataReader rd=cmd.ExecuteReader())
+                {
+                    if (rd.Read()) return (rd.IsDBNull(0)?(int?)null:rd.GetInt32(0), rd.IsDBNull(1)?(int?)null:rd.GetInt32(1));
+                }
+            }
+            return (null, null);
+        }
+
+        public StageAdvanceResult SetSwissTieBreak(int stageMatchId, int userId, int firstPlayerId, int secondPlayerId)
+        {
+            if (firstPlayerId <= 0 || secondPlayerId <= 0 || firstPlayerId == secondPlayerId)
+                throw new InvalidOperationException("Choose two different players.");
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            {
+                conn.Open();
+                using (SqlTransaction tx = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        // Only the tournament owner or a full editor may decide a tie.
+                        using (SqlCommand access = new SqlCommand(@"
+;WITH Ancestors AS
+(
+    SELECT m.Id AS MatchId, m.ParentMatchId,
+           CAST('|' + CAST(m.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX)) AS Visited
+    FROM [Match] m
+    WHERE m.Id = @stageId
+
+    UNION ALL
+
+    SELECT parent.Id, parent.ParentMatchId,
+           CAST(a.Visited + CAST(parent.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX))
+    FROM Ancestors a
+    INNER JOIN [Match] parent ON parent.Id = a.ParentMatchId
+    WHERE CHARINDEX('|' + CAST(parent.Id AS VARCHAR(20)) + '|', a.Visited) = 0
+)
+SELECT CASE WHEN EXISTS
+(
+    SELECT 1
+    FROM Ancestors a
+    INNER JOIN Tournament t ON t.MatchId = a.MatchId
+    LEFT JOIN TournamentMatchEditor e
+        ON e.TournamentId = t.Id AND e.RegisteredUserId = @userId
+    WHERE t.Admin = @userId OR (e.RegisteredUserId IS NOT NULL AND e.VenueId IS NULL)
+) THEN 1 ELSE 0 END
+OPTION (MAXRECURSION 0)",conn,tx))
+                        {
+                            access.Parameters.Add("@userId",SqlDbType.Int).Value=userId;
+                            access.Parameters.Add("@stageId",SqlDbType.Int).Value=stageMatchId;
+                            if (Convert.ToInt32(access.ExecuteScalar()) == 0)
+                                throw new UnauthorizedAccessException("You cannot manage Swiss tie-break decisions for this tournament.");
+                        }
+                        var seats=GetStageSeats(conn,tx,stageMatchId);
+                        var first=seats.FirstOrDefault(x=>x.PlayerId==firstPlayerId);
+                        var second=seats.FirstOrDefault(x=>x.PlayerId==secondPlayerId);
+                        if(first==null || second==null) throw new InvalidOperationException("Both players must belong to this pulje.");
+                        if(!IsSwissStage(conn,tx,stageMatchId))throw new InvalidOperationException("This pulje is not Swiss.");
+                        var matches=GetSwissMatches(conn,tx,stageMatchId);
+                        if(matches.Count==0 || matches.Max(x=>x.Round)<GetSwissTotalRounds(conn,tx,stageMatchId,seats.Count))
+                            throw new InvalidOperationException("Finish all Swiss rounds before resolving a tie.");
+                        var results=GetChildResults(conn,tx,stageMatchId);
+                        var lastRound=matches.Max(x=>x.Round);
+                        foreach (var match in matches.Where(x=>x.Round==lastRound))
+                        {
+                            var scored=results.Where(x=>x.MatchId==match.MatchId && x.PlayerId>0).ToList();
+                            if (scored.Count<1 || scored.Any(x=>!x.ResultMatchPlace.HasValue))
+                                throw new InvalidOperationException("Finish every match in the final Swiss round first.");
+                        }
+                        var all=BuildSwissStandings(seats,results,matches,GetPlayTo(conn,tx,stageMatchId));
+                        var left=all.First(x=>x.SeatId==first.SeatId);
+                        var right=all.First(x=>x.SeatId==second.SeatId);
+                        if (left.Wins!=right.Wins || left.Buchholz!=right.Buchholz || left.ScoreDifference!=right.ScoreDifference)
+                            throw new InvalidOperationException("Players are not tied on wins, Buchholz and score.");
+                        int headFirst=0,headSecond=0;
+                        foreach(var match in matches)
+                        {
+                            var duel=results.Where(x=>x.MatchId==match.MatchId &&
+                                (x.StageSeatId==first.SeatId || x.StageSeatId==second.SeatId)).ToList();
+                            if(duel.Count!=2)continue;
+                            headFirst+=duel.Count(x=>x.StageSeatId==first.SeatId && x.ResultMatchPlace==1);
+                            headSecond+=duel.Count(x=>x.StageSeatId==second.SeatId && x.ResultMatchPlace==1);
+                        }
+                        if(headFirst!=headSecond)throw new InvalidOperationException("Head-to-head already resolves this tie.");
+                        using (SqlCommand cmd=new SqlCommand(@"
+MERGE SwissManualTieBreak WITH (HOLDLOCK) AS target
+USING (SELECT @stageId AS StageMatchId) AS source ON target.StageMatchId=source.StageMatchId
+WHEN MATCHED THEN UPDATE SET FirstSeatId=@first, SecondSeatId=@second
+WHEN NOT MATCHED THEN INSERT(StageMatchId,FirstSeatId,SecondSeatId) VALUES(@stageId,@first,@second);",conn,tx))
+                        {
+                            cmd.Parameters.Add("@stageId",SqlDbType.Int).Value=stageMatchId;
+                            cmd.Parameters.Add("@first",SqlDbType.Int).Value=first.SeatId;
+                            cmd.Parameters.Add("@second",SqlDbType.Int).Value=second.SeatId;
+                            cmd.ExecuteNonQuery();
+                        }
+                        StageAdvanceResult changed=RecalculateSwissStage(conn,tx,stageMatchId,"Swiss pulje");
+                        tx.Commit();
+                        return changed;
+                    }
+                    catch {tx.Rollback();throw;}
+                }
+            }
+        }
+
         private static bool TryRankSwissStage(
             List<StageSeatScore> standings,
             List<ChildSeatResult> childResults,
             List<SwissMatchInfo> swissMatches,
             bool higherScoreIsBetter,
+            int? overrideFirstSeatId,
+            int? overrideSecondSeatId,
             out List<StageSeatScore> ranked,
             out string unresolvedReason)
         {
@@ -3061,6 +3208,19 @@ WHERE S.Id = @StageMatchId;", conn, transaction))
                 bool stillTied = tieOrdered
                     .GroupBy(x => x.HeadToHeadWins)
                     .Any(g => g.Count() > 1);
+
+                // Only a precisely matching two-player unresolved tie can use
+                // the tournament owner's manual decision. Never override
+                // another player's stronger sporting result.
+                if (stillTied && tied.Count == 2 &&
+                    overrideFirstSeatId.HasValue && overrideSecondSeatId.HasValue &&
+                    tied.Any(x => x.SeatId == overrideFirstSeatId.Value) &&
+                    tied.Any(x => x.SeatId == overrideSecondSeatId.Value) &&
+                    tied.All(x => x.HeadToHeadWins == tied[0].HeadToHeadWins))
+                {
+                    tieOrdered = tied.OrderBy(x => x.SeatId == overrideFirstSeatId.Value ? 0 : 1).ToList();
+                    stillTied = false;
+                }
 
                 if (stillTied)
                 {
@@ -3550,11 +3710,26 @@ SELECT CAST(SCOPE_IDENTITY() AS INT);", conn, transaction))
             List<StageSeatScore> ranked;
             string unresolvedReason;
 
+            int? manualFirstSeat = null, manualSecondSeat = null;
+            using (SqlCommand tieCmd = new SqlCommand(@"SELECT FirstSeatId, SecondSeatId
+FROM SwissManualTieBreak WHERE StageMatchId = @StageMatchId", conn, transaction))
+            {
+                tieCmd.Parameters.Add("@StageMatchId", SqlDbType.Int).Value = stageMatchId;
+                using (SqlDataReader tieReader = tieCmd.ExecuteReader())
+                {
+                    if (tieReader.Read())
+                    {
+                        manualFirstSeat = tieReader.GetInt32(0);
+                        manualSecondSeat = tieReader.GetInt32(1);
+                    }
+                }
+            }
             if (!TryRankSwissStage(
                 standings,
                 childResults,
                 swissMatches,
                 higherScoreIsBetter,
+                manualFirstSeat, manualSecondSeat,
                 out ranked,
                 out unresolvedReason))
             {

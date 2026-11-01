@@ -25,6 +25,12 @@ namespace TournamentBackend.Controllers
         public List<StageManualWildcardAssignment> WildcardAssignments { get; set; }
     }
 
+    public class SwissTieBreakRequest
+    {
+        public int FirstPlayerId { get; set; }
+        public int SecondPlayerId { get; set; }
+    }
+
     [Authorize]
     [ApiController]
     [Route("api/match")]
@@ -47,6 +53,45 @@ namespace TournamentBackend.Controllers
             }
 
             return Ok(details);
+        }
+
+        [HttpGet("{stageMatchId:int}/swiss-tiebreak")]
+        public IActionResult GetSwissTieBreak(int stageMatchId)
+        {
+            if (!TryGetUserId(out int userId)) return Unauthorized();
+            var backoffice = new MatchResultBackoffice();
+            if (!backoffice.CanViewTournamentMatch(stageMatchId,userId)) return Forbid();
+            var readiness = backoffice.GetSwissTieBreakReadiness(stageMatchId);
+            try
+            {
+                var saved = backoffice.GetSwissTieBreak(stageMatchId);
+                return Ok(new { firstPlayerId=saved.firstPlayerId, secondPlayerId=saved.secondPlayerId,
+                    ready=readiness.ready, completedRounds=readiness.completedRounds, totalRounds=readiness.totalRounds });
+            }
+            catch (System.Data.SqlClient.SqlException ex) when (ex.Number == 208)
+            {
+                // Allow the user to enter results before the optional tie-break migration is installed.
+                return Ok(new { firstPlayerId=(int?)null, secondPlayerId=(int?)null,
+                    ready=readiness.ready, completedRounds=readiness.completedRounds,
+                    totalRounds=readiness.totalRounds, setupRequired=true });
+            }
+        }
+
+        [HttpPost("{stageMatchId:int}/swiss-tiebreak")]
+        public IActionResult SaveSwissTieBreak(int stageMatchId, [FromBody] SwissTieBreakRequest model)
+        {
+            if (!TryGetUserId(out int userId)) return Unauthorized();
+            if (model == null) return BadRequest(new {message="Select a winner of the tie."});
+            try
+            {
+                var result = new MatchResultBackoffice().SetSwissTieBreak(
+                    stageMatchId,userId,model.FirstPlayerId,model.SecondPlayerId);
+                return Ok(new {saved=true,advancement=result});
+            }
+            catch (UnauthorizedAccessException) { return StatusCode(403,new {message="Only the owner or a full editor can resolve Swiss ties."}); }
+            catch (InvalidOperationException ex) {return BadRequest(new {message=ex.Message});}
+            catch (System.Data.SqlClient.SqlException ex) when (ex.Number == 208)
+            { return StatusCode(500, new {message="Swiss tie-break storage is not installed. Run database/003_swiss_manual_tiebreak.sql on the PoolApi database, then retry."}); }
         }
 
         [HttpPost("result")]
