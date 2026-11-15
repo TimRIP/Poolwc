@@ -11,7 +11,7 @@ new Vue({
     playerSearch: '', playerSearchOpen: false, finderPlayers: [], finderLoading: false, finderError: '',
     selectedFinderPlayer: null, finderMatches: [], finderMatchesLoading: false,
     playerNamesOpen: false, renameablePlayers: [], playerNamesLoading: false,
-    savingPlayerNameId: null, playerNameMessage: '', playerNameError: '',
+    savingPlayerNameId: null, randomizingPlayerNames: false, playerNameMessage: '', playerNameError: '',
     poolScheduleDetails: {}, poolAdvanceStates: {}, playerDestinations: {}, wildcardStages: {}, tournamentPodium: null, podiumLoading: false
   },
   computed: {
@@ -291,6 +291,65 @@ new Vue({
         this.playerNameError = (e.response && e.response.data && e.response.data.message) || 'Could not save player name.';
       } finally {
         this.savingPlayerNameId = null;
+      }
+    },
+    async randomizePlayerNames() {
+      if (this.randomizingPlayerNames || this.savingPlayerNameId !== null || this.playerNamesLoading) return;
+      const players = this.renameablePlayers.filter(p => Number.isInteger(p.playerId) && p.playerId > 0);
+      if (players.length < 2) {
+        this.playerNameError = 'At least two eligible players are needed to randomize names.';
+        return;
+      }
+      const tournamentId = String(this.selectedTournamentId || '');
+      if (!tournamentId) return;
+      if (!window.confirm('Randomize and save the names of ' + players.length + ' unregistered players? Player IDs, results and match assignments will stay unchanged. Unsaved name edits will be discarded.')) return;
+      const originalNames = players.map(p => String(p.playerName || ''));
+      const shuffled = originalNames.slice();
+      // A random cyclic shift of a shuffled order ensures every ID receives a
+      // different original name (when names are distinct).
+      const order = players.map((_, i) => i);
+      for (let i = order.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+      }
+      const shift = 1 + Math.floor(Math.random() * (order.length - 1));
+      order.forEach((index, position) => {
+        shuffled[index] = originalNames[order[(position + shift) % order.length]];
+      });
+      const changes = players.map((player, i) => ({ playerId: player.playerId, name: shuffled[i] }))
+        .filter((entry, i) => entry.name !== originalNames[i]);
+      if (!changes.length) {
+        this.playerNameMessage = 'All available names are identical; there is nothing to shuffle.';
+        return;
+      }
+      this.randomizingPlayerNames = true;
+      this.playerNameError = '';
+      this.playerNameMessage = '';
+      let saved = 0;
+      let failure = null;
+      try {
+        for (const change of changes) {
+          try {
+            await axios.put(
+              'http://localhost:5000/api/tournament/' + encodeURIComponent(tournamentId) + '/players/' + encodeURIComponent(change.playerId) + '/name',
+              { name: change.name },
+              { headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, this.authHeaders()) }
+            );
+            saved++;
+          } catch (e) {
+            const details = e.response && e.response.data && e.response.data.message;
+            failure = 'Could not rename player #' + change.playerId + ': ' + (details || e.message || 'Request failed') + '. ' + saved + ' of ' + changes.length + ' changes were saved.';
+            break;
+          }
+        }
+        // Reload to show the actual persisted names, including partial saves.
+        await this.loadMatches();
+        if (failure) this.playerNameError = failure;
+        else this.playerNameMessage = 'Randomized ' + saved + ' player names. Player IDs and tournament results are unchanged.';
+      } catch (e) {
+        this.playerNameError = 'Could not refresh the names after randomizing: ' + (e.message || 'Unknown error');
+      } finally {
+        this.randomizingPlayerNames = false;
       }
     },
     async loadFinderPlayers() {

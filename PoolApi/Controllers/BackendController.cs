@@ -312,6 +312,33 @@ namespace TournamentBackend.Controllers
     [Route("api/matches")]
     public class MatchesController : ControllerBase
     {
+        public class TemplateVisibilityRequest
+        {
+            public bool IsPublic { get; set; }
+        }
+
+        [HttpPut("templates/{tournamentId:int}/visibility")]
+        public IActionResult SetTournamentTemplateVisibility(int tournamentId, [FromBody] TemplateVisibilityRequest request)
+        {
+            if (request == null) return BadRequest(new { message = "Visibility is required." });
+            var ubo = new UserBackoffice();
+            StringValues auth;
+            Request.Headers.TryGetValue("Authorization", out auth);
+            int userId = ubo.SP_GetUserFromToken(auth.ToString());
+            if (userId == -1) return Unauthorized();
+            try
+            {
+                bool updated = new TournamentEditorBackoffice().SetTournamentTemplatePublic(userId, tournamentId, request.IsPublic);
+                if (!updated) return StatusCode(403, new { message = "Only the tournament owner can change template visibility, and the tournament must contain setup data." });
+                return Ok(new { tournamentId = tournamentId, isPublic = request.IsPublic });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                return StatusCode(500, new { message = "Could not change template visibility. Verify database/005_public_tournament_templates.sql has been applied." });
+            }
+        }
+
         [HttpGet("templates")]
         public IActionResult GetTournamentTemplates()
         {

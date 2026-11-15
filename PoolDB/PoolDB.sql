@@ -1090,3 +1090,13 @@ BEGIN
 END;
 
 GO
+
+-- Separate from tournament visibility and editor permissions.
+-- Public templates expose only saved tournament setup (FormData), never edit rights.
+IF COL_LENGTH('dbo.Tournament', 'IsPublicTemplate') IS NULL
+BEGIN
+    ALTER TABLE dbo.Tournament
+        ADD IsPublicTemplate bit NOT NULL
+            CONSTRAINT DF_Tournament_IsPublicTemplate DEFAULT (0);
+END;
+GO

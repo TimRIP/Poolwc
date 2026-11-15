@@ -76,13 +76,31 @@
                     <span>Previous tournaments with {{ Number(formdata.tournamentplayers) || 0 }} players</span>
                     <select v-model="selectedTemplateId" :disabled="templatesLoading || !matchingTemplates.length">
                       <option value="">{{ templatesLoading ? 'Loading tournaments…' : (matchingTemplates.length ? 'Select a tournament…' : 'No matching tournaments') }}</option>
-                      <option v-for="template in matchingTemplates" :key="template.tournamentId" :value="String(template.tournamentId)">{{ template.name }} (#{{ template.tournamentId }})</option>
+                      <option v-for="template in matchingTemplates" :key="template.tournamentId" :value="String(template.tournamentId)">{{ template.name }} (#{{ template.tournamentId }}){{ template.isPublic ? ' · Public' : ' · Private' }}</option>
                     </select>
                   </label>
                   <div><button type="button" class="secondary-btn" @click="applyTournamentTemplate" :disabled="!selectedTemplateId">Use as template</button>
                   <button type="button" class="secondary-btn" @click="loadTournamentTemplates" :disabled="templatesLoading">Refresh list</button></div>
                 </div>
                 <p class="inline-message" v-if="templateMessage">{{ templateMessage }}</p>
+                <div class="form-grid two-col" style="align-items:end;margin-top:14px">
+                  <label class="field">
+                    <span>Make one of my tournament templates public</span>
+                    <select v-model="selectedSharingTemplateId" :disabled="templatesLoading || publishingTemplate || !ownedTemplates.length">
+                      <option value="">{{ ownedTemplates.length ? 'Choose my tournament…' : 'No tournaments owned by this user' }}</option>
+                      <option v-for="t in ownedTemplates" :key="t.tournamentId" :value="String(t.tournamentId)">
+                        {{ t.name }} (#{{ t.tournamentId }}) — {{ t.isPublic ? 'Public' : 'Private' }}
+                      </option>
+                    </select>
+                  </label>
+                  <div>
+                    <button type="button" class="secondary-btn" @click="setTemplatePublic(true)" :disabled="!selectedSharingTemplate || selectedSharingTemplate.isPublic || publishingTemplate">Make public</button>
+                    <button type="button" class="secondary-btn" @click="setTemplatePublic(false)" :disabled="!selectedSharingTemplate || !selectedSharingTemplate.isPublic || publishingTemplate">Make private</button>
+                  </div>
+                </div>
+                <p class="inline-message" v-if="sharingMessage" role="status">{{ sharingMessage }}</p>
+                <p class="inline-message">Public templates share the tournament setup only. They do not grant editing access to the original tournament.</p>
+
               </div>
 
               <div class="access-area">

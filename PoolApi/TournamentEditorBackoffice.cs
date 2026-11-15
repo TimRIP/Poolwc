@@ -42,6 +42,8 @@ namespace DrukDatabaseLayer
         public int TournamentId { get; set; }
         public string Name { get; set; }
         public string FormData { get; set; }
+        public bool IsPublic { get; set; }
+        public bool IsOwner { get; set; }
     }
 
     public class TournamentEditorBackoffice
@@ -100,6 +102,56 @@ ORDER BY T.CreatedAt DESC, T.Id DESC;";
             }
 
             return tournaments;
+        }
+
+        public List<TournamentTemplateItem> GetTournamentTemplates(int userId)
+        {
+            // The public flag is independent of tournament registration visibility.
+            // Never return non-public templates belonging to a different owner.
+            const string sql = @"SELECT T.Id, T.[name], T.FormData,
+    CAST(COALESCE(T.IsPublicTemplate, 0) AS bit) AS IsPublic,
+    CASE WHEN T.Admin = @UserId THEN 1 ELSE 0 END AS IsOwner
+FROM Tournament T
+WHERE (T.Admin = @UserId OR T.IsPublicTemplate = 1)
+  AND T.FormData IS NOT NULL AND LEN(LTRIM(RTRIM(T.FormData))) > 0
+ORDER BY CASE WHEN T.Admin = @UserId THEN 0 ELSE 1 END, T.Id DESC";
+            var result = new List<TournamentTemplateItem>();
+            using (var conn = new SqlConnection(_configuration["connectionstring"]))
+            using (var cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                conn.Open();
+                using (var reader = cmd.ExecuteReader())
+                    while (reader.Read())
+                        result.Add(new TournamentTemplateItem {
+                            TournamentId = Convert.ToInt32(reader["Id"]),
+                            Name = Convert.ToString(reader["name"]),
+                            FormData = Convert.ToString(reader["FormData"]),
+                            IsPublic = Convert.ToBoolean(reader["IsPublic"]),
+                            IsOwner = Convert.ToBoolean(reader["IsOwner"])
+                        });
+            }
+            return result;
+        }
+
+        public bool SetTournamentTemplatePublic(int userId, int tournamentId, bool isPublic)
+        {
+            // Only the creator can publish/unpublish; the flag changes neither
+            // tournament access nor ownership, and does not modify FormData.
+            const string sql = @"UPDATE Tournament
+SET IsPublicTemplate = @IsPublic
+WHERE Id = @TournamentId AND Admin = @UserId
+  AND FormData IS NOT NULL AND LEN(LTRIM(RTRIM(FormData))) > 0;
+SELECT @@ROWCOUNT;";
+            using (var conn = new SqlConnection(_configuration["connectionstring"]))
+            using (var cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                cmd.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
+                cmd.Parameters.Add("@IsPublic", SqlDbType.Bit).Value = isPublic;
+                conn.Open();
+                return Convert.ToInt32(cmd.ExecuteScalar()) == 1;
+            }
         }
 
         public bool IsTournamentAdmin(int tournamentId, int userId)
@@ -353,28 +405,6 @@ WHERE TournamentId = @TournamentId
                 conn.Open();
                 cmd.ExecuteNonQuery();
             }
-        }
-
-        public List<TournamentTemplateItem> GetTournamentTemplates(int userId)
-        {
-            const string sql = @"SELECT T.Id, T.[name], T.FormData FROM Tournament T
-WHERE T.Admin = @UserId AND T.FormData IS NOT NULL AND LEN(LTRIM(RTRIM(T.FormData))) > 0
-ORDER BY T.Id DESC";
-            var result = new List<TournamentTemplateItem>();
-            using (var conn = new SqlConnection(_configuration["connectionstring"]))
-            using (var cmd = new SqlCommand(sql, conn))
-            {
-                cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
-                conn.Open();
-                using (var reader = cmd.ExecuteReader())
-                    while (reader.Read())
-                        result.Add(new TournamentTemplateItem {
-                            TournamentId = Convert.ToInt32(reader["Id"]),
-                            Name = Convert.ToString(reader["name"]),
-                            FormData = Convert.ToString(reader["FormData"])
-                        });
-            }
-            return result;
         }
 
         private void EnsureTournamentAdmin(int tournamentId, int userId)

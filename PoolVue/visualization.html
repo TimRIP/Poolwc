@@ -28,14 +28,17 @@
  <div v-if="playerNamesOpen" class="vizNamesBody">
   <p v-if="!selectedTournamentId">Select a tournament to rename players.</p>
   <template v-else>
-   <p class="vizRenameNote">Rename players not linked to registered user accounts. Changes apply throughout the tournament.</p>
+   <div class="vizNamesToolbar">
+     <p class="vizRenameNote">Rename players not linked to registered user accounts. Randomize shuffles only their names; player IDs, match assignments and results stay unchanged.</p>
+     <button type="button" class="vizRandomizeNames" @click="randomizePlayerNames" :disabled="randomizingPlayerNames || playerNamesLoading || savingPlayerNameId !== null || renameablePlayers.length < 2"><i class="fa fa-random" aria-hidden="true"></i> {{randomizingPlayerNames ? 'Randomizing…' : 'Randomize names'}}</button>
+   </div>
    <p v-if="playerNamesLoading">Loading player names…</p>
    <p v-else-if="!renameablePlayers.length">No unregistered players available to rename.</p>
    <div v-else class="vizRenameRows">
     <div v-for="player in renameablePlayers" :key="player.playerId" class="vizRenameRow">
      <div class="vizRenameIdentity"><strong>{{ player.playerName }}</strong><small>Player #{{ player.playerId }}</small></div>
-     <input type="text" maxlength="255" v-model="player.editName" :disabled="savingPlayerNameId===player.playerId" @keyup.enter="savePlayerName(player)" :aria-label="'Rename '+player.playerName">
-     <button type="button" @click="savePlayerName(player)" :disabled="savingPlayerNameId===player.playerId || !playerNameChanged(player)">{{savingPlayerNameId===player.playerId?'Saving…':'Save'}}</button>
+     <input type="text" maxlength="255" v-model="player.editName" :disabled="randomizingPlayerNames || savingPlayerNameId !== null" @keyup.enter="savePlayerName(player)" :aria-label="'Rename '+player.playerName">
+     <button type="button" @click="savePlayerName(player)" :disabled="randomizingPlayerNames || savingPlayerNameId !== null || !playerNameChanged(player)">{{savingPlayerNameId===player.playerId?'Saving…':'Save'}}</button>
     </div>
    </div>
    <p v-if="playerNameMessage" class="vizRenameSuccess">{{playerNameMessage}}</p>

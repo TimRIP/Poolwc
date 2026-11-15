@@ -121,6 +121,8 @@ new Vue({
           // previous user's list after switching accounts in the same tab.
           dash.tournamentTemplates = [];
           dash.selectedTemplateId = '';
+          dash.selectedSharingTemplateId = '';
+          dash.sharingMessage = '';
           dash.loadTournamentTemplates();
         }
 
@@ -187,6 +189,9 @@ var dash = new Vue({
     templatesLoading: false,
     selectedTemplateId: '',
     templateMessage: '',
+    selectedSharingTemplateId: '',
+    publishingTemplate: false,
+    sharingMessage: '',
     createdTournamentId: localStorage.getItem('lastTournamentId') || '',
     createdJoinCode: localStorage.getItem('lastTournamentJoinCode') || '',
     nextKey: 2,
@@ -231,6 +236,14 @@ var dash = new Vue({
   computed: {
     tokenAvailable: function () {
       return !!this.authToken;
+    },
+    ownedTemplates: function () {
+      return this.tournamentTemplates.filter(function (template) { return template.isOwner; });
+    },
+    selectedSharingTemplate: function () {
+      return this.ownedTemplates.find(function (t) {
+        return String(t.tournamentId) === String(this.selectedSharingTemplateId);
+      }, this) || null;
     },
     matchingTemplates: function () {
       var count = Number(this.formdata.tournamentplayers);
@@ -278,13 +291,18 @@ var dash = new Vue({
             if (!form || !Array.isArray(form.rundearray)) return null;
             return { tournamentId: row.tournamentId || row.TournamentId,
               name: row.name || row.Name || form.tournamentname || 'Tournament',
-              playerCount: Number(form.tournamentplayers), form: form };
+              playerCount: Number(form.tournamentplayers), form: form,
+              isPublic: row.isPublic === true || row.IsPublic === true,
+              isOwner: row.isOwner === true || row.IsOwner === true };
           } catch (e) { return null; }
         }).filter(Boolean);
         if (rows.length && !this.tournamentTemplates.length) {
           this.templateMessage = 'The server returned ' + rows.length + ' tournaments, but none contains usable tournament setup data (FormData).';
         } else if (this.tournamentTemplates.length && !this.matchingTemplates.length) {
           this.templateMessage = this.tournamentTemplates.length + ' saved tournaments found, but none has ' + Number(this.formdata.tournamentplayers) + ' players. Change the player count to view other templates.';
+        }
+        if (!this.ownedTemplates.some(function(t){ return String(t.tournamentId) === this.selectedSharingTemplateId; }, this)) {
+          this.selectedSharingTemplateId = '';
         }
         if (!this.matchingTemplates.some(function(t){ return String(t.tournamentId) === this.selectedTemplateId; }, this)) {
           this.selectedTemplateId = '';
@@ -295,6 +313,27 @@ var dash = new Vue({
           ? 'Please log in to load your previous tournaments.'
           : 'Could not retrieve templates from the server' + (status ? ' (HTTP ' + status + ')' : ' (connection error)') + '. Check that PoolApi has been rebuilt and restarted.';
       }.bind(this)).finally(function () { this.templatesLoading = false; }.bind(this));
+    },
+    setTemplatePublic: function (isPublic) {
+      var selected = this.selectedSharingTemplate;
+      if (!selected || this.publishingTemplate) return;
+      this.sharingMessage = '';
+      this.publishingTemplate = true;
+      return axios.put('http://localhost:5000/api/matches/templates/' + encodeURIComponent(selected.tournamentId) + '/visibility',
+        { isPublic: !!isPublic },
+        { headers: { Authorization: this.authToken || localStorage.getItem('token') || '' } }
+      ).then(function () {
+        this.sharingMessage = isPublic
+          ? 'Template is public. Other logged-in users can now use this setup.'
+          : 'Template is private again. Other users can no longer select it.';
+        return this.loadTournamentTemplates();
+      }.bind(this)).catch(function (error) {
+        var body = error.response && error.response.data;
+        this.sharingMessage = (body && body.message) || 'Could not change template visibility' +
+          (error.response ? ' (HTTP ' + error.response.status + ')' : '') + '.';
+      }.bind(this)).finally(function () {
+        this.publishingTemplate = false;
+      }.bind(this));
     },
     applyTournamentTemplate: function () {
       var selected = this.matchingTemplates.find(function (t) {

@@ -138,3 +138,10 @@
 .vizPlayerOut{background:#442d17;border:1px solid #cf8730;border-radius:7px;padding:6px 8px}
 .vizPlayerOut .vizPlayerName,.vizPlayerOut .vizPlayerState{color:#ffbd70;font-weight:700}
 .vizPlayerOut .vizPlayerNo{background:#98571b;color:#fff3e2}
+
+/* Player-name randomization controls */
+.vizNamesToolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.vizNamesToolbar .vizRenameNote{flex:1 1 260px;margin:0!important}
+.vizRandomizeNames{border:1px solid #6090cf;background:#254a7f;color:#fff;border-radius:7px;padding:10px 14px;font-weight:700;cursor:pointer;white-space:nowrap}
+.vizRandomizeNames:hover:not(:disabled){background:#3565a5}
+.vizRandomizeNames:disabled{opacity:.5;cursor:not-allowed}
