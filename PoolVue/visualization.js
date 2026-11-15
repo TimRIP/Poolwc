@@ -643,17 +643,6 @@ new Vue({
         this.swissTieReady = false;
         this.swissTieSetupRequired = false;
         this.swissTieRoundProgress = null;
-        try {
-          const tieResponse = await axios.get('http://localhost:5000/api/match/' + encodeURIComponent(pool.matchId) + '/swiss-tiebreak', {headers:this.authHeaders()});
-          const tie = tieResponse.data || {};
-          this.swissTieReady = tie.ready === true;
-          this.swissTieSetupRequired = tie.setupRequired === true;
-          this.swissTieRoundProgress = {completed:Number(tie.completedRounds || 0), total:Number(tie.totalRounds || 0)};
-          if (tie.firstPlayerId && tie.secondPlayerId) {
-            this.swissTieSaved={firstPlayerId:Number(tie.firstPlayerId),secondPlayerId:Number(tie.secondPlayerId)};
-            this.swissTieFirstPlayerId=String(tie.firstPlayerId);
-          }
-        } catch (ignored) { /* Missing migration shows an error when attempting to save. */ }
         this.editorMatches = response.map((res, i) => {
           const details = res.data || {};
           const rules = details.matchRules || {};
@@ -679,6 +668,10 @@ new Vue({
               }))
           };
         });
+        if (this.editorIsSwiss) {
+          try { await this.loadSwissTieState(pool.matchId); }
+          catch (e) { console.warn('Could not load Swiss tie-break status:', e); }
+        }
       } catch (e) {
         this.editorError = 'Could not load match details. Check login and server connection.';
       } finally {
@@ -771,11 +764,36 @@ new Vue({
       await this.loadMatches();
       const fresh = this.stages.flatMap(stage => stage.pools)
         .find(pool => Number(pool.matchId) === Number(poolId));
-      if (fresh) {
+      if (fresh && this.editorPool && Number(this.editorPool.matchId) === Number(poolId)) {
         this.poolAdvanceRevision++;
         await this.openPool(fresh);
+        // A Swiss score save can finalize its last round at the same time as
+        // advancement is recomputed. Recheck the readiness on the open editor
+        // rather than waiting for another modal-open event.
+        if (this.editorIsSwiss && this.editorSwissRounds.length) {
+          const rounds = this.editorSwissRounds;
+          const allVisibleDone = rounds.every(r => r.matches.length && r.completed === r.matches.length);
+          if (allVisibleDone && !this.swissTieReady) {
+            for (let attempt = 0; attempt < 3 && !this.swissTieReady; attempt++) {
+              await new Promise(resolve => setTimeout(resolve, 250));
+              if (!this.editorPool || Number(this.editorPool.matchId) !== Number(poolId)) break;
+              await this.loadSwissTieState(poolId);
+            }
+          }
+        }
       }
       return fresh;
+    },
+    async loadSwissTieState(poolId) {
+      const response = await axios.get('http://localhost:5000/api/match/' + encodeURIComponent(poolId) + '/swiss-tiebreak', {headers:this.authHeaders()});
+      if (!this.editorPool || Number(this.editorPool.matchId) !== Number(poolId)) return;
+      const tie = response.data || {};
+      this.swissTieReady = tie.ready === true;
+      this.swissTieSetupRequired = tie.setupRequired === true;
+      this.swissTieRoundProgress = {completed:Number(tie.completedRounds || 0),total:Number(tie.totalRounds || 0)};
+      this.swissTieSaved = tie.firstPlayerId && tie.secondPlayerId
+        ? {firstPlayerId:Number(tie.firstPlayerId),secondPlayerId:Number(tie.secondPlayerId)} : null;
+      this.swissTieFirstPlayerId = this.swissTieSaved ? String(this.swissTieSaved.firstPlayerId) : '';
     },
     async saveSwissTieBreak(group) {
       if (!this.editorPool || !this.swissTieReady || !group || !this.swissTieFirstPlayerId || this.swissTieSaving) return;
@@ -788,9 +806,14 @@ new Vue({
         await axios.post('http://localhost:5000/api/match/'+encodeURIComponent(this.editorPool.matchId)+'/swiss-tiebreak',
           {firstPlayerId:first,secondPlayerId:second},
           {headers:Object.assign({'Content-Type':'application/json'},this.authHeaders())});
+        const poolId = Number(this.editorPool.matchId);
         this.swissTieSaved={firstPlayerId:first,secondPlayerId:second};
-        await this.refreshOpenPoolAfterSave(this.editorPool.matchId);
-        this.editorMessage='Swiss placing saved and qualification refreshed.';
+        await this.refreshOpenPoolAfterSave(poolId);
+        if (!this.swissTieSaved || this.swissTieSaved.firstPlayerId !== first || this.swissTieSaved.secondPlayerId !== second) {
+          this.editorError='The tie-break was submitted, but the saved decision could not be verified. Refresh to check before proceeding.';
+          return;
+        }
+        this.editorMessage='Swiss placing saved. The two players now have separate places.';
       } catch(e) {
         this.editorError=(e.response && e.response.data && e.response.data.message) || ('Could not save Swiss tie-break choice' + (e.response ? ' (HTTP ' + e.response.status + ')' : ': server unavailable') + '. Check that database/003_swiss_manual_tiebreak.sql was applied to the active database.');
       } finally {this.swissTieSaving=false;}
@@ -849,7 +872,15 @@ new Vue({
           return;
         }
         if (!updated.qualified && !updated.eliminated) {
-          this.editorError = 'Match scores saved, but no qualifying or eliminated players were returned for this pulje. Advancement was not saved.';
+          // A Swiss round can finish with no advancement assignments yet.
+          // This is not a score-save failure. Always reopen the current pool
+          // in place so the final-round tie-break state is fetched immediately.
+          if (this.editorIsSwiss) {
+            await this.refreshOpenPoolAfterSave(poolId);
+            this.editorMessage = 'Swiss match scores saved. Final standings and tie-break choices refreshed.';
+          } else {
+            this.editorError = 'Match scores saved, but no qualifying or eliminated players were returned for this pulje. Advancement was not saved.';
+          }
           return;
         }
         const response = await this.requestPoolEditorAction('save', poolId, selections);
@@ -857,6 +888,13 @@ new Vue({
         await this.refreshOpenPoolAfterSave(poolId);
         this.editorMessage = 'All match results, wildcard selections and destination pools saved.';
       } catch (e) {
+        // The Swiss standings and tie-break control must still reflect any
+        // scores that were successfully saved, even if the optional
+        // advancement synchronization failed.
+        if (this.editorIsSwiss) {
+          try { await this.refreshOpenPoolAfterSave(poolId); }
+          catch (refreshError) { console.warn('Could not refresh Swiss pool after saving:', refreshError); }
+        }
         this.editorError = 'Match scores were saved, but advancement changes could not all be saved: ' + (e.message || 'unknown error');
       }
     },

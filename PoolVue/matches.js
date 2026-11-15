@@ -1200,6 +1200,17 @@ const matchesApp = new Vue({
 
     manualAdvancePlayerPlaceLabel(player) {
       if (!player) return '';
+      // The advancement API owns the final places, including Swiss Buchholz,
+      // head-to-head and the saved manual tie-break. The local score-matrix
+      // preview does not implement all of those rules; showing it here would
+      // make a qualified player appear to have another player's place.
+      // Use the authoritative result once the pool is complete.
+      if (this.manualAdvanceState && this.manualAdvanceState.stageComplete &&
+          player.place !== null && player.place !== undefined &&
+          Number.isInteger(Number(player.place)) && Number(player.place) > 0) {
+        return 'place ' + player.place;
+      }
+      // During an unfinished pool, retain the live preview when available.
       const standing = this.poolMatrixStanding(player.playerId);
       if (standing && standing.placeLabel && standing.placeLabel !== '–') {
         return 'place ' + standing.placeLabel;
@@ -1271,7 +1282,8 @@ const matchesApp = new Vue({
     async saveManualReplacements() {
       if (!this.matchEditAllowed || !this.manualAdvanceState) return;
       const items = Object.entries(this.manualReplacementAssignments)
-        .filter(([_, qualified]) => qualified !== null && qualified !== undefined && qualified !== '')
+        .filter(([eliminated, qualified]) => qualified !== null && qualified !== undefined && qualified !== '' &&
+          Number(qualified) !== Number(this.manualReplacementSaved[String(eliminated)]))
         .map(([eliminated, qualified]) => ({eliminatedPlayerId:Number(eliminated),qualifiedPlayerId:Number(qualified)}));
       if (!items.length) return;
       if (items.some(item => this.manualWildcardAssignments[String(item.eliminatedPlayerId)] != null)) {
@@ -1505,7 +1517,11 @@ const matchesApp = new Vue({
       this.manualReplacementAssignments = {};
       this.manualReplacementSaved = {};
       for (const replacement of (state && state.replacements || [])) {
-        this.$set(this.manualReplacementSaved, String(replacement.replacementPlayerId), Number(replacement.qualifiedPlayerId));
+        const key = String(replacement.replacementPlayerId);
+        this.$set(this.manualReplacementSaved, key, Number(replacement.qualifiedPlayerId));
+        // The selection must always reflect the saved choice, so users can
+        // change it immediately after opening the pulje.
+        this.$set(this.manualReplacementAssignments, key, Number(replacement.qualifiedPlayerId));
       }
       this.manualWildcardDestinationAssignments = {};
       if (state && Array.isArray(state.wildcardCandidates) && Array.isArray(state.wildcardSlots)) {
@@ -3264,13 +3280,18 @@ window.addEventListener('message', async function(event) {
     const requestedReplacements = Object.entries(chosen.replacements || {})
       .filter(([_, value]) => value !== null && value !== undefined && value !== '')
       .map(([eliminated, qualified]) => ({ eliminated: Number(eliminated), qualified: Number(qualified) }));
+    const hasReplacementChanges = requestedReplacements.some(item =>
+      Number(matchesApp.manualReplacementSaved[String(item.eliminated)]) !== item.qualified);
     if (matchesApp.manualAdvanceState.stageComplete) {
       if (changedWildcards) {
         await matchesApp.saveManualWildcards();
         if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
       }
       restore(matchesApp.manualAdvanceAssignments,chosen.destinations);
-      if (changedDestinations) {
+      // A replacement changes which player occupies a qualification route.
+      // Do not post stale normal qualification assignments in the same save;
+      // they can fail as "pool not available for that qualifying place".
+      if (changedDestinations && !hasReplacementChanges) {
         await matchesApp.saveManualAdvancement();
         if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
       }

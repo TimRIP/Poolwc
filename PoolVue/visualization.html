@@ -103,12 +103,12 @@
         <p class="vizMatrixHint">Rank: wins → Buchholz (opponents’ total wins) → score difference (scored minus conceded) → head-to-head, when two tied players have met. Fully tied players share the same place. Values include saved results and scores currently entered below; save results to generate the next round.</p>
         <div class="vizMatrixScroll"><table class="vizMatrix">
           <thead><tr><th>Place</th><th>Player</th><th>Wins</th><th>Buchholz</th><th>Score</th><th>Score diff.</th><th>Head-to-head</th></tr></thead>
-          <tbody><tr v-for="p in editorSwissStandings" :key="p.key"><td class="vizMatrixTotal">{{p.tied ? ('T' + p.place) : p.place}}</td><th>{{p.name}}</th><td class="vizMatrixTotal">{{p.points}}</td><td class="vizMatrixTotal">{{p.buchholz}}</td><td class="vizMatrixTotal">{{p.score}}</td><td class="vizMatrixTotal">{{p.difference > 0 ? '+' + p.difference : p.difference}}</td><td class="vizMatrixTotal">{{p.headToHead === null ? '—' : p.headToHead}}</td></tr></tbody>
+          <tbody><tr v-for="p in editorSwissStandings" :key="p.key"><td class="vizMatrixTotal">{{p.tied ? (p.place + '–' + (p.place + editorSwissStandings.filter(x => x.tied && x.place === p.place).length - 1) + ' (tie)') : p.place}}</td><th>{{p.name}}</th><td class="vizMatrixTotal">{{p.points}}</td><td class="vizMatrixTotal">{{p.buchholz}}</td><td class="vizMatrixTotal">{{p.score}}</td><td class="vizMatrixTotal">{{p.difference > 0 ? '+' + p.difference : p.difference}}</td><td class="vizMatrixTotal">{{p.headToHead === null ? '—' : p.headToHead}}</td></tr></tbody>
         </table></div>
         <section v-if="swissTieReady && swissTieSetupRequired && editorSwissUnresolvedTies.length" class="vizSwissTieChoice">
           Tie-break storage has not been installed. Run database/003_swiss_manual_tiebreak.sql on the tournament database.
         </section>
-        <section v-for="group in (swissTieReady && !swissTieSetupRequired ? editorSwissUnresolvedTies : [])" :key="'tie-'+group[0].place" class="vizSwissTieChoice">
+        <section v-for="group in (swissTieReady && !swissTieSetupRequired && editorSwissRounds.every(r => r.matches.every(m => m.seats.length === 2 && m.seats.every(s => s.score !== '' && s.score === s.original))) ? editorSwissUnresolvedTies : [])" :key="'tie-'+group[0].place" class="vizSwissTieChoice">
           <h4>Resolve tie for places {{group[0].place}} and {{Number(group[0].place)+1}}</h4>
           <p class="vizMatrixHint">Choose who takes the higher place. The other player receives the next place. Save this decision after all Swiss rounds are finished.</p>
           <label>Higher place
