@@ -224,6 +224,8 @@ const matchesApp = new Vue({
     manualAdvanceState: null,
     manualAdvanceAssignments: {},
     manualWildcardAssignments: {},
+    manualReplacementAssignments: {},
+    manualReplacementSaved: {},
     manualWildcardDestinationAssignments: {},
     savingManualWildcards: false,
     manualAdvanceError: '',
@@ -1237,6 +1239,67 @@ const matchesApp = new Vue({
       return state.wildcardCandidates.slice().sort((a, b) => Number(a.place) - Number(b.place));
     },
 
+    savedReplacementForPlayer(playerId) {
+      const saved = this.manualReplacementSaved[String(playerId)];
+      if (saved === undefined || saved === null) return '';
+      const qualified = this.manualAdvanceEligiblePlayers().find(p => Number(p.playerId) === Number(saved));
+      return qualified ? this.manualAdvanceOptionLabel(qualified) : 'Player #' + saved;
+    },
+
+    manualReplacementOptions(player) {
+      const state = this.manualAdvanceState;
+      if (!state || !player) return [];
+      // The owner can choose exactly which qualified player is withdrawn.
+      return this.manualAdvanceEligiblePlayers().map(qualified => {
+        const seat = (state.destinations || []).find(d => Number(d.playerId) === Number(qualified.playerId));
+        return {
+          playerId: Number(qualified.playerId),
+          label: this.manualAdvanceOptionLabel(qualified) +
+            (seat ? ' · ' + this.manualAdvanceDestinationLabel(seat) : '')
+        };
+      });
+    },
+
+    setManualReplacement(eliminatedPlayerId, qualifiedPlayerId) {
+      const id = qualifiedPlayerId === '' ? null : Number(qualifiedPlayerId);
+      this.$set(this.manualReplacementAssignments, String(eliminatedPlayerId), id);
+      if (id !== null) this.$set(this.manualWildcardAssignments, String(eliminatedPlayerId), null);
+      this.manualAdvanceError = '';
+      this.manualAdvanceMessage = '';
+    },
+
+    async saveManualReplacements() {
+      if (!this.matchEditAllowed || !this.manualAdvanceState) return;
+      const items = Object.entries(this.manualReplacementAssignments)
+        .filter(([_, qualified]) => qualified !== null && qualified !== undefined && qualified !== '')
+        .map(([eliminated, qualified]) => ({eliminatedPlayerId:Number(eliminated),qualifiedPlayerId:Number(qualified)}));
+      if (!items.length) return;
+      if (items.some(item => this.manualWildcardAssignments[String(item.eliminatedPlayerId)] != null)) {
+        this.manualAdvanceError = 'Remove the wildcard selection before replacing a qualified player.';
+        return;
+      }
+      if (new Set(items.map(item => item.qualifiedPlayerId)).size !== items.length) {
+        this.manualAdvanceError = 'A qualifying player can only be replaced once.';
+        return;
+      }
+      this.manualAdvanceError = '';
+      this.manualAdvanceMessage = '';
+      try {
+        for (const item of items) {
+          await axios.post('http://localhost:5000/api/match/' +
+            encodeURIComponent(this.selectedMatchId) + '/advancement/replace', item,
+            { headers: Object.assign({'Content-Type':'application/json; charset=utf-8'},this.authHeaders()) });
+        }
+        await this.loadManualAdvancement(this.selectedMatchId);
+        this.manualAdvanceMessage = 'Qualified player replacement saved.';
+      } catch(e) {
+        this.manualAdvanceError = (e.response && e.response.data && e.response.data.message) ||
+          (e.response ? 'Could not replace the qualified player (HTTP ' + e.response.status + '). ' +
+            'Verify database/004_pool_advancement_replacement.sql is installed.' :
+            'Could not contact PoolApi to save the player replacement.');
+      }
+    },
+
     manualWildcardSeatsForPlayer(player) {
       const state = this.manualAdvanceState;
       if (!state || !Array.isArray(state.wildcardSlots)) return [];
@@ -1326,6 +1389,7 @@ const matchesApp = new Vue({
 
     setManualWildcardSeat(playerId, seatId) {
       const id = seatId === '' ? null : Number(seatId);
+      if (id !== null) this.$set(this.manualReplacementAssignments, String(playerId), null);
       this.$set(this.manualWildcardAssignments, String(playerId), id);
       this.manualAdvanceMessage = '';
       this.manualAdvanceError = '';
@@ -1363,7 +1427,8 @@ const matchesApp = new Vue({
         this.manualAdvanceMessage = 'Wildcard players saved. They will appear in the incoming stage.';
       } catch (e) {
         this.manualAdvanceError = (e.response && e.response.data && e.response.data.message) ||
-          'Could not save wildcard players.';
+          (e.response ? 'Could not save wildcard players (HTTP ' + e.response.status + ').' :
+            'Could not contact PoolApi to save wildcard players.');
       } finally {
         this.savingManualWildcards = false;
       }
@@ -1437,6 +1502,11 @@ const matchesApp = new Vue({
       this.manualAdvanceState = state || null;
       this.manualAdvanceAssignments = {};
       this.manualWildcardAssignments = {};
+      this.manualReplacementAssignments = {};
+      this.manualReplacementSaved = {};
+      for (const replacement of (state && state.replacements || [])) {
+        this.$set(this.manualReplacementSaved, String(replacement.replacementPlayerId), Number(replacement.qualifiedPlayerId));
+      }
       this.manualWildcardDestinationAssignments = {};
       if (state && Array.isArray(state.wildcardCandidates) && Array.isArray(state.wildcardSlots)) {
         for (const player of state.wildcardCandidates) {
@@ -3142,6 +3212,7 @@ window.addEventListener('message', async function(event) {
       const state = matchesApp.manualAdvanceState;
       respond({ destinations:{...matchesApp.manualAdvanceAssignments}, wildcards:{...matchesApp.manualWildcardAssignments},
         wildcardDestinations:{...matchesApp.manualWildcardDestinationAssignments},
+        replacements:{...matchesApp.manualReplacementAssignments},
         stageComplete:!!state.stageComplete, qualified:matchesApp.manualAdvanceEligiblePlayers().length,
         eliminated:matchesApp.manualAdvanceEliminatedPlayers().length,
         configuredDestinations:(state.destinations || []).length,
@@ -3162,13 +3233,44 @@ window.addEventListener('message', async function(event) {
     restore(matchesApp.manualWildcardAssignments,chosen.wildcards);
     restore(matchesApp.manualWildcardDestinationAssignments,chosen.wildcardDestinations);
     restore(matchesApp.manualAdvanceAssignments,chosen.destinations);
+    restore(matchesApp.manualReplacementAssignments,chosen.replacements);
+    // Compare with the freshly loaded database state. A replacement-only save must
+    // not POST unchanged wildcard routes: that call can reject a valid replacement
+    // before the replacement endpoint is ever reached.
+    const stateBeforeSave = matchesApp.manualAdvanceState;
+    const changedWildcards = matchesApp.manualAdvanceEliminatedPlayers().some(player => {
+      const key = String(player.playerId);
+      const desired = matchesApp.manualWildcardAssignments[key];
+      const existing = (stateBeforeSave.wildcardSlots || []).find(slot =>
+        slot.playerId != null && Number(slot.playerId) === Number(player.playerId));
+      const existingSeatId = existing ? Number(existing.seatId) : null;
+      const selectedSeatId = desired == null || desired === '' ? null : Number(desired);
+      if (selectedSeatId !== existingSeatId) return true;
+      if (selectedSeatId == null) return false;
+      const selectedSlot = (stateBeforeSave.wildcardSlots || []).find(slot =>
+        Number(slot.seatId) === selectedSeatId);
+      const oldPoolId = Number(selectedSlot &&
+        (selectedSlot.preferredDestinationPoolMatchId || selectedSlot.destinationPoolMatchId));
+      const newPoolId = Number(matchesApp.manualWildcardDestinationAssignments[String(selectedSeatId)] || oldPoolId);
+      return newPoolId !== oldPoolId;
+    });
+    const changedDestinations = matchesApp.manualAdvanceEligiblePlayers().some(player => {
+      const key = String(player.playerId);
+      const desired = matchesApp.manualAdvanceAssignments[key];
+      const old = (stateBeforeSave.destinations || []).find(destination =>
+        destination.playerId != null && Number(destination.playerId) === Number(player.playerId));
+      return desired != null && desired !== '' && (!old || Number(old.seatId) !== Number(desired));
+    });
+    const requestedReplacements = Object.entries(chosen.replacements || {})
+      .filter(([_, value]) => value !== null && value !== undefined && value !== '')
+      .map(([eliminated, qualified]) => ({ eliminated: Number(eliminated), qualified: Number(qualified) }));
     if (matchesApp.manualAdvanceState.stageComplete) {
-      if (matchesApp.manualAdvanceEliminatedPlayers().length) {
+      if (changedWildcards) {
         await matchesApp.saveManualWildcards();
         if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
       }
       restore(matchesApp.manualAdvanceAssignments,chosen.destinations);
-      if (matchesApp.manualAdvanceEligiblePlayers().length) {
+      if (changedDestinations) {
         await matchesApp.saveManualAdvancement();
         if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
       }
@@ -3176,7 +3278,7 @@ window.addEventListener('message', async function(event) {
       // placement. Re-read the latest wildcard seat IDs and reconcile the
       // selected players/destinations once more in the *same* Save click.
       // Never replay stale seat IDs from before the qualifier save.
-      if (matchesApp.manualAdvanceEliminatedPlayers().length) {
+      if (changedWildcards && matchesApp.manualAdvanceEliminatedPlayers().length) {
         await matchesApp.loadManualAdvancement(poolId);
         if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
         const state = matchesApp.manualAdvanceState;
@@ -3208,7 +3310,7 @@ window.addEventListener('message', async function(event) {
           playerId: Number(id),
           destinationPoolId: Number((chosen.wildcardDestinations || {})[String(seat)])
         }));
-      if (requestedByPlayer.length) {
+      if (changedWildcards && requestedByPlayer.length) {
         let verified = false;
         for (let attempt = 0; attempt < 3; attempt++) {
           await matchesApp.loadManualAdvancement(poolId);
@@ -3232,6 +3334,26 @@ window.addEventListener('message', async function(event) {
           if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
         }
         if (!verified) throw new Error('Wildcard destination was not persisted. The save was not confirmed; check the chosen pulje.');
+      }
+    }
+    if (matchesApp.manualAdvanceState.stageComplete && requestedReplacements.length) {
+      await matchesApp.loadManualAdvancement(poolId);
+      if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
+      const saved = matchesApp.manualReplacementSaved || {};
+      const toSave = requestedReplacements.filter(item => Number(saved[String(item.eliminated)]) !== item.qualified);
+      if (toSave.length) {
+        // Do not replay saved choices: a prior replacement may no longer appear
+        // as a newly eligible candidate in some tournament formats.
+        for (const item of toSave) matchesApp.$set(matchesApp.manualReplacementAssignments,
+          String(item.eliminated), item.qualified);
+        await matchesApp.saveManualReplacements();
+        if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
+      }
+      await matchesApp.loadManualAdvancement(poolId);
+      if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
+      for (const item of requestedReplacements) {
+        if (Number(matchesApp.manualReplacementSaved[String(item.eliminated)]) !== item.qualified)
+          throw new Error('The replacement for player ' + item.eliminated + ' was not saved.');
       }
     }
     respond({ok:true, savedAdvancement:!!matchesApp.manualAdvanceState.stageComplete});

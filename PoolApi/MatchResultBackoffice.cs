@@ -195,6 +195,14 @@ namespace DrukDatabaseLayer
         public List<StageManualWildcardSlotDetails> WildcardSlots { get; set; } = new List<StageManualWildcardSlotDetails>();
         public List<StageManualWildcardCandidateDetails> WildcardCandidates { get; set; } = new List<StageManualWildcardCandidateDetails>();
         public List<StageManualAdvancementPoolDetails> WildcardDestinationPools { get; set; } = new List<StageManualAdvancementPoolDetails>();
+        public List<PoolAdvancementReplacementDetails> Replacements { get; set; } = new List<PoolAdvancementReplacementDetails>();
+    }
+
+    public class PoolAdvancementReplacementDetails
+    {
+        public int QualifiedPlayerId { get; set; }
+        public int ReplacementPlayerId { get; set; }
+        public int DestinationSeatId { get; set; }
     }
 
     public class ManualAdvancementAssignment
@@ -406,6 +414,35 @@ OPTION (MAXRECURSION 1000);";
             }
         }
 
+        public bool CanManageAdvancement(int matchId, int userId)
+        {
+            const string sql = @"
+;WITH MatchAncestry AS
+(
+ SELECT Id, ParentMatchId,
+        CAST('|' + CAST(Id AS varchar(20)) + '|' AS varchar(max)) AS Path
+ FROM [Match] WHERE Id = @MatchId
+ UNION ALL
+ SELECT P.Id, P.ParentMatchId,
+        CAST(A.Path + CAST(P.Id AS varchar(20)) + '|' AS varchar(max))
+ FROM MatchAncestry A INNER JOIN [Match] P ON P.Id = A.ParentMatchId
+ WHERE CHARINDEX('|' + CAST(P.Id AS varchar(20)) + '|', A.Path) = 0
+)
+SELECT COUNT(1)
+FROM MatchAncestry A INNER JOIN Tournament T ON T.MatchId = A.Id
+LEFT JOIN TournamentMatchEditor E ON E.TournamentId = T.Id AND E.RegisteredUserId = @UserId
+WHERE T.Admin = @UserId OR (E.RegisteredUserId IS NOT NULL AND E.VenueId IS NULL)
+OPTION (MAXRECURSION 1000);";
+            using (var conn = new SqlConnection(_configuration["connectionstring"]))
+            using (var cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.Add("@MatchId", SqlDbType.Int).Value = matchId;
+                cmd.Parameters.Add("@UserId", SqlDbType.Int).Value = userId;
+                conn.Open();
+                return Convert.ToInt32(cmd.ExecuteScalar()) > 0;
+            }
+        }
+
         public bool CanEditMatchResults(int matchId, int userId)
         {
             const string sql = @"
@@ -495,7 +532,8 @@ OPTION (MAXRECURSION 1000);";
                             SourceStageName = stageName,
                             StageComplete = IsStageCompleteForManualAdvancement(conn, transaction, sourceStageMatchId),
                             Players = GetManualAdvancementPlayers(conn, transaction, sourceStageMatchId),
-                            Destinations = GetManualAdvancementDestinations(conn, transaction, sourceStageMatchId)
+                            Destinations = GetManualAdvancementDestinations(conn, transaction, sourceStageMatchId),
+                            Replacements = GetSavedPoolReplacements(conn, transaction, sourceStageMatchId)
                         };
                         int? parentStageId = GetParentStageForWildcard(conn, transaction, sourceStageMatchId);
                         if (parentStageId.HasValue)
@@ -829,6 +867,144 @@ GROUP BY S.AutoSelectMatchId, S.AutoSelectlPlace;", conn, transaction))
                 }
             }
             return counts;
+        }
+
+        private static List<PoolAdvancementReplacementDetails> GetSavedPoolReplacements(
+            SqlConnection conn, SqlTransaction transaction, int sourcePoolId)
+        {
+            var rows = new List<PoolAdvancementReplacementDetails>();
+            using (var cmd = new SqlCommand(@"
+SELECT QualifiedPlayerId, ReplacementPlayerId, DestinationSeatId
+FROM PoolAdvancementReplacement WHERE SourcePoolMatchId = @SourcePoolId;", conn, transaction))
+            {
+                cmd.Parameters.Add("@SourcePoolId", SqlDbType.Int).Value = sourcePoolId;
+                using (var reader = cmd.ExecuteReader())
+                    while (reader.Read())
+                        rows.Add(new PoolAdvancementReplacementDetails {
+                            QualifiedPlayerId = reader.GetInt32(0),
+                            ReplacementPlayerId = reader.GetInt32(1),
+                            DestinationSeatId = reader.GetInt32(2)
+                        });
+            }
+            return rows;
+        }
+
+        // An administrative replacement changes the next-stage participant, not the
+        // recorded result or the source pool standings. Persist the override so an
+        // upstream result re-calculation does not silently restore the withdrawn player.
+        public ManualAdvancementState ReplaceQualifiedPlayer(
+            int sourcePoolMatchId, int eliminatedPlayerId, int qualifiedPlayerId)
+        {
+            if (eliminatedPlayerId <= 0 || qualifiedPlayerId <= 0 || eliminatedPlayerId == qualifiedPlayerId)
+                throw new ArgumentException("Select two different players in the pulje.");
+
+            using (SqlConnection conn = new SqlConnection(_configuration["connectionstring"]))
+            {
+                conn.Open();
+                using (SqlTransaction transaction = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        if (!IsStageCompleteForManualAdvancement(conn, transaction, sourcePoolMatchId))
+                            throw new InvalidOperationException("Finish the pulje matches before replacing an advancing player.");
+
+                        var players = GetManualAdvancementPlayers(conn, transaction, sourcePoolMatchId);
+                        var routes = GetConfiguredManualAdvancementDestinations(conn, transaction, sourcePoolMatchId);
+                        var advancingPlaces = new HashSet<int>(routes.Where(r => r.AutoSelectPlace.HasValue && r.AutoSelectPlace.Value > 0)
+                            .Select(r => r.AutoSelectPlace.Value));
+                        var qualified = players.SingleOrDefault(x => x.PlayerId == qualifiedPlayerId);
+                        var eliminated = players.SingleOrDefault(x => x.PlayerId == eliminatedPlayerId);
+                        if (qualified == null || !qualified.Place.HasValue || !advancingPlaces.Contains(qualified.Place.Value) ||
+                            eliminated == null || !eliminated.Place.HasValue || advancingPlaces.Contains(eliminated.Place.Value))
+                            throw new InvalidOperationException("The replacement must be an eliminated player and the withdrawn player must qualify from this pulje.");
+
+                        var matchingRoutes = routes.Where(r => r.AutoSelectPlace == qualified.Place).ToList();
+                        if (matchingRoutes.Count != 1)
+                            throw new InvalidOperationException("The qualifying place must have exactly one destination seat.");
+                        var route = matchingRoutes[0];
+                        var previous = GetSavedPoolReplacements(conn, transaction, sourcePoolMatchId)
+                            .FirstOrDefault(r => r.QualifiedPlayerId == qualifiedPlayerId);
+                        if (route.PlayerId != qualifiedPlayerId &&
+                            !(previous != null && route.PlayerId == previous.ReplacementPlayerId))
+                            throw new InvalidOperationException("The destination seat no longer contains the qualified player. Refresh the pulje before replacing them.");
+
+                        // Avoid inserting the same player in two seats of the next stage.
+                        using (var duplicate = new SqlCommand(@"
+SELECT COUNT(1) FROM Seat S
+INNER JOIN [Match] M ON M.Id = S.MatchId
+WHERE M.ParentMatchId = @NextStageId
+  AND ISNULL(M.IndividualMatch, 0) = 0
+  AND S.PlayerId = @ReplacementId AND S.Id <> @SeatId;", conn, transaction))
+                        {
+                            duplicate.Parameters.Add("@NextStageId", SqlDbType.Int).Value = route.ParentMatchId ?? route.MatchId;
+                            duplicate.Parameters.Add("@ReplacementId", SqlDbType.Int).Value = eliminatedPlayerId;
+                            duplicate.Parameters.Add("@SeatId", SqlDbType.Int).Value = route.SeatId;
+                            if (Convert.ToInt32(duplicate.ExecuteScalar()) > 0)
+                                throw new InvalidOperationException("The replacement player is already in the next stage, possibly as a wildcard. Remove that assignment first.");
+                        }
+
+                        // Never alter an occupied next-stage match with a recorded result.
+                        using (var check = new SqlCommand(@"
+SELECT COUNT(1)
+FROM Seat S
+WHERE (S.Id = @SeatId OR S.ParentSeatId = @SeatId)
+  AND (S.ResultMatchPlace IS NOT NULL OR S.ResultPoints IS NOT NULL);", conn, transaction))
+                        {
+                            check.Parameters.Add("@SeatId", SqlDbType.Int).Value = route.SeatId;
+                            if (Convert.ToInt32(check.ExecuteScalar()) > 0)
+                                throw new InvalidOperationException("This player has already played in the destination pulje. The replacement cannot be made safely.");
+                        }
+                        using (var check = new SqlCommand(@"
+SELECT COUNT(1) FROM Seat S
+INNER JOIN [Match] M ON M.Id = S.MatchId
+WHERE M.ParentMatchId = @PoolId AND M.IndividualMatch = 1
+AND (S.ResultMatchPlace IS NOT NULL OR S.ResultPoints IS NOT NULL);", conn, transaction))
+                        {
+                            check.Parameters.Add("@PoolId", SqlDbType.Int).Value = route.MatchId;
+                            if (Convert.ToInt32(check.ExecuteScalar()) > 0)
+                                throw new InvalidOperationException("The destination pulje has recorded results. Replacement is disabled to protect existing matches.");
+                        }
+
+                        using (var check = new SqlCommand(@"
+SELECT COUNT(1) FROM PoolAdvancementReplacement
+WHERE SourcePoolMatchId = @PoolId AND ReplacementPlayerId = @ReplacementId
+AND QualifiedPlayerId <> @QualifiedId;", conn, transaction))
+                        {
+                            check.Parameters.Add("@PoolId", SqlDbType.Int).Value = sourcePoolMatchId;
+                            check.Parameters.Add("@ReplacementId", SqlDbType.Int).Value = eliminatedPlayerId;
+                            check.Parameters.Add("@QualifiedId", SqlDbType.Int).Value = qualifiedPlayerId;
+                            if (Convert.ToInt32(check.ExecuteScalar()) != 0)
+                                throw new InvalidOperationException("This eliminated player has already replaced another qualified player.");
+                        }
+
+                        // A different replacement may already occupy the same route; allow
+                        // changing that choice, but only before downstream matches start.
+                        using (var cmd = new SqlCommand(@"
+UPDATE PoolAdvancementReplacement
+SET ReplacementPlayerId = @ReplacementId, DestinationSeatId = @SeatId
+WHERE SourcePoolMatchId = @PoolId AND QualifiedPlayerId = @QualifiedId;
+IF @@ROWCOUNT = 0
+ INSERT INTO PoolAdvancementReplacement
+    (SourcePoolMatchId, QualifiedPlayerId, ReplacementPlayerId, DestinationSeatId)
+ VALUES (@PoolId, @QualifiedId, @ReplacementId, @SeatId);", conn, transaction))
+                        {
+                            cmd.Parameters.Add("@PoolId", SqlDbType.Int).Value = sourcePoolMatchId;
+                            cmd.Parameters.Add("@QualifiedId", SqlDbType.Int).Value = qualifiedPlayerId;
+                            cmd.Parameters.Add("@ReplacementId", SqlDbType.Int).Value = eliminatedPlayerId;
+                            cmd.Parameters.Add("@SeatId", SqlDbType.Int).Value = route.SeatId;
+                            cmd.ExecuteNonQuery();
+                        }
+                        SetPlayerOnSeatAndChildren(conn, transaction, route.SeatId, eliminatedPlayerId);
+                        transaction.Commit();
+                    }
+                    catch
+                    {
+                        transaction.Rollback();
+                        throw;
+                    }
+                }
+            }
+            return GetManualAdvancement(sourcePoolMatchId);
         }
 
         public ManualAdvancementSaveResult SaveManualAdvancement(
@@ -4111,7 +4287,32 @@ WHERE Id = @SeatId;";
 
                 foreach (DestinationSeat destination in destinations)
                 {
-                    if (!destination.PlayerId.HasValue || destination.PlayerId.Value != player.PlayerId)
+                    int advancingPlayerId = player.PlayerId;
+                    string advancingPlayerName = player.PlayerName;
+                    // A withdrawal/replacement is an explicit administrative override.
+                    // Apply only when this same player still holds this qualifying place.
+                    using (var replacementCmd = new SqlCommand(@"
+SELECT TOP 1 R.ReplacementPlayerId, P.Name
+FROM PoolAdvancementReplacement R
+LEFT JOIN Player P ON P.Id = R.ReplacementPlayerId
+WHERE R.SourcePoolMatchId = @PoolId
+  AND R.QualifiedPlayerId = @QualifiedId
+  AND R.DestinationSeatId = @SeatId;", conn, transaction))
+                    {
+                        replacementCmd.Parameters.Add("@PoolId", SqlDbType.Int).Value = sourceStageMatchId;
+                        replacementCmd.Parameters.Add("@QualifiedId", SqlDbType.Int).Value = player.PlayerId;
+                        replacementCmd.Parameters.Add("@SeatId", SqlDbType.Int).Value = destination.SeatId;
+                        using (var replacementReader = replacementCmd.ExecuteReader())
+                        {
+                            if (replacementReader.Read())
+                            {
+                                advancingPlayerId = replacementReader.GetInt32(0);
+                                advancingPlayerName = replacementReader.IsDBNull(1)
+                                    ? "Player #" + advancingPlayerId : replacementReader.GetString(1);
+                            }
+                        }
+                    }
+                    if (!destination.PlayerId.HasValue || destination.PlayerId.Value != advancingPlayerId)
                     {
                         if (!invalidatedDestinationStages.Contains(destination.MatchId))
                         {
@@ -4128,7 +4329,7 @@ WHERE Id = @SeatId;";
                             conn,
                             transaction,
                             destination.SeatId,
-                            player.PlayerId);
+                            advancingPlayerId);
 
                         if (IsSwissStage(conn, transaction, destination.MatchId))
                         {
@@ -4142,8 +4343,8 @@ WHERE Id = @SeatId;";
 
                     advanced.Add(new AdvancedPlayerDetails
                     {
-                        PlayerId = player.PlayerId,
-                        PlayerName = player.PlayerName,
+                        PlayerId = advancingPlayerId,
+                        PlayerName = advancingPlayerName,
                         Place = place,
                         DestinationSeatId = destination.SeatId,
                         DestinationMatchId = destination.MatchId,

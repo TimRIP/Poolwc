@@ -14,6 +14,12 @@ namespace TournamentBackend.Controllers
         public List<MatchResultUpdate> Results { get; set; }
     }
 
+    public class QualifiedPlayerReplacementRequest
+    {
+        public int EliminatedPlayerId { get; set; }
+        public int QualifiedPlayerId { get; set; }
+    }
+
     public class ManualAdvancementRequest
     {
         public List<ManualAdvancementAssignment> Assignments { get; set; }
@@ -251,6 +257,32 @@ namespace TournamentBackend.Controllers
             {
                 Console.WriteLine(ex);
                 return StatusCode(500, new { message = "Could not load manual advancement." });
+            }
+        }
+
+        [HttpPost("{stageMatchId:int}/advancement/replace")]
+        public IActionResult ReplaceQualifiedPlayer(int stageMatchId,
+            [FromBody] QualifiedPlayerReplacementRequest model)
+        {
+            if (!TryGetUserId(out int userId)) return Unauthorized();
+            if (model == null || model.EliminatedPlayerId <= 0 || model.QualifiedPlayerId <= 0)
+                return BadRequest(new { message = "Choose an eliminated player and the progressing player to replace." });
+            var backoffice = new MatchResultBackoffice();
+            // A venue-scoped results editor cannot change tournament progression.
+            if (!backoffice.CanManageAdvancement(stageMatchId, userId))
+                return StatusCode(403, new { message = "Full tournament editing access is required to replace qualified players." });
+            try
+            {
+                var updated = backoffice.ReplaceQualifiedPlayer(stageMatchId,
+                    model.EliminatedPlayerId, model.QualifiedPlayerId);
+                return Ok(new { saved = true, state = updated });
+            }
+            catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+            catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                return StatusCode(500, new { message = "Could not save player replacement. Verify the database migration is installed." });
             }
         }
 

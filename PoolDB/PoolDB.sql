@@ -1072,3 +1072,21 @@ CREATE TABLE dbo.SwissManualTieBreak (
 );
 
 GO
+
+-- Administrative replacement of qualified players by eliminated players.
+-- Run once against the same database used by PoolApi.
+IF OBJECT_ID('dbo.PoolAdvancementReplacement', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.PoolAdvancementReplacement (
+        SourcePoolMatchId INT NOT NULL,
+        QualifiedPlayerId INT NOT NULL,
+        ReplacementPlayerId INT NOT NULL,
+        DestinationSeatId INT NOT NULL,
+        CONSTRAINT PK_PoolAdvancementReplacement PRIMARY KEY
+            (SourcePoolMatchId, QualifiedPlayerId),
+        CONSTRAINT UQ_PoolAdvancementReplacement_Player UNIQUE
+            (SourcePoolMatchId, ReplacementPlayerId)
+    );
+END;
+
+GO
