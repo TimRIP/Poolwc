@@ -362,7 +362,7 @@ new Vue({
     buildPoolAdvanceVisualState(state) {
       const done = !!(state && state.stageComplete);
       const playerStatuses = {};
-      if (!state || !done) return { done, playerStatuses };
+      if (!state || !done) return { done, playerStatuses, replacementDestinations: {} };
 
       const advancingPlaces = new Set(
         (Array.isArray(state.destinations) ? state.destinations : [])
@@ -401,13 +401,35 @@ new Vue({
         else addStatus(playerName, 'eliminated');
       }
 
+      // Administrative player replacements are not changes to the match standings.
+      // Use the server's saved replacement records as the authoritative override,
+      // rather than ranking places to decide who is progressing.
+      const replacementDestinations = {};
+      const namesById = new Map([...players, ...wildcardCandidates]
+        .filter(p => p && p.playerId != null)
+        .map(p => [Number(p.playerId), p.playerName || ('Player #' + p.playerId)]));
+      const destinations = Array.isArray(state.destinations) ? state.destinations : [];
+      for (const replacement of Array.isArray(state.replacements) ? state.replacements : []) {
+        const qualifiedId = Number(replacement && replacement.qualifiedPlayerId);
+        const replacementId = Number(replacement && replacement.replacementPlayerId);
+        const qualifiedName = namesById.get(qualifiedId);
+        const replacementName = namesById.get(replacementId);
+        if (!qualifiedName || !replacementName || qualifiedId === replacementId) continue;
+        addStatus(qualifiedName, 'out');
+        addStatus(replacementName, 'advanced');
+        const destination = destinations.find(d => Number(d.seatId) === Number(replacement.destinationSeatId));
+        if (destination && Number(destination.matchId) > 0) {
+          replacementDestinations[this.normalizePlayerName(replacementName)] = Number(destination.matchId);
+        }
+      }
+
       const reservedWildcardNames = [];
       for (const slot of Array.isArray(state.wildcardSlots) ? state.wildcardSlots : []) {
         if (slot.playerId === null || slot.playerId === undefined) continue;
         const player = [...players, ...wildcardCandidates].find(p => Number(p.playerId) === Number(slot.playerId));
         if (player && player.playerName) reservedWildcardNames.push(this.normalizePlayerName(player.playerName));
       }
-      return { done, playerStatuses, reservedWildcardNames };
+      return { done, playerStatuses, replacementDestinations, reservedWildcardNames };
     },
     async loadPoolAdvanceStates() {
       const poolIds = this.stages.flatMap(stage => stage.pools.map(pool => Number(pool.matchId))).filter(id => Number.isFinite(id));
@@ -468,7 +490,8 @@ new Vue({
     },
     playerClass(pool, playerName) {
       const status = this.playerVisualStatus(pool, playerName);
-      return status === 'advanced' ? 'vizPlayerAdvanced' : (status === 'eliminated' ? 'vizPlayerEliminated' : '');
+      return status === 'advanced' ? 'vizPlayerAdvanced' :
+        (status === 'out' ? 'vizPlayerOut' : (status === 'eliminated' ? 'vizPlayerEliminated' : ''));
     },
     destinationLabel(poolId) {
       const target = this.stages.flatMap(stage => stage.pools.map(p => ({stage, pool:p})))
@@ -477,10 +500,12 @@ new Vue({
     },
     playerStatusText(pool, playerName) {
       const status = this.playerVisualStatus(pool, playerName);
+      if (status === 'out') return 'Out';
       if (status === 'eliminated') return 'eliminated';
       if (status !== 'advanced') return '';
       const source = this.playerDestinations[String(pool.matchId)] || {};
-      const targetPoolId = source[this.normalizePlayerName(playerName)];
+      const replacementPoolId = (this.poolVisualState(pool).replacementDestinations || {})[this.normalizePlayerName(playerName)];
+      const targetPoolId = replacementPoolId || source[this.normalizePlayerName(playerName)];
       const destination = targetPoolId ? this.destinationLabel(targetPoolId) : null;
       if (destination) return '→ ' + destination;
       const wildcardStage = (this.wildcardStages[String(pool.matchId)] || {})[this.normalizePlayerName(playerName)];

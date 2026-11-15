@@ -133,3 +133,8 @@
 .vizSwissMatchPlayers label.vizMatrixLoser input{border-color:#eb6262;background:#3a2029;color:#ffcccc}
 
 .vizSwissTieChoice{border:1px solid #9e7940;background:#302719;padding:16px;margin:12px 0;border-radius:9px;display:flex;gap:12px;flex-wrap:wrap;align-items:center}.vizSwissTieChoice h4{width:100%;margin:0;color:#f9d88c}.vizSwissTieChoice p{width:100%;margin:0}.vizSwissTieChoice label{display:flex;align-items:center;gap:10px}.vizSwissTieChoice select{background:#14263d;color:#fff;border:1px solid #6d86a4;border-radius:5px;padding:8px}
+
+/* Administrative withdrawal/banned player, distinct from eliminated by match result. */
+.vizPlayerOut{background:#442d17;border:1px solid #cf8730;border-radius:7px;padding:6px 8px}
+.vizPlayerOut .vizPlayerName,.vizPlayerOut .vizPlayerState{color:#ffbd70;font-weight:700}
+.vizPlayerOut .vizPlayerNo{background:#98571b;color:#fff3e2}
