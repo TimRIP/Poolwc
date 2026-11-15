@@ -462,6 +462,134 @@ var dash = new Vue({
       return count;
     },
 
+    // Each planned destination has numbered, zero-based seats. A full pool can
+    // still accept a route by exchanging its occupied seat with another route.
+    allDestinationRoutes: function () {
+      var result = [];
+      (this.formdata.rundearray || []).forEach(function (round, stage) {
+        (round.poolAdvancementRoutes || []).forEach(function (route) {
+          result.push({ route: route, key: 'n|' + stage + '|' + route.sourcePool + '|' + route.place + '|' + route.destinationStage });
+        });
+        (round.wildcardRoutes || []).forEach(function (route) {
+          result.push({ route: route, key: 'w|' + stage + '|' + route.wildcardIndex + '|' + route.destinationStage });
+        });
+      });
+      return result;
+    },
+
+    destinationSeatOptions: function (stageIndex) {
+      var options = [];
+      var stage = this.formdata.rundearray[Number(stageIndex)];
+      if (!stage) return options;
+      var sizes = this.stagePoolSizes(stage);
+      for (var pool = 0; pool < sizes.length; pool++) {
+        for (var seat = 0; seat < sizes[pool]; seat++) {
+          options.push({ value: pool + '|' + seat, label: 'Stage ' + (Number(stageIndex) + 1) + ' · pulje ' + (pool + 1) + ' · nr ' + (seat + 1) });
+        }
+      }
+      return options;
+    },
+
+    // Keep previously chosen seats when recalculate rebuilds the route arrays.
+    rememberDestinationSeats: function () {
+      var remembered = {};
+      this.allDestinationRoutes().forEach(function (entry) {
+        remembered[entry.key] = { pool: Number(entry.route.destinationPool), seat: Number(entry.route.destinationSeat) };
+      });
+      return remembered;
+    },
+
+    restoreDestinationSeats: function (remembered) {
+      var entries = this.allDestinationRoutes();
+      entries.forEach(function (entry) {
+        var old = remembered && remembered[entry.key];
+        if (old && old.pool === Number(entry.route.destinationPool) && Number.isInteger(old.seat)) {
+          this.$set(entry.route, 'destinationSeat', old.seat);
+        }
+      }, this);
+      // Resolve legacy drafts and changed pool sizes without overwriting
+      // already chosen, valid and unique seat numbers.
+      var used = {};
+      entries.forEach(function (entry) {
+        var r = entry.route, stage = Number(r.destinationStage), pool = Number(r.destinationPool);
+        var capacity = this.destinationPoolCapacity(stage, pool);
+        var seat = r.destinationSeat;
+        var index = stage + '|' + pool + '|' + seat;
+        if (Number.isInteger(seat) && seat >= 0 && seat < capacity && !used[index]) {
+          used[index] = true;
+        } else {
+          this.$set(r, 'destinationSeat', -1);
+        }
+      }, this);
+      entries.forEach(function (entry) {
+        var r = entry.route, stage = Number(r.destinationStage), pool = Number(r.destinationPool);
+        if (r.destinationSeat >= 0) return;
+        var capacity = this.destinationPoolCapacity(stage, pool);
+        for (var i = 0; i < capacity; i++) {
+          var index = stage + '|' + pool + '|' + i;
+          if (!used[index]) {
+            this.$set(r, 'destinationSeat', i);
+            used[index] = true;
+            break;
+          }
+        }
+      }, this);
+    },
+
+    destinationSeatSelected: function (route) {
+      return Number(route.destinationPool) + '|' + Number(route.destinationSeat);
+    },
+
+    destinationSeatOccupant: function (stageIndex, poolIndex, seatIndex) {
+      var stage = Number(stageIndex), pool = Number(poolIndex), seat = Number(seatIndex);
+      return this.allDestinationRoutes().find(function (entry) {
+        var r = entry.route;
+        return Number(r.destinationStage) === stage && Number(r.destinationPool) === pool &&
+          Number(r.destinationSeat) === seat;
+      });
+    },
+
+    selectDestinationSeat: function (route, value) {
+      var parts = String(value).split('|');
+      if (parts.length !== 2) return;
+      var pool = Number(parts[0]), seat = Number(parts[1]);
+      var stage = Number(route.destinationStage);
+      if (!Number.isInteger(pool) || !Number.isInteger(seat) || seat < 0 ||
+          seat >= this.destinationPoolCapacity(stage, pool)) return;
+      var previousPool = Number(route.destinationPool);
+      var previousSeat = Number(route.destinationSeat);
+      if (pool === previousPool && seat === previousSeat) return;
+      var target = this.destinationSeatOccupant(stage, pool, seat);
+      if (target && target.route !== route) {
+        // Real exchange: move the displaced qualification route to this route's
+        // former place, even when the destination pulje is full.
+        this.$set(target.route, 'destinationPool', previousPool);
+        this.$set(target.route, 'destinationSeat', previousSeat);
+      }
+      this.$set(route, 'destinationPool', pool);
+      this.$set(route, 'destinationSeat', seat);
+      // Changing seats does not change the tournament structure. Avoid a
+      // structural auto-fill here, which can undo a user's deliberate swap.
+      this.validate();
+    },
+
+    destinationPoolOccupants: function (stageIndex, poolIndex) {
+      var entries = this.allDestinationRoutes();
+      var result = [];
+      entries.forEach(function (entry) {
+        var route = entry.route;
+        if (Number(route.destinationStage) !== Number(stageIndex) || Number(route.destinationPool) !== Number(poolIndex)) return;
+        result.push({
+          key: entry.key,
+          seat: Number(route.destinationSeat),
+          label: entry.key.charAt(0) === 'w'
+            ? 'Stage ' + (Number(entry.key.split('|')[1]) + 1) + ' · wildcard ' + (Number(route.wildcardIndex) + 1)
+            : 'Stage ' + (Number(entry.key.split('|')[1]) + 1) + ' · pulje ' + (Number(route.sourcePool) + 1) + ' · place ' + route.place
+        });
+      });
+      return result.sort(function (a,b) { return a.seat - b.seat; });
+    },
+
     wildcardEligibleCount: function (round) {
       if (!round || !Array.isArray(round.valsArray)) return 0;
       var count = 0;
@@ -910,6 +1038,7 @@ var dash = new Vue({
       this.rebuildWildcardRoutes(true);
       this.rebuildPoolAdvancementRoutes(true);
       this.rebuildWildcardRoutes(false);
+      this.restoreDestinationSeats({});
       this.validate();
       this.uiMessage = 'Pool advancement routes and wildcard slots were auto-filled. Normal placements are paired where possible, and wildcard places fill the remaining destination-pool capacity.';
     },
@@ -1681,8 +1810,10 @@ var dash = new Vue({
       for (var i = 0; i < this.formdata.rundearray.length; i++) {
         this.updatePoolSizes(this.formdata.rundearray[i]);
       }
+      var savedDestinationSeats = this.rememberDestinationSeats();
       this.rebuildPoolAdvancementRoutes(false);
       this.rebuildWildcardRoutes(false);
+      this.restoreDestinationSeats(savedDestinationSeats);
       this.validate();
     },
 

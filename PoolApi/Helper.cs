@@ -309,6 +309,7 @@ namespace TournamentBackend
             public int Place { get; set; }
             public int DestinationStage { get; set; }
             public int DestinationPool { get; set; }
+            public int? DestinationSeat { get; set; }
         }
 
         private class ExplicitWildcardRoute
@@ -317,6 +318,7 @@ namespace TournamentBackend
             public int WildcardIndex { get; set; }
             public int DestinationStage { get; set; }
             public int DestinationPool { get; set; }
+            public int? DestinationSeat { get; set; }
         }
 
         private static void ApplyExplicitPoolAdvancementRoutes(Tournament turn, JArray roundJson, UserBackoffice ubo)
@@ -386,7 +388,8 @@ namespace TournamentBackend
                             SourcePool = sourcePool.Value,
                             Place = place.Value,
                             DestinationStage = destinationStage.Value,
-                            DestinationPool = destinationPool.Value
+                            DestinationPool = destinationPool.Value,
+                            DestinationSeat = routeJson.Value<int?>("destinationSeat")
                         };
 
                         if (!routesByDestinationStage.ContainsKey(route.DestinationStage))
@@ -450,7 +453,8 @@ namespace TournamentBackend
                         SourceStage = sourceStage,
                         WildcardIndex = wildcardIndex.Value,
                         DestinationStage = destinationStage.Value,
-                        DestinationPool = destinationPool.Value
+                        DestinationPool = destinationPool.Value,
+                        DestinationSeat = wildcardJson.Value<int?>("destinationSeat")
                     };
 
                     if (!wildcardsByDestinationStage.ContainsKey(wildcard.DestinationStage))
@@ -514,29 +518,62 @@ namespace TournamentBackend
                             poolWildcards.Count + " wildcards were assigned.");
                     }
 
-                    int seatIndex = 0;
-                    foreach (ExplicitPoolAdvancementRoute route in poolRoutes)
+                    // Explicit numbered seats are respected when supplied by
+                    // Tournament builder. Older tournament drafts without seat
+                    // numbers continue to use the original sequential order.
+                    var assignedSeatIndexes = new HashSet<int>();
+                    Func<int?, int> chooseSeat = preferred =>
                     {
+                        int count = destinationPulje.PuljeMatch.seats.Count;
+                        if (preferred.HasValue)
+                        {
+                            if (preferred.Value < 0 || preferred.Value >= count ||
+                                !assignedSeatIndexes.Add(preferred.Value))
+                            {
+                                throw new ArgumentException(
+                                    "An invalid or duplicate numbered destination seat was selected in stage '" +
+                                    destinationRound.name + "', pulje " + (destinationPool + 1) + ".");
+                            }
+                            return preferred.Value;
+                        }
+                        for (int candidate = 0; candidate < count; candidate++)
+                        {
+                            if (assignedSeatIndexes.Add(candidate)) return candidate;
+                        }
+                        throw new ArgumentException("The destination pulje has no free numbered seats.");
+                    };
+
+                    // Claim explicitly selected seats first so legacy/unassigned
+                    // routes cannot take a seat reserved by another route.
+                    foreach (ExplicitPoolAdvancementRoute route in poolRoutes.Where(r => r.DestinationSeat.HasValue))
+                    {
+                        int seatIndex = chooseSeat(route.DestinationSeat);
                         Tournament.Pulje sourcePulje = turn.runder[route.SourceStage].puljer[route.SourcePool];
-                        Tournament.Seat destinationSeat = destinationPulje.PuljeMatch.seats[seatIndex++];
-
                         ubo.SP_SetSeatAutoPlace(
-                            destinationSeat.SeatId,
-                            sourcePulje.PuljeMatch.MatchId,
-                            route.Place);
+                            destinationPulje.PuljeMatch.seats[seatIndex].SeatId,
+                            sourcePulje.PuljeMatch.MatchId, route.Place);
                     }
-
-                    foreach (ExplicitWildcardRoute wildcard in poolWildcards)
+                    foreach (ExplicitWildcardRoute wildcard in poolWildcards.Where(r => r.DestinationSeat.HasValue))
                     {
-                        Tournament.Seat destinationSeat = destinationPulje.PuljeMatch.seats[seatIndex++];
-
-                        // Place 0 is reserved for a wildcard. AutoSelectMatchId points
-                        // to the SOURCE STAGE rather than a source pool, so it is never
-                        // filled automatically by a finishing position.
+                        int seatIndex = chooseSeat(wildcard.DestinationSeat);
                         ubo.SP_SetSeatAutoPlace(
-                            destinationSeat.SeatId,
-                            turn.runder[wildcard.SourceStage].RundeMatch.MatchId,
-                            0);
+                            destinationPulje.PuljeMatch.seats[seatIndex].SeatId,
+                            turn.runder[wildcard.SourceStage].RundeMatch.MatchId, 0);
+                    }
+                    foreach (ExplicitPoolAdvancementRoute route in poolRoutes.Where(r => !r.DestinationSeat.HasValue))
+                    {
+                        int seatIndex = chooseSeat(null);
+                        Tournament.Pulje sourcePulje = turn.runder[route.SourceStage].puljer[route.SourcePool];
+                        ubo.SP_SetSeatAutoPlace(
+                            destinationPulje.PuljeMatch.seats[seatIndex].SeatId,
+                            sourcePulje.PuljeMatch.MatchId, route.Place);
+                    }
+                    foreach (ExplicitWildcardRoute wildcard in poolWildcards.Where(r => !r.DestinationSeat.HasValue))
+                    {
+                        int seatIndex = chooseSeat(null);
+                        ubo.SP_SetSeatAutoPlace(
+                            destinationPulje.PuljeMatch.seats[seatIndex].SeatId,
+                            turn.runder[wildcard.SourceStage].RundeMatch.MatchId, 0);
                     }
                 }
             }

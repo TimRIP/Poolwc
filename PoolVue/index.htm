@@ -9,7 +9,17 @@
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
     <link rel="stylesheet" type="text/css" href="example.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
-  <link rel="stylesheet" href="top-navigation.css?v=20261021-2"></head>
+  <link rel="stylesheet" href="top-navigation.css?v=20261021-2">
+<style>
+/* Destination route occupancy for Tournament builder. */
+.advancement-destination .destination-occupants{margin-top:9px;padding:9px 10px;border:1px solid #3a5169;background:#101d2c;border-radius:7px;max-height:185px;overflow:auto;color:#d9e6f6;font-size:12px;}
+.advancement-destination .destination-occupants-heading{display:block;margin-bottom:5px;color:#a9c1da;font-weight:600;}
+.advancement-destination .destination-occupant{display:flex;gap:7px;padding:4px 0;border-bottom:1px solid #293b4f;line-height:1.4;}
+.advancement-destination .destination-occupant:last-child{border-bottom:0;}
+.advancement-destination .destination-occupant-number{color:#8bbdf5;min-width:19px;}
+.advancement-destination select{max-width:100%;}
+</style>
+</head>
   <body>
     <div class="admin-panel">
       <div class="slidebar">
@@ -403,7 +413,7 @@
               <div class="section-heading advancement-map-heading">
                 <div>
                   <h2>3. Advance to pool</h2>
-                  <p>Choose the exact destination pool for normal qualifiers and for each wildcard place.</p>
+                  <p>Choose the exact numbered place (Stage / pulje / nr). Selecting an occupied place swaps the two qualification routes.</p>
                 </div>
                 <button type="button" class="secondary-btn" @click="autoAssignPoolAdvancementRoutes">
                   <i class="fa fa-random"></i> Auto-fill placements
@@ -439,15 +449,15 @@
 
                     <div class="advancement-destination">
                       <span class="destination-stage-name">{{ formdata.rundearray[route.destinationStage].navn || ('Stage ' + (route.destinationStage + 1)) }}</span>
-                      <select v-model.number="route.destinationPool" @change="recalculate">
-                        <option v-for="poolNumber in destinationPoolCount(route.destinationStage)"
-                                :key="'dest-' + route.destinationStage + '-' + poolNumber"
-                                :value="poolNumber - 1">
-                          pulje {{ poolNumber }}
+                      <select :value="destinationSeatSelected(route)" @change="selectDestinationSeat(route, $event.target.value)">
+                        <option v-for="option in destinationSeatOptions(route.destinationStage)"
+                                :key="'seat-' + route.destinationStage + '-' + option.value"
+                                :value="option.value">
+                          {{ option.label }}{{ destinationSeatOccupant(route.destinationStage, Number(option.value.split('|')[0]), Number(option.value.split('|')[1])) && destinationSeatOccupant(route.destinationStage, Number(option.value.split('|')[0]), Number(option.value.split('|')[1])).route !== route ? ' — occupied (swap)' : ' — free/current' }}
                         </option>
                       </select>
                       <small>
-                        {{ destinationPoolAssignedCount(route.destinationStage, route.destinationPool) }} / {{ destinationPoolCapacity(route.destinationStage, route.destinationPool) }} total places assigned to this pool
+                        {{ destinationPoolAssignedCount(route.destinationStage, route.destinationPool) }} / {{ destinationPoolCapacity(route.destinationStage, route.destinationPool) }} places occupied
                       </small>
                     </div>
                   </div>
@@ -463,15 +473,15 @@
 
                     <div class="advancement-destination">
                       <span class="destination-stage-name">{{ formdata.rundearray[route.destinationStage].navn || ('Stage ' + (route.destinationStage + 1)) }}</span>
-                      <select v-model.number="route.destinationPool" @change="recalculate">
-                        <option v-for="poolNumber in destinationPoolCount(route.destinationStage)"
-                                :key="'wildcard-dest-' + sourceIndex + '-' + route.wildcardIndex + '-' + poolNumber"
-                                :value="poolNumber - 1">
-                          pulje {{ poolNumber }}
+                      <select :value="destinationSeatSelected(route)" @change="selectDestinationSeat(route, $event.target.value)">
+                        <option v-for="option in destinationSeatOptions(route.destinationStage)"
+                                :key="'seat-' + route.destinationStage + '-' + option.value"
+                                :value="option.value">
+                          {{ option.label }}{{ destinationSeatOccupant(route.destinationStage, Number(option.value.split('|')[0]), Number(option.value.split('|')[1])) && destinationSeatOccupant(route.destinationStage, Number(option.value.split('|')[0]), Number(option.value.split('|')[1])).route !== route ? ' — occupied (swap)' : ' — free/current' }}
                         </option>
                       </select>
                       <small>
-                        {{ destinationPoolAssignedCount(route.destinationStage, route.destinationPool) }} / {{ destinationPoolCapacity(route.destinationStage, route.destinationPool) }} total places assigned to this pool
+                        {{ destinationPoolAssignedCount(route.destinationStage, route.destinationPool) }} / {{ destinationPoolCapacity(route.destinationStage, route.destinationPool) }} places occupied
                       </small>
                       <small>The wildcard can be moved to another pulje after the stage is complete.</small>
                     </div>
