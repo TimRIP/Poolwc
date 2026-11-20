@@ -1234,6 +1234,7 @@ const matchesApp = new Vue({
 
       const advancingPlaces = new Set(
         state.destinations
+          .filter(destination => destination.configuredForSource)
           .map(destination => Number(destination.autoSelectPlace))
           .filter(place => Number.isInteger(place) && place > 0)
       );
@@ -1447,13 +1448,13 @@ const matchesApp = new Vue({
     },
 
     manualAdvanceDestinationLabel(destination) {
-      if (!destination) return 'Next pool';
-      const parent = destination.parentMatchName || '';
-      const match = destination.matchName || ('Pool #' + destination.matchId);
-      const base = parent && parent !== match ? parent + ' · ' + match : match;
-      if (destination.requiresPlayerSwap && destination.playerName) {
+      if (!destination) return 'Choose a numbered place';
+      const stage = destination.parentMatchName || 'Next stage';
+      const pool = destination.matchName || ('pulje #' + destination.matchId);
+      const number = Number(destination.seatNumber);
+      const base = stage + ' · ' + pool + ' · nr ' + (number > 0 ? number : '?');
+      if (destination.requiresPlayerSwap && destination.playerName)
         return base + ' (swap with ' + destination.playerName + ')';
-      }
       return base;
     },
 
@@ -1468,18 +1469,11 @@ const matchesApp = new Vue({
     manualAdvancePoolOptions(player) {
       const state = this.manualAdvanceState;
       if (!state || !player || !Array.isArray(state.destinations)) return [];
-
-      const options = state.destinations.filter(destination =>
-        Number(destination.autoSelectPlace) === Number(player.place)
+      // All actual numbered seats in the next stage can be chosen. The
+      // backend exchanges qualification routes atomically when occupied.
+      return state.destinations.filter(destination =>
+        Number.isInteger(Number(destination.seatId)) && Number(destination.seatNumber) > 0
       );
-
-      const seenPools = new Set();
-      return options.filter(destination => {
-        const poolKey = Number(destination.matchId);
-        if (seenPools.has(poolKey)) return false;
-        seenPools.add(poolKey);
-        return true;
-      });
     },
 
     setManualAdvanceDestination(playerId, destinationSeatId) {
@@ -1502,6 +1496,10 @@ const matchesApp = new Vue({
       });
 
       if (otherPlayerKey !== undefined) {
+        if (oldSeatId === null) {
+          this.manualAdvanceError = 'Choose an initial numbered destination for this player before swapping seats.';
+          return;
+        }
         this.$set(this.manualAdvanceAssignments, otherPlayerKey, oldSeatId);
       }
 
@@ -1543,7 +1541,7 @@ const matchesApp = new Vue({
         // the seat originally configured for this finishing place.
         if (!destination) {
           destination = state.destinations.find(item =>
-            Number(item.autoSelectPlace) === Number(player.place)
+            item.configuredForSource && Number(item.autoSelectPlace) === Number(player.place)
           );
         }
 
@@ -1617,11 +1615,15 @@ const matchesApp = new Vue({
         const seatId = Number(selectedSeatId);
         const allowed = this.manualAdvancePoolOptions(player).some(destination => Number(destination.seatId) === seatId);
         if (!allowed) {
-          this.manualAdvanceError = 'One of the selected pools is not valid for that player’s next stage.';
+          this.manualAdvanceError = 'Invalid destination for ' + (player.playerName || 'Player #' + player.playerId) + '. Select an existing numbered seat in the next stage.';
           return;
         }
         if (destinationToPlayer[String(seatId)] !== undefined) {
-          this.manualAdvanceError = 'Two players cannot use the same destination seat.';
+          const other = advancingPlayers.find(candidate => Number(candidate.playerId) === destinationToPlayer[String(seatId)]);
+          const seat = destinations.find(destination => Number(destination.seatId) === seatId);
+          this.manualAdvanceError = (player.playerName || 'Player #' + player.playerId) + ' and ' +
+            (other && other.playerName || 'another player') + ' cannot both use ' +
+            this.manualAdvanceDestinationLabel(seat) + '. Choose different numbered places.';
           return;
         }
         destinationToPlayer[String(seatId)] = Number(player.playerId);
@@ -3274,7 +3276,7 @@ window.addEventListener('message', async function(event) {
       const key = String(player.playerId);
       const desired = matchesApp.manualAdvanceAssignments[key];
       const old = (stateBeforeSave.destinations || []).find(destination =>
-        destination.playerId != null && Number(destination.playerId) === Number(player.playerId));
+        destination.configuredForSource && Number(destination.autoSelectPlace) === Number(player.place));
       return desired != null && desired !== '' && (!old || Number(old.seatId) !== Number(desired));
     });
     const requestedReplacements = Object.entries(chosen.replacements || {})

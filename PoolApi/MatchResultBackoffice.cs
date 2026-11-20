@@ -156,6 +156,7 @@ namespace DrukDatabaseLayer
         public string MatchName { get; set; }
         public int? ParentMatchId { get; set; }
         public string ParentMatchName { get; set; }
+        public int SeatNumber { get; set; }
         public int? AutoSelectPlace { get; set; }
         public int? PlayerId { get; set; }
         public string PlayerName { get; set; }
@@ -1140,7 +1141,7 @@ IF @@ROWCOUNT = 0
                             if (!destinationBySeat.TryGetValue(
                                     assignment.DestinationSeatId,
                                     out ManualAdvancementDestinationDetails destination) ||
-                                destination.AutoSelectPlace != player.Place)
+                                destination.SeatNumber <= 0)
                             {
                                 throw new InvalidOperationException(
                                     "The selected pool is not available for that player's qualifying place.");
@@ -1165,126 +1166,112 @@ IF @@ROWCOUNT = 0
                             currentRouteByPlace[player.Place.Value] = routesForPlace[0];
                         }
 
-                        var plans = qualifiedPlayers.Select(player =>
+                        // Build a complete one-to-one assignment BEFORE changing any seat.
+                        // A destination may be occupied by any normal qualification route;
+                        // displaced routes take the newly vacated seats. Applying the whole
+                        // permutation from an immutable snapshot avoids duplicate routes
+                        // and accidental overwrites when several players change places.
+                        var originByPlayer = qualifiedPlayers.ToDictionary(
+                            x => x.PlayerId,
+                            x => currentRouteByPlace[x.Place.Value].SeatId);
+                        var destinationByPlayer = assignments.ToDictionary(
+                            x => x.PlayerId.Value, x => x.DestinationSeatId);
+                        var originSeatIds = new HashSet<int>(originByPlayer.Values);
+                        var targetSeatIds = new HashSet<int>(destinationByPlayer.Values);
+                        var affectedSeatIds = new HashSet<int>(originSeatIds);
+                        affectedSeatIds.UnionWith(targetSeatIds);
+
+                        var before = new Dictionary<int, SeatRoutingDetails>();
+                        foreach (int seatId in affectedSeatIds)
                         {
-                            ManualAdvancementAssignment assignment = assignments.First(
-                                x => x.PlayerId == player.PlayerId);
-                            ManualAdvancementDestinationDetails chosen =
-                                destinationBySeat[assignment.DestinationSeatId];
-                            ManualAdvancementDestinationDetails current =
-                                currentRouteByPlace[player.Place.Value];
+                            var seat = GetSeatRoutingDetails(conn, transaction, seatId);
+                            if (seat == null)
+                                throw new InvalidOperationException("One of the destination seats no longer exists. Refresh and try again.");
+                            before.Add(seatId, seat);
+                        }
 
-                            return new
-                            {
-                                Player = player,
-                                Current = current,
-                                Chosen = chosen,
-                                Changed = current.SeatId != chosen.SeatId
-                            };
-                        }).ToList();
+                        var sourceAtDestination = new Dictionary<int, int>();
+                        foreach (var assignment in assignments)
+                            sourceAtDestination.Add(assignment.DestinationSeatId,
+                                originByPlayer[assignment.PlayerId.Value]);
 
-                        if (!plans.Any(x => x.Changed))
+                        // Fill holes created by moving source routes into other pools.
+                        // A route displaced from an occupied target is moved into a
+                        // vacated source seat, preserving all qualification routes.
+                        var vacated = originSeatIds.Except(targetSeatIds).OrderBy(x => x).ToList();
+                        var displaced = targetSeatIds.Except(originSeatIds).OrderBy(x => x).ToList();
+                        if (vacated.Count != displaced.Count)
+                            throw new InvalidOperationException("Invalid seat assignment: the number of vacated and occupied seats differs.");
+                        for (int index = 0; index < vacated.Count; index++)
+                            sourceAtDestination.Add(vacated[index], displaced[index]);
+
+                        bool changed = sourceAtDestination.Any(x => x.Key != x.Value);
+                        if (!changed)
                         {
-                            ManualAdvancementState unchangedState = new ManualAdvancementState
-                            {
-                                SourceStageMatchId = sourceStageMatchId,
-                                SourceStageName = stageName,
-                                StageComplete = true,
-                                Players = players,
-                                Destinations = destinations
-                            };
-
                             transaction.Commit();
                             return new ManualAdvancementSaveResult
                             {
                                 Saved = true,
-                                Message = "The destination pools are already set that way.",
-                                State = unchangedState
+                                Message = "The numbered destination seats are already assigned that way.",
+                                State = new ManualAdvancementState
+                                {
+                                    SourceStageMatchId = sourceStageMatchId,
+                                    SourceStageName = stageName,
+                                    StageComplete = true,
+                                    Players = players,
+                                    Destinations = destinations
+                                }
                             };
                         }
 
-                        foreach (var plan in plans.Where(x => x.Changed))
+                        var affectedPools = new HashSet<int>(
+                            sourceAtDestination.Keys.Select(id => before[id].MatchId));
+                        // Never destroy recorded match results when rearranging seats.
+                        foreach (int poolId in affectedPools)
                         {
-                            SeatRoutingDetails target =
-                                GetSeatRoutingDetails(conn, transaction, plan.Chosen.SeatId);
-
-                            if (target == null)
+                            using (var check = new SqlCommand(@"
+SELECT COUNT(1) FROM Seat S
+INNER JOIN [Match] M ON M.Id = S.MatchId
+WHERE (S.MatchId = @PoolId OR M.ParentMatchId = @PoolId)
+AND (S.ResultMatchPlace IS NOT NULL OR S.ResultPoints IS NOT NULL);", conn, transaction))
                             {
-                                throw new InvalidOperationException("One of the selected destination seats no longer exists.");
+                                check.Parameters.Add("@PoolId", SqlDbType.Int).Value = poolId;
+                                if (Convert.ToInt32(check.ExecuteScalar()) > 0)
+                                    throw new InvalidOperationException("Cannot change numbered places: a destination pulje already has recorded results.");
                             }
                         }
 
-                        HashSet<int> invalidatedPools = new HashSet<int>();
-                        foreach (var plan in plans.Where(x => x.Changed))
-                        {
-                            if (invalidatedPools.Add(plan.Current.MatchId))
-                            {
-                                ClearStageOutcomeAndDestinations(
-                                    conn,
-                                    transaction,
-                                    plan.Current.MatchId,
-                                    true,
-                                    new HashSet<int>());
-                            }
+                        var invalidatedPools = new HashSet<int>();
+                        foreach (int poolId in affectedPools)
+                            if (invalidatedPools.Add(poolId))
+                                ClearStageOutcomeAndDestinations(conn, transaction, poolId, true, new HashSet<int>());
 
-                            if (invalidatedPools.Add(plan.Chosen.MatchId))
+                        // All source values come from the pre-change snapshot. Updates are
+                        // inside the same SQL transaction and are not sequential swaps.
+                        foreach (var assignment in sourceAtDestination)
+                        {
+                            var from = before[assignment.Value];
+                            using (var cmd = new SqlCommand(@"
+UPDATE Seat SET AutoSelectMatchId = @SourceMatchId,
+AutoSelectlPlace = @SourcePlace WHERE Id = @SeatId;", conn, transaction))
                             {
-                                ClearStageOutcomeAndDestinations(
-                                    conn,
-                                    transaction,
-                                    plan.Chosen.MatchId,
-                                    true,
-                                    new HashSet<int>());
+                                cmd.Parameters.Add("@SeatId", SqlDbType.Int).Value = assignment.Key;
+                                cmd.Parameters.Add("@SourceMatchId", SqlDbType.Int).Value = from.AutoSelectMatchId.HasValue
+                                    ? (object)from.AutoSelectMatchId.Value : DBNull.Value;
+                                cmd.Parameters.Add("@SourcePlace", SqlDbType.Int).Value = from.AutoSelectPlace.HasValue
+                                    ? (object)from.AutoSelectPlace.Value : DBNull.Value;
+                                cmd.ExecuteNonQuery();
                             }
                         }
-
-                        int changedCount = 0;
-
-                        foreach (var plan in plans.Where(x => x.Changed))
+                        foreach (var assignment in sourceAtDestination)
                         {
-                            SeatRoutingDetails current =
-                                GetSeatRoutingDetails(conn, transaction, plan.Current.SeatId);
-                            SeatRoutingDetails target =
-                                GetSeatRoutingDetails(conn, transaction, plan.Chosen.SeatId);
-
-                            if (current == null || target == null)
-                            {
-                                throw new InvalidOperationException("A destination route changed while it was being saved.");
-                            }
-
-                            SwapSeatAutoSelection(
-                                conn,
-                                transaction,
-                                current,
-                                target);
-
-                            int? displacedPlayerId = target.PlayerId;
-
-                            if (displacedPlayerId.HasValue &&
-                                displacedPlayerId.Value != plan.Player.PlayerId)
-                            {
-                                SetPlayerOnSeatAndChildren(
-                                    conn,
-                                    transaction,
-                                    current.SeatId,
-                                    displacedPlayerId.Value);
-                            }
+                            int? occupant = before[assignment.Value].PlayerId;
+                            if (occupant.HasValue)
+                                SetPlayerOnSeatAndChildren(conn, transaction, assignment.Key, occupant.Value);
                             else
-                            {
-                                ClearPlayerFromSeatAndChildren(
-                                    conn,
-                                    transaction,
-                                    current.SeatId);
-                            }
-
-                            SetPlayerOnSeatAndChildren(
-                                conn,
-                                transaction,
-                                target.SeatId,
-                                plan.Player.PlayerId);
-
-                            changedCount++;
+                                ClearPlayerFromSeatAndChildren(conn, transaction, assignment.Key);
                         }
+                        int changedCount = sourceAtDestination.Count(x => x.Key != x.Value);
 
                         ManualAdvancementState updatedState = new ManualAdvancementState
                         {
@@ -5736,6 +5723,7 @@ SELECT
     M.Name AS MatchName,
     M.ParentMatchId,
     PM.Name AS ParentMatchName,
+    (SELECT COUNT(1) FROM Seat OtherSeat WHERE OtherSeat.MatchId = S.MatchId AND OtherSeat.Id <= S.Id) AS SeatNumber,
     S.AutoSelectlPlace,
     S.PlayerId,
     P.Name AS PlayerName
@@ -5766,6 +5754,7 @@ ORDER BY
                             ParentMatchName = reader["ParentMatchName"] == DBNull.Value
                                 ? null
                                 : Convert.ToString(reader["ParentMatchName"]),
+                            SeatNumber = Convert.ToInt32(reader["SeatNumber"]),
                             AutoSelectPlace = ToNullableInt(reader["AutoSelectlPlace"]),
                             PlayerId = ToNullableInt(reader["PlayerId"]),
                             PlayerName = reader["PlayerName"] == DBNull.Value
@@ -5786,143 +5775,59 @@ ORDER BY
             SqlTransaction transaction,
             int sourceStageMatchId)
         {
-            List<ManualAdvancementDestinationDetails> configured =
-                GetConfiguredManualAdvancementDestinations(
-                    conn,
-                    transaction,
-                    sourceStageMatchId);
-
-            List<ManualAdvancementDestinationDetails> result =
-                new List<ManualAdvancementDestinationDetails>();
-
-            foreach (IGrouping<int, ManualAdvancementDestinationDetails> stageGroup in configured
+            // Return every physical seat in each next-stage pulje, not a synthetic
+            // one-seat-per-place option. Seat numbers are stable in Seat.Id order.
+            var configured = GetConfiguredManualAdvancementDestinations(conn, transaction, sourceStageMatchId);
+            var result = new List<ManualAdvancementDestinationDetails>();
+            foreach (var group in configured
                 .Where(x => x.AutoSelectPlace.HasValue && x.AutoSelectPlace.Value > 0)
                 .GroupBy(x => x.ParentMatchId ?? x.MatchId))
             {
-                int targetStageId = stageGroup.Key;
-                string targetStageName = stageGroup
-                    .Select(x => x.ParentMatchName)
+                int targetStageId = group.Key;
+                var targetStageName = group.Select(x => x.ParentMatchName)
                     .FirstOrDefault(x => !String.IsNullOrWhiteSpace(x));
-
-                List<int> qualifyingPlaces = stageGroup
-                    .Select(x => x.AutoSelectPlace.Value)
-                    .Distinct()
-                    .OrderBy(x => x)
-                    .ToList();
-
-                List<int> poolIds = new List<int>();
-
-                using (SqlCommand cmd = new SqlCommand(@"
-SELECT M.Id
-FROM [Match] M
-WHERE M.ParentMatchId = @TargetStageId
-  AND ISNULL(M.IndividualMatch, 0) = 0
-ORDER BY M.Id;", conn, transaction))
+                var poolIds = new List<int>();
+                using (var cmd = new SqlCommand(@"SELECT Id FROM [Match]
+WHERE ParentMatchId = @StageId AND ISNULL(IndividualMatch, 0) = 0 ORDER BY Id;", conn, transaction))
                 {
-                    cmd.Parameters.Add("@TargetStageId", SqlDbType.Int).Value = targetStageId;
-
-                    using (SqlDataReader reader = cmd.ExecuteReader())
-                    {
-                        while (reader.Read())
-                        {
-                            poolIds.Add(Convert.ToInt32(reader["Id"]));
-                        }
-                    }
+                    cmd.Parameters.Add("@StageId", SqlDbType.Int).Value = targetStageId;
+                    using (var reader = cmd.ExecuteReader())
+                        while (reader.Read()) poolIds.Add(reader.GetInt32(0));
                 }
-
                 if (poolIds.Count == 0)
                 {
-                    foreach (ManualAdvancementDestinationDetails route in stageGroup)
-                    {
-                        result.Add(route);
-                    }
+                    result.AddRange(group);
                     continue;
                 }
-
                 foreach (int poolId in poolIds)
                 {
-                    List<ManualAdvancementSeatCandidate> seats =
-                        GetManualAdvancementPoolSeats(
-                            conn,
-                            transaction,
-                            poolId);
-
-                    HashSet<int> usedSeatIds = new HashSet<int>();
-
-                    foreach (int place in qualifyingPlaces)
+                    var seats = GetManualAdvancementPoolSeats(conn, transaction, poolId);
+                    for (int index = 0; index < seats.Count; index++)
                     {
-                        ManualAdvancementDestinationDetails configuredRoute = stageGroup
-                            .FirstOrDefault(x =>
-                                x.AutoSelectPlace == place &&
-                                x.MatchId == poolId);
-
-                        ManualAdvancementSeatCandidate candidate = null;
-
-                        if (configuredRoute != null)
-                        {
-                            candidate = seats.FirstOrDefault(x =>
-                                x.SeatId == configuredRoute.SeatId);
-                        }
-
-                        if (candidate == null)
-                        {
-                            candidate = seats.FirstOrDefault(x =>
-                                !usedSeatIds.Contains(x.SeatId) &&
-                                !x.PlayerId.HasValue);
-                        }
-
-                        // Even a full pool remains selectable. If all seats are occupied,
-                        // choose a route slot belonging to another source pool and swap the
-                        // two players when saving. This makes every pool in the next stage
-                        // available in the dropdown while preserving pool capacity.
-                        if (candidate == null)
-                        {
-                            candidate = seats.FirstOrDefault(x =>
-                                !usedSeatIds.Contains(x.SeatId) &&
-                                x.AutoSelectMatchId != sourceStageMatchId);
-                        }
-
-                        if (candidate == null)
-                        {
-                            candidate = seats.FirstOrDefault(x =>
-                                !usedSeatIds.Contains(x.SeatId));
-                        }
-
-                        if (candidate == null)
-                        {
-                            continue;
-                        }
-
-                        usedSeatIds.Add(candidate.SeatId);
-
-                        bool configuredForSource =
-                            candidate.AutoSelectMatchId == sourceStageMatchId &&
-                            candidate.AutoSelectPlace == place;
-
+                        var seat = seats[index];
+                        bool configuredForSource = seat.AutoSelectMatchId == sourceStageMatchId &&
+                            seat.AutoSelectPlace.HasValue && seat.AutoSelectPlace.Value > 0;
                         result.Add(new ManualAdvancementDestinationDetails
                         {
-                            SeatId = candidate.SeatId,
-                            MatchId = candidate.MatchId,
-                            MatchName = candidate.MatchName,
-                            ParentMatchId = candidate.ParentMatchId,
-                            ParentMatchName = candidate.ParentMatchName ?? targetStageName,
-                            AutoSelectPlace = place,
-                            PlayerId = candidate.PlayerId,
-                            PlayerName = candidate.PlayerName,
+                            SeatId = seat.SeatId,
+                            MatchId = seat.MatchId,
+                            MatchName = seat.MatchName,
+                            ParentMatchId = seat.ParentMatchId,
+                            ParentMatchName = seat.ParentMatchName ?? targetStageName,
+                            SeatNumber = index + 1,
+                            AutoSelectPlace = seat.AutoSelectPlace,
+                            PlayerId = seat.PlayerId,
+                            PlayerName = seat.PlayerName,
                             ConfiguredForSource = configuredForSource,
-                            RequiresPlayerSwap =
-                                candidate.PlayerId.HasValue && !configuredForSource
+                            RequiresPlayerSwap = seat.PlayerId.HasValue && !configuredForSource
                         });
                     }
                 }
             }
-
-            return result
-                .OrderBy(x => x.AutoSelectPlace ?? Int32.MaxValue)
-                .ThenBy(x => x.ParentMatchId ?? Int32.MaxValue)
+            return result.GroupBy(x => x.SeatId).Select(x => x.First())
+                .OrderBy(x => x.ParentMatchId ?? Int32.MaxValue)
                 .ThenBy(x => x.MatchId)
-                .ThenBy(x => x.SeatId)
-                .ToList();
+                .ThenBy(x => x.SeatNumber).ToList();
         }
 
         private static List<ManualAdvancementSeatCandidate> GetManualAdvancementPoolSeats(

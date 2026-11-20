@@ -774,11 +774,11 @@ html.embeddedPool #vuematch{min-width:0!important;width:100%!important;padding:0
                       </div>
 
                       <label class="manualAdvanceSelect">
-                        <span>Advance to pool</span>
+                        <span>Advance to pool · numbered place</span>
                         <select :value="manualAdvanceAssignments[player.playerId]"
                                 @change="setManualAdvanceDestination(player.playerId, $event.target.value)"
                                 :disabled="!matchEditAllowed || savingManualAdvance">
-                          <option :value="null" disabled>— Choose pool —</option>
+                          <option :value="null" disabled>— Choose numbered place —</option>
                           <option v-for="destination in manualAdvancePoolOptions(player)"
                                   :key="'advance-pool-' + player.playerId + '-' + destination.seatId"
                                   :value="destination.seatId">
