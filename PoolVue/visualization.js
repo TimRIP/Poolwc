@@ -346,72 +346,43 @@ new Vue({
       if (this.randomizingPlayerNames || this.savingPlayerNameId !== null || this.playerNamesLoading) return;
       const tournamentId = String(this.selectedTournamentId || '');
       if (!tournamentId) return;
-      // Reload relationships immediately before shuffling so parents with child
-      // players keep their names, including children added since the last open.
-      await this.loadChildPlayers();
-      if (String(this.selectedTournamentId || '') !== tournamentId) return;
-      if (this.childPlayersError) {
-        this.playerNameError = 'Could not verify parent players, so no names were changed. ' + this.childPlayersError;
-        return;
-      }
-      const protectedParentIds = new Set(
-        this.childPlayerParents
-          .filter(parent => Array.isArray(parent.children) && parent.children.length > 0)
-          .map(parent => Number(parent.playerId))
-      );
-      const players = this.renameablePlayers.filter(p =>
-        Number.isInteger(p.playerId) && p.playerId > 0 && !protectedParentIds.has(p.playerId)
-      );
+      // Fetch current names before making the permutation; the server validates
+      // the IDs and applies the name and parent-link changes in one transaction.
+      await this.loadRenameablePlayers();
+      if (String(this.selectedTournamentId || '') !== tournamentId || this.playerNameError) return;
+      const players = this.renameablePlayers.filter(p => Number.isInteger(p.playerId) && p.playerId > 0);
       if (players.length < 2) {
-        this.playerNameError = 'At least two eligible non-parent players are needed to randomize names.';
+        this.playerNameError = 'At least two eligible players are needed to randomize names.';
         return;
       }
-      if (!window.confirm('Randomize and save the names of ' + players.length + ' eligible players? Parents with child players keep their names. Player IDs, results and match assignments remain unchanged. Unsaved name edits will be discarded.')) return;
-      const originalNames = players.map(p => String(p.playerName || ''));
-      const shuffled = originalNames.slice();
-      // A random cyclic shift of a shuffled order ensures every ID receives a
-      // different original name (when names are distinct).
+      if (!window.confirm('Randomize ' + players.length + ' names? Children of a parent will follow that parent’s name to the new Player ID. Player IDs and match results stay unchanged.')) return;
       const order = players.map((_, i) => i);
       for (let i = order.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [order[i], order[j]] = [order[j], order[i]];
       }
       const shift = 1 + Math.floor(Math.random() * (order.length - 1));
-      order.forEach((index, position) => {
-        shuffled[index] = originalNames[order[(position + shift) % order.length]];
+      const assignments = new Array(players.length);
+      order.forEach((targetIndex, position) => {
+        assignments[targetIndex] = {
+          playerId: players[targetIndex].playerId,
+          sourcePlayerId: players[order[(position + shift) % order.length]].playerId
+        };
       });
-      const changes = players.map((player, i) => ({ playerId: player.playerId, name: shuffled[i] }))
-        .filter((entry, i) => entry.name !== originalNames[i]);
-      if (!changes.length) {
-        this.playerNameMessage = 'All available names are identical; there is nothing to shuffle.';
-        return;
-      }
       this.randomizingPlayerNames = true;
       this.playerNameError = '';
       this.playerNameMessage = '';
-      let saved = 0;
-      let failure = null;
       try {
-        for (const change of changes) {
-          try {
-            await axios.put(
-              'http://localhost:5000/api/tournament/' + encodeURIComponent(tournamentId) + '/players/' + encodeURIComponent(change.playerId) + '/name',
-              { name: change.name },
-              { headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, this.authHeaders()) }
-            );
-            saved++;
-          } catch (e) {
-            const details = e.response && e.response.data && e.response.data.message;
-            failure = 'Could not rename player #' + change.playerId + ': ' + (details || e.message || 'Request failed') + '. ' + saved + ' of ' + changes.length + ' changes were saved.';
-            break;
-          }
-        }
-        // Reload to show the actual persisted names, including partial saves.
+        await axios.post('http://localhost:5000/api/tournament/' + encodeURIComponent(tournamentId) + '/players/randomize-names',
+          { assignments },
+          { headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, this.authHeaders()) });
+        if (String(this.selectedTournamentId || '') !== tournamentId) return;
         await this.loadMatches();
-        if (failure) this.playerNameError = failure;
-        else this.playerNameMessage = 'Randomized ' + saved + ' player names. Player IDs and tournament results are unchanged.';
+        await this.loadChildPlayers();
+        this.playerNameMessage = 'Names randomized. Children now follow the parent name to its new Player ID.';
       } catch (e) {
-        this.playerNameError = 'Could not refresh the names after randomizing: ' + (e.message || 'Unknown error');
+        const details = e.response && e.response.data && e.response.data.message;
+        this.playerNameError = details || e.message || 'Could not randomize names.';
       } finally {
         this.randomizingPlayerNames = false;
       }

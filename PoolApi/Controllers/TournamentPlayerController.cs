@@ -3,12 +3,18 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Primitives;
 using System;
+using System.Collections.Generic;
 
 namespace TournamentBackend.Controllers
 {
     public class RenameTournamentPlayerRequest
     {
         public string Name { get; set; }
+    }
+
+    public class RandomizeTournamentNamesRequest
+    {
+        public List<TournamentNameShuffleAssignment> Assignments { get; set; }
     }
 
     [Authorize]
@@ -70,6 +76,21 @@ namespace TournamentBackend.Controllers
                 Console.WriteLine(ex);
                 return StatusCode(500, new { message = "The player name could not be saved." });
             }
+        }
+
+        [HttpPost("randomize-names")]
+        public IActionResult RandomizeNames(int tournamentId, [FromBody] RandomizeTournamentNamesRequest model)
+        {
+            if (!TryGetUserId(out int userId)) return Unauthorized();
+            try
+            {
+                new TournamentPlayerBackoffice().RandomizeNamesWithParents(
+                    tournamentId, userId, model == null ? null : model.Assignments);
+                return Ok(new { message = "Player names and child-parent links randomized." });
+            }
+            catch (UnauthorizedAccessException ex) { return StatusCode(403, new { message = ex.Message }); }
+            catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+            catch (Exception ex) { Console.WriteLine(ex); return StatusCode(500, new { message = "Could not randomize player names." }); }
         }
 
         private bool TryGetUserId(out int userId)
