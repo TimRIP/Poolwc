@@ -12,6 +12,7 @@ new Vue({
     selectedFinderPlayer: null, finderMatches: [], finderMatchesLoading: false,
     playerNamesOpen: false, renameablePlayers: [], playerNamesLoading: false,
     savingPlayerNameId: null, randomizingPlayerNames: false, playerNameMessage: '', playerNameError: '',
+    childPlayerParents: [], childPlayerParentId: '', newChildPlayerName: '', childPlayersLoading: false, childPlayerSaving: false, childPlayersError: '', childPlayersMessage: '',
     poolScheduleDetails: {}, poolAdvanceStates: {}, playerDestinations: {}, wildcardStages: {}, tournamentPodium: null, podiumLoading: false
   },
   computed: {
@@ -247,6 +248,54 @@ new Vue({
     playerNameChanged(player) {
       return !!player && !!String(player.editName || '').trim() && String(player.editName).trim() !== String(player.playerName || '').trim();
     },
+    async loadChildPlayers() {
+      this.childPlayerParents = [];
+      this.childPlayersError = '';
+      if (!this.selectedTournamentId) return;
+      const tournamentId = String(this.selectedTournamentId);
+      this.childPlayersLoading = true;
+      try {
+        const response = await axios.get('http://localhost:5000/api/tournament/' + encodeURIComponent(tournamentId) + '/child-players', { headers: this.authHeaders() });
+        if (String(this.selectedTournamentId) !== tournamentId) return;
+        this.childPlayerParents = Array.isArray(response.data && response.data.parents) ? response.data.parents : [];
+        if (!this.childPlayerParents.some(p => String(p.playerId) === String(this.childPlayerParentId))) {
+          this.childPlayerParentId = this.childPlayerParents.length ? String(this.childPlayerParents[0].playerId) : '';
+        }
+      } catch (e) {
+        // Owners may manage children; other editors can still use Visualization normally.
+        if (e.response && e.response.status === 403) {
+          this.childPlayersError = 'Only the tournament owner can create child players.';
+        } else {
+          this.childPlayersError = (e.response && e.response.data && e.response.data.message) || 'Could not load child players.';
+        }
+      } finally {
+        this.childPlayersLoading = false;
+      }
+    },
+    async createChildPlayer() {
+      const name = String(this.newChildPlayerName || '').trim();
+      const parentPlayerId = Number(this.childPlayerParentId);
+      if (!name || name.length > 255 || !Number.isInteger(parentPlayerId) || parentPlayerId <= 0) {
+        this.childPlayersError = 'Choose a parent player and enter a name (1–255 characters).';
+        return;
+      }
+      if (this.childPlayerSaving) return;
+      this.childPlayerSaving = true;
+      this.childPlayersError = '';
+      this.childPlayersMessage = '';
+      try {
+        const response = await axios.post('http://localhost:5000/api/tournament/' + encodeURIComponent(this.selectedTournamentId) + '/child-players',
+          { parentPlayerId, name },
+          { headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, this.authHeaders()) });
+        this.newChildPlayerName = '';
+        await this.loadChildPlayers();
+        this.childPlayersMessage = (response.data && response.data.message) || 'Child player created.';
+      } catch (e) {
+        this.childPlayersError = (e.response && e.response.data && e.response.data.message) || 'Could not create child player.';
+      } finally {
+        this.childPlayerSaving = false;
+      }
+    },
     async loadRenameablePlayers() {
       this.renameablePlayers = [];
       this.playerNameError = '';
@@ -295,14 +344,29 @@ new Vue({
     },
     async randomizePlayerNames() {
       if (this.randomizingPlayerNames || this.savingPlayerNameId !== null || this.playerNamesLoading) return;
-      const players = this.renameablePlayers.filter(p => Number.isInteger(p.playerId) && p.playerId > 0);
-      if (players.length < 2) {
-        this.playerNameError = 'At least two eligible players are needed to randomize names.';
-        return;
-      }
       const tournamentId = String(this.selectedTournamentId || '');
       if (!tournamentId) return;
-      if (!window.confirm('Randomize and save the names of ' + players.length + ' unregistered players? Player IDs, results and match assignments will stay unchanged. Unsaved name edits will be discarded.')) return;
+      // Reload relationships immediately before shuffling so parents with child
+      // players keep their names, including children added since the last open.
+      await this.loadChildPlayers();
+      if (String(this.selectedTournamentId || '') !== tournamentId) return;
+      if (this.childPlayersError) {
+        this.playerNameError = 'Could not verify parent players, so no names were changed. ' + this.childPlayersError;
+        return;
+      }
+      const protectedParentIds = new Set(
+        this.childPlayerParents
+          .filter(parent => Array.isArray(parent.children) && parent.children.length > 0)
+          .map(parent => Number(parent.playerId))
+      );
+      const players = this.renameablePlayers.filter(p =>
+        Number.isInteger(p.playerId) && p.playerId > 0 && !protectedParentIds.has(p.playerId)
+      );
+      if (players.length < 2) {
+        this.playerNameError = 'At least two eligible non-parent players are needed to randomize names.';
+        return;
+      }
+      if (!window.confirm('Randomize and save the names of ' + players.length + ' eligible players? Parents with child players keep their names. Player IDs, results and match assignments remain unchanged. Unsaved name edits will be discarded.')) return;
       const originalNames = players.map(p => String(p.playerName || ''));
       const shuffled = originalNames.slice();
       // A random cyclic shift of a shuffled order ensures every ID receives a
@@ -1102,6 +1166,8 @@ new Vue({
       if (!this.selectedTournamentId) {
         this.rows = [];
         this.renameablePlayers = [];
+        this.childPlayerParents = [];
+        this.childPlayerParentId = '';
         this.finderPlayers = [];
         this.poolAdvanceStates = {};
         this.poolScheduleDetails = {};
@@ -1121,6 +1187,7 @@ new Vue({
         // Auxiliary lookups must not hide the tournament from venue-limited editors.
         const optionalLookups = [
           () => this.loadRenameablePlayers(),
+          () => this.loadChildPlayers(),
           () => this.loadFinderPlayers(),
           () => this.loadPoolAdvanceStates(),
           () => this.loadPoolScheduleDetails(),

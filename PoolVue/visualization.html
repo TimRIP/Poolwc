@@ -43,6 +43,34 @@
    </div>
    <p v-if="playerNameMessage" class="vizRenameSuccess">{{playerNameMessage}}</p>
    <p v-if="playerNameError" class="vizRenameError">{{playerNameError}}</p>
+   <section class="vizChildPlayers" aria-label="Other users - child players">
+     <div class="vizChildPlayersHeading"><h3>Other users · child players</h3><p>Create a child player under a top-level tournament player using <code>ParentPlayerId</code>.</p></div>
+     <form class="vizChildPlayersForm" @submit.prevent="createChildPlayer">
+       <label>Parent player
+         <select v-model="childPlayerParentId" :disabled="childPlayersLoading || childPlayerSaving || !childPlayerParents.length">
+           <option value="" disabled>Select parent player</option>
+           <option v-for="parent in childPlayerParents" :key="parent.playerId" :value="String(parent.playerId)">{{parent.playerName}} · ID {{parent.playerId}}</option>
+         </select>
+       </label>
+       <label>Child name
+         <input v-model="newChildPlayerName" type="text" maxlength="255" placeholder="e.g. Casper" :disabled="childPlayersLoading || childPlayerSaving" />
+       </label>
+       <button type="submit" :disabled="childPlayersLoading || childPlayerSaving || !childPlayerParentId || !newChildPlayerName.trim()">{{childPlayerSaving ? 'Creating…' : 'Create child'}}</button>
+     </form>
+     <p v-if="childPlayersLoading">Loading parent players…</p>
+     <p v-if="childPlayersMessage" class="vizRenameSuccess">{{childPlayersMessage}}</p>
+     <p v-if="childPlayersError" class="vizRenameError">{{childPlayersError}}</p>
+     <div v-if="childPlayerParents.length" class="vizChildParents">
+       <div v-for="parent in childPlayerParents" :key="parent.playerId" class="vizChildParent">
+         <strong>{{parent.playerName}} <small>Player ID {{parent.playerId}}</small></strong>
+         <div v-if="parent.children && parent.children.length" class="vizChildList">
+           <div v-for="child in parent.children" :key="child.playerId" class="vizChildItem"><i class="fa fa-level-up" aria-hidden="true"></i> {{child.playerName}} <small>Player ID {{child.playerId}} · ParentPlayerId {{parent.playerId}}</small></div>
+         </div>
+         <small v-else class="vizChildNone">No child players yet</small>
+       </div>
+     </div>
+   </section>
+
   </template>
  </div>
 </section>

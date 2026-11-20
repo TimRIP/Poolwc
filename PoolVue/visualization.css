@@ -145,3 +145,24 @@
 .vizRandomizeNames{border:1px solid #6090cf;background:#254a7f;color:#fff;border-radius:7px;padding:10px 14px;font-weight:700;cursor:pointer;white-space:nowrap}
 .vizRandomizeNames:hover:not(:disabled){background:#3565a5}
 .vizRandomizeNames:disabled{opacity:.5;cursor:not-allowed}
+
+/* Child players: separate Player records linked to their parent by ParentPlayerId. */
+.vizChildPlayers{margin-top:20px;padding-top:16px;border-top:1px solid #344a65}
+.vizChildPlayersHeading h3{font-size:15px;color:#f0f6ff;margin:0 0 6px}
+.vizChildPlayersHeading p{font-size:12px;color:#adc4d9;margin-bottom:14px}
+.vizChildPlayersForm{display:grid;grid-template-columns:minmax(180px,1fr) minmax(160px,1fr) auto;gap:12px;align-items:end;margin-bottom:16px}
+.vizChildPlayersForm label{font-size:12px;font-weight:650;color:#c9dcef;display:flex;flex-direction:column;gap:6px}
+.vizChildPlayersForm select,.vizChildPlayersForm input{width:100%;min-width:0;box-sizing:border-box;min-height:38px;padding:8px 11px;background:#0d1929;color:#f5f9ff;border:1px solid #496483;border-radius:6px}
+.vizChildPlayersForm button{min-height:38px;background:#5087e5;border:0;border-radius:6px;color:white;font-weight:700;padding:8px 14px;cursor:pointer}
+.vizChildPlayersForm button:disabled{opacity:.5;cursor:not-allowed}
+.vizChildParents{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}
+.vizChildParent{padding:12px;background:#112033;border:1px solid #304761;border-radius:8px}
+.vizChildParent strong{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.vizChildParent small{font-size:11px;font-weight:400;color:#a8bdd1}
+.vizChildList{margin:9px 0 0 12px;padding-left:13px;border-left:2px solid #496483;display:grid;gap:7px}
+.vizChildItem{font-size:13px;color:#dcecff}
+.vizChildItem small{display:block;margin:2px 0 0 16px}
+.vizChildItem i{font-size:11px;transform:rotate(90deg);color:#78b8ff}
+.vizChildNone{display:block;margin-top:8px}
+.vizNamesBody:has(.vizChildPlayers){max-height:500px}
+@media(max-width:750px){.vizChildPlayersForm{grid-template-columns:1fr}}
