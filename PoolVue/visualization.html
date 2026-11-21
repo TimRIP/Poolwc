@@ -198,7 +198,7 @@
             <div class="vizSwissMatchHeading">{{match.matchName}}</div>
             <p v-if="match.seats.length !== 2" class="vizMatrixHint">Waiting for two assigned players</p>
             <div v-else class="vizSwissMatchPlayers">
-              <label v-for="seat in match.seats" :key="seat.seatId" :class="matchCellClass(match, seat)">{{seat.playerName}} <small v-if="seat.handicapPlayTo != null" class="vizScoreHandicap">(play to {{seat.handicapPlayTo}})</small>
+              <label v-for="seat in match.seats" :key="seat.seatId" :class="matchCellClass(match, seat)">{{seat.playerName}} <small v-if="seat.handicapPlayTo != null" class="vizScoreHandicap">({{(match.playTo === 0 || match.playTo < match.playFrom) ? 'start at ' : 'play to '}}{{(match.playTo === 0 || match.playTo < match.playFrom) ? seatPlayFrom(match,seat) : seatPlayTo(match,seat)}})</small>
                 <input type="number" step="1" :value="seat.score" :disabled="editorSaving" :aria-label="seat.playerName+' score in '+match.matchName" @input="setMatchScore(match,seat,$event.target.value)" />
               </label>
             </div>
@@ -211,23 +211,23 @@
           <template v-if="editorIsSeries"><th v-for="(game,i) in editorMatches" :key="'g'+game.matchId">kamp{{i+1}}</th></template>
           <template v-else><th v-for="p in editorPlayers" :key="p.key">{{p.playerName}}</th></template>
           <th>Point</th><th>Score</th><th>Placering</th></tr></thead>
-          <tbody><tr v-for="row in editorPlayers" :key="row.key"><th scope="row">{{row.playerName}}<small v-if="editorMatches.some(m => seriesSeat(row,m) && seriesSeat(row,m).handicapPlayTo != null)" style="display:block;color:#91c8ff;font-weight:500;font-size:10px">Play to {{seatPlayTo(editorMatches.find(m => seriesSeat(row,m)),seriesSeat(row,editorMatches.find(m => seriesSeat(row,m))))}}</small></th>
+          <tbody><tr v-for="row in editorPlayers" :key="row.key"><th scope="row">{{row.playerName}}<small v-if="editorMatches.some(m => seriesSeat(row,m) && seriesSeat(row,m).handicapPlayTo != null)" style="display:block;color:#91c8ff;font-weight:500;font-size:10px">{{(editorMatches.find(m => seriesSeat(row,m)).playTo === 0 || editorMatches.find(m => seriesSeat(row,m)).playTo < editorMatches.find(m => seriesSeat(row,m)).playFrom) ? 'Start at ' : 'Play to '}}{{(editorMatches.find(m => seriesSeat(row,m)).playTo === 0 || editorMatches.find(m => seriesSeat(row,m)).playTo < editorMatches.find(m => seriesSeat(row,m)).playFrom) ? seatPlayFrom(editorMatches.find(m => seriesSeat(row,m)),seriesSeat(row,editorMatches.find(m => seriesSeat(row,m)))) : seatPlayTo(editorMatches.find(m => seriesSeat(row,m)),seriesSeat(row,editorMatches.find(m => seriesSeat(row,m))))}}</small></th>
             <template v-if="editorIsSeries">
               <td v-for="game in editorMatches" :key="game.matchId" class="vizMatrixEditable" :class="matchCellClass(game,seriesSeat(row,game))">
-                <input v-if="seriesSeat(row,game)" type="number" step="1" :aria-label="row.playerName+' score in '+game.matchName" :title="'Play to ' + seatPlayTo(game,seriesSeat(row,game))" :value="seriesSeat(row,game).score" :disabled="editorSaving" @input="seriesChange(row,game,$event.target.value)" />
+                <input v-if="seriesSeat(row,game)" type="number" step="1" :aria-label="row.playerName+' score in '+game.matchName" :title="(game.playTo === 0 || game.playTo < game.playFrom) ? 'Start at ' + seatPlayFrom(game,seriesSeat(row,game)) + ', finish at ' + seatPlayTo(game,seriesSeat(row,game)) : 'Play to ' + seatPlayTo(game,seriesSeat(row,game))" :value="seriesSeat(row,game).score" :disabled="editorSaving" @input="seriesChange(row,game,$event.target.value)" />
                 <span v-else>—</span>
               </td>
             </template>
             <template v-else>
               <td v-for="col in editorPlayers" :key="col.key" :class="row.key===col.key?'vizMatrixDiagonal':(matrixSeat(row,col)?'vizMatrixEditable '+matrixCellClass(row,col):'vizMatrixMissing')">
                 <span v-if="row.key===col.key">—</span>
-                <input v-else-if="matrixSeat(row,col)" type="number" step="1" :aria-label="row.playerName+' score against '+col.playerName" :title="'Play to ' + seatPlayTo(matrixMatch(row,col),matrixSeat(row,col))" :value="matrixSeat(row,col).score" :disabled="editorSaving" @input="matrixChange(row,col,$event.target.value)" />
+                <input v-else-if="matrixSeat(row,col)" type="number" step="1" :aria-label="row.playerName+' score against '+col.playerName" :title="(matrixMatch(row,col).playTo === 0 || matrixMatch(row,col).playTo < matrixMatch(row,col).playFrom) ? 'Start at ' + seatPlayFrom(matrixMatch(row,col),matrixSeat(row,col)) + ', finish at ' + seatPlayTo(matrixMatch(row,col),matrixSeat(row,col)) : 'Play to ' + seatPlayTo(matrixMatch(row,col),matrixSeat(row,col))" :value="matrixSeat(row,col).score" :disabled="editorSaving" @input="matrixChange(row,col,$event.target.value)" />
                 <span v-else>—</span>
               </td>
             </template>
             <td class="vizMatrixTotal">{{editorStandings[row.key].points}}</td><td class="vizMatrixTotal">{{editorStandings[row.key].score}}</td><td class="vizMatrixTotal vizMatrixPlace">{{editorStandings[row.key].place}}</td>
           </tr></tbody></table>
-        <p class="vizMatrixHint">Green marks a winning score, purple a losing score. For best-of-X, each kamp is a separate game. Save match results to store changes.</p>
+        <p class="vizMatrixHint" v-if="editorMatches.length && editorMatches[0].playTo != null">Scoring direction: {{editorMatches[0].playFrom == null ? "handicap start" : editorMatches[0].playFrom}} → {{editorMatches[0].playTo}}. {{(editorMatches[0].playTo === 0 || editorMatches[0].playTo < editorMatches[0].playFrom) ? "Playing down: handicap is the starting score, winning score is " + editorMatches[0].playTo + "." : "Playing up: handicap is the winning score."}}</p><p class="vizMatrixHint">Green marks a winning score, purple a losing score. For best-of-X, each kamp is a separate game. Save match results to store changes.</p>
         <p v-if="editorMatches.some(m=>m.seats.length!==2)" class="vizUnassigned">Some matches do not yet have two players and cannot be scored.</p>
       </div>
       <div v-if="!editorLoading && !editorMatches.length" class="vizEmpty">No playable matches are available in this pulje.</div>
@@ -238,4 +238,4 @@
     <footer class="vizModalFooter"><button type="button" @click="closePool" :disabled="editorSaving">Close</button><button class="vizSave" type="button" @click="saveAllPoolChanges" :disabled="editorSaving || editorLoading || !editorMatches.length">{{editorSaving?'Saving…':'Save all changes'}}</button></footer>
   </section>
 </div>
-</div><script src="visualization.js"></script><script src="login-status.js"></script></body></html>
+</div><script src="visualization.js?v=20261121-zero-handicap-repair-3"></script><script src="login-status.js"></script></body></html>

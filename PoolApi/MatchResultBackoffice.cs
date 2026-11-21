@@ -2654,8 +2654,9 @@ WHERE S.MatchId = @MatchId;", conn, transaction))
                         var target = targets[result.SeatId];
                         if (!target.PlayTo.HasValue)
                             throw new InvalidOperationException("A two-player match needs a PlayTo rule to apply handicaps.");
-                        int playTo = target.Handicap ?? target.PlayTo.Value;
-                        int playFrom = target.PlayFrom ?? 0;
+                        bool descending = target.PlayTo.Value == 0 || (target.PlayFrom.HasValue && target.PlayTo.Value < target.PlayFrom.Value);
+                        int playTo = descending ? target.PlayTo.Value : (target.Handicap ?? target.PlayTo.Value);
+                        int playFrom = descending ? (target.Handicap ?? target.PlayFrom ?? int.MaxValue) : (target.PlayFrom ?? 0);
                         int low = Math.Min(playFrom, playTo);
                         int high = Math.Max(playFrom, playTo);
                         if (result.ResultPoints.Value < low || result.ResultPoints.Value > high)
@@ -2667,7 +2668,7 @@ WHERE S.MatchId = @MatchId;", conn, transaction))
                         }
                     }
                     if (winners != 1)
-                        throw new InvalidOperationException("Exactly one player must reach their own PlayTo distance (handicap if set).");
+                        throw new InvalidOperationException("Exactly one player must reach the finishing score (zero in a downward game, handicap target in an upward game).");
                     results = results.Select(r => new MatchResultUpdate {
                         SeatId = r.SeatId,
                         ResultPoints = r.ResultPoints,

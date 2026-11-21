@@ -736,9 +736,20 @@ new Vue({
       return match.seats.find(s => this.seatKey(s) === player.key) || null;
     },
     seatPlayTo(match, seat) {
-      if (!seat) return match ? match.playTo : null;
-      return Number.isInteger(seat.handicapPlayTo) && seat.handicapPlayTo > 0
+      if (!match) return null;
+      // Downward games always finish on PlayTo (normally zero).
+      // A handicap changes the starting distance, not the finish line.
+      if (Number.isFinite(match.playTo) && (match.playTo === 0 || (Number.isFinite(match.playFrom) && match.playTo < match.playFrom)))
+        return match.playTo;
+      return seat && Number.isInteger(seat.handicapPlayTo) && seat.handicapPlayTo > 0
         ? seat.handicapPlayTo : match.playTo;
+    },
+    seatPlayFrom(match, seat) {
+      if (!match) return null;
+      if (Number.isFinite(match.playTo) && (match.playTo === 0 || (Number.isFinite(match.playFrom) && match.playTo < match.playFrom)) &&
+          seat && Number.isInteger(seat.handicapPlayTo) && seat.handicapPlayTo > 0)
+        return seat.handicapPlayTo;
+      return Number.isFinite(match.playFrom) ? match.playFrom : (Number.isFinite(match.playTo) && match.playTo === 0 ? (seat && seat.handicapPlayTo || Number.MAX_SAFE_INTEGER) : 0);
     },
     matchCellClass(match, player) {
       if (!match || !player || match.seats.length !== 2) return '';
@@ -765,8 +776,9 @@ new Vue({
       const otherTarget = this.seatPlayTo(match, opponent);
       if (!opponent || value === '' || !Number.isFinite(ownTarget) || !Number.isFinite(otherTarget)) return;
       const entered = Number(value);
-      const low = Math.min(Number.isFinite(match.playFrom) ? match.playFrom : 0, ownTarget);
-      const high = Math.max(Number.isFinite(match.playFrom) ? match.playFrom : 0, ownTarget);
+      const start = this.seatPlayFrom(match, seat);
+      const low = Math.min(Number.isFinite(start) ? start : 0, ownTarget);
+      const high = Math.max(Number.isFinite(start) ? start : 0, ownTarget);
       if (!Number.isInteger(entered) || entered === ownTarget || entered < low || entered > high) return;
       opponent.score = String(otherTarget);
     },
@@ -843,6 +855,21 @@ new Vue({
               }))
           };
         });
+        // Earlier builds sometimes stored a handicapped winner at their starting
+        // distance (e.g. 46) instead of zero. Correct only this unambiguous
+        // legacy case in the editor; original stays unchanged so Save persists it.
+        for (const match of this.editorMatches) {
+          if (match.seats.length !== 2 || this.seatPlayTo(match, match.seats[0]) !== 0) continue;
+          const [a, b] = match.seats;
+          for (const [winner, opponent] of [[a,b], [b,a]]) {
+            if (Number(winner.originalPlace) !== 1 || Number(opponent.originalPlace) !== 2) continue;
+            if (!Number.isInteger(winner.handicapPlayTo) || winner.handicapPlayTo <= 0) continue;
+            if (winner.score === String(winner.handicapPlayTo) && opponent.score !== '' && opponent.score !== '0') {
+              winner.score = '0';
+              break;
+            }
+          }
+        }
         const handicapMismatch = response.some(res => (res.data && res.data.seats || []).some(seat => {
           const id = Number(seat.playerId);
           return rosterHandicaps.has(id) && rosterHandicaps.get(id) != null &&
@@ -905,9 +932,9 @@ new Vue({
         if (!Number.isFinite(targetA) || !Number.isFinite(targetB)) {
           this.editorError=m.matchName+': a PlayTo distance is required.';return false;
         }
-        const base=Number.isFinite(m.playFrom)?m.playFrom:0;
-        if(scoreA<Math.min(base,targetA)||scoreA>Math.max(base,targetA)||
-           scoreB<Math.min(base,targetB)||scoreB>Math.max(base,targetB)){
+        const startA=this.seatPlayFrom(m,a), startB=this.seatPlayFrom(m,b);
+        if(scoreA<Math.min(startA,targetA)||scoreA>Math.max(startA,targetA)||
+           scoreB<Math.min(startB,targetB)||scoreB>Math.max(startB,targetB)){
           this.editorError=m.matchName+': scores must be within each player’s own distance (PlayTo/handicap).';return false;
         }
         const winA=scoreA===targetA, winB=scoreB===targetB;
@@ -1229,7 +1256,7 @@ new Vue({
             complete = false;
             break;
           }
-          const winnerSeats = seats.filter(seat => Number(seat.resultPoints) === playTo);
+          const winnerSeats = seats.filter(seat => Number(seat.resultMatchPlace) === 1);
           if (winnerSeats.length !== 1) { complete = false; break; }
           for (const seat of seats) {
             const key = String(seat.playerId);

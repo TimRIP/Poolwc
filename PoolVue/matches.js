@@ -408,8 +408,9 @@ const matchesApp = new Vue({
         const both = av !== null && av !== '' && bv !== null && bv !== '' &&
           Number.isFinite(Number(av)) && Number.isFinite(Number(bv));
         if (!both || !Number.isFinite(playTo)) continue;
-        const winners = [Number(av), Number(bv)].filter(v => v === playTo).length;
-        if (winners === 1) complete++;
+        const aFinish = this.matchSeatFinish(match, a);
+        const bFinish = this.matchSeatFinish(match, b);
+        if ((Number(av) === aFinish) !== (Number(bv) === bFinish)) complete++;
       }
       return complete;
     },
@@ -490,8 +491,8 @@ const matchesApp = new Vue({
 
         const aScore = Number(av);
         const bScore = Number(bv);
-        const aWins = aScore === playTo;
-        const bWins = bScore === playTo;
+        const aWins = aScore === this.matchSeatFinish(match, a);
+        const bWins = bScore === this.matchSeatFinish(match, b);
         if (aWins === bWins) continue;
 
         const winnerId = Number(aWins ? a.playerId : b.playerId);
@@ -1730,16 +1731,50 @@ const matchesApp = new Vue({
       };
     },
 
+    matchSeatFinish(match, seat) {
+      const rules = match && match.matchRules || {};
+      const from = rules.playFrom == null ? NaN : Number(rules.playFrom);
+      const to = rules.playTo == null ? NaN : Number(rules.playTo);
+      const handicap = seat && seat.handicapPlayTo != null ? Number(seat.handicapPlayTo) : NaN;
+      return Number.isFinite(to) && (to === 0 || (Number.isFinite(from) && to < from))
+        ? to : (Number.isInteger(handicap) && handicap > 0 ? handicap : to);
+    },
+    matchSeatStart(match, seat) {
+      const rules = match && match.matchRules || {};
+      const from = rules.playFrom == null ? NaN : Number(rules.playFrom);
+      const to = rules.playTo == null ? NaN : Number(rules.playTo);
+      const handicap = seat && seat.handicapPlayTo != null ? Number(seat.handicapPlayTo) : NaN;
+      return Number.isFinite(to) && (to === 0 || (Number.isFinite(from) && to < from)) &&
+        Number.isInteger(handicap) && handicap > 0 ? handicap : (Number.isFinite(from) ? from : (to === 0 ? Number.MAX_SAFE_INTEGER : 0));
+    },
+    poolCellFinish(cell) {
+      if (!cell) return NaN;
+      const from = cell.playFrom == null ? NaN : Number(cell.playFrom);
+      const to = cell.playTo == null ? NaN : Number(cell.playTo);
+      const handicap = cell.handicapPlayTo == null ? NaN : Number(cell.handicapPlayTo);
+      return Number.isFinite(to) && (to === 0 || (Number.isFinite(from) && to < from))
+        ? to : (Number.isInteger(handicap) && handicap > 0 ? handicap : to);
+    },
+    poolCellStart(cell) {
+      if (!cell) return NaN;
+      const from = cell.playFrom == null ? NaN : Number(cell.playFrom);
+      const to = cell.playTo == null ? NaN : Number(cell.playTo);
+      const handicap = cell.handicapPlayTo == null ? NaN : Number(cell.handicapPlayTo);
+      return Number.isFinite(to) && (to === 0 || (Number.isFinite(from) && to < from)) &&
+        Number.isInteger(handicap) && handicap > 0 ? handicap : (Number.isFinite(from) ? from : (to === 0 ? Number.MAX_SAFE_INTEGER : 0));
+    },
+
     poolMatrixCellClass(playerId, opponentId, matchId = null) {
       const cell = this.poolMatrixCell(playerId, opponentId, matchId);
       const other = this.poolMatrixCell(opponentId, playerId, matchId);
       if (!cell || !other) return {};
-      const playTo = Number(cell.playTo);
+      const playTo = this.poolCellFinish(cell);
+      const otherPlayTo = this.poolCellFinish(other);
       const mine = cell.value === '' || cell.value === null || cell.value === undefined ? null : Number(cell.value);
       const theirs = other.value === '' || other.value === null || other.value === undefined ? null : Number(other.value);
       return {
-        matrixWinner: Number.isFinite(playTo) && mine === playTo && theirs !== null && theirs !== playTo,
-        matrixLoser: Number.isFinite(playTo) && theirs === playTo && mine !== null && mine !== playTo,
+        matrixWinner: Number.isFinite(playTo) && mine === playTo && theirs !== null && theirs !== otherPlayTo,
+        matrixLoser: Number.isFinite(playTo) && theirs === otherPlayTo && mine !== null && mine !== playTo,
         matrixDirty: this.poolMatrixMatchDirty(cell.matchId)
       };
     },
@@ -1833,7 +1868,8 @@ const matchesApp = new Vue({
               originalValue: seat.resultPoints === undefined ? null : seat.resultPoints,
               originalPlace: seat.resultMatchPlace === undefined ? null : seat.resultMatchPlace,
               playFrom: details.matchRules ? details.matchRules.playFrom : null,
-              playTo: details.matchRules ? details.matchRules.playTo : null
+              playTo: details.matchRules ? details.matchRules.playTo : null,
+              handicapPlayTo: seat.handicapPlayTo == null ? null : Number(seat.handicapPlayTo)
             };
           }
           // The ordinary opponent-based matrix uses the same cells when each pair plays once.
@@ -1884,11 +1920,12 @@ const matchesApp = new Vue({
 
       this.$set(cell, 'value', value);
 
-      const playTo = Number(cell.playTo);
-      if (Number.isFinite(playTo)) {
+      const playTo = this.poolCellFinish(cell);
+      const otherFinish = this.poolCellFinish(other);
+      if (Number.isFinite(playTo) && Number.isFinite(otherFinish)) {
         if (value !== playTo) {
-          this.$set(other, 'value', playTo);
-        } else if (Number(other.value) === playTo) {
+          this.$set(other, 'value', otherFinish);
+        } else if (Number(other.value) === otherFinish) {
           this.$set(other, 'value', null);
         }
       }
@@ -1944,18 +1981,17 @@ const matchesApp = new Vue({
         return { error: (match.matchName || ('Match #' + match.matchId)) + ': PlayTo is not configured.' };
       }
 
-      if (Number.isFinite(playFrom)) {
-        const min = Math.min(playFrom, playTo);
-        const max = Math.max(playFrom, playTo);
-        if (aScore < min || aScore > max || bScore < min || bScore > max) {
-          return { error: (match.matchName || ('Match #' + match.matchId)) + ': scores must be between PlayFrom (' + playFrom + ') and PlayTo (' + playTo + ').' };
-        }
+      const startA = this.matchSeatStart(match, a), startB = this.matchSeatStart(match, b);
+      const finishA = this.matchSeatFinish(match, a), finishB = this.matchSeatFinish(match, b);
+      if (aScore < Math.min(startA, finishA) || aScore > Math.max(startA, finishA) ||
+          bScore < Math.min(startB, finishB) || bScore > Math.max(startB, finishB)) {
+        return { error: (match.matchName || ('Match #' + match.matchId)) + ': scores must be within each player’s handicap distance.' };
       }
 
-      const aWinner = aScore === playTo;
-      const bWinner = bScore === playTo;
+      const aWinner = aScore === finishA;
+      const bWinner = bScore === finishB;
       if (aWinner === bWinner) {
-        return { error: (match.matchName || ('Match #' + match.matchId)) + ': exactly one player must finish on PlayTo (' + playTo + ').' };
+        return { error: (match.matchName || ('Match #' + match.matchId)) + ': exactly one player must reach their finishing score (' + finishA + ' / ' + finishB + ').' };
       }
 
       return {
@@ -2171,6 +2207,7 @@ const matchesApp = new Vue({
           playerName: s.playerName || null,
           resultMatchPlace: s.resultMatchPlace === undefined ? null : s.resultMatchPlace,
           resultPoints: s.resultPoints === undefined ? null : s.resultPoints,
+          handicapPlayTo: s.handicapPlayTo === undefined ? null : s.handicapPlayTo,
           mmr: s.mmr === undefined ? null : s.mmr
         }))
       };
@@ -2893,15 +2930,14 @@ const matchesApp = new Vue({
 
     setWinner(seat) {
       if (!this.matchEditAllowed || !seat || this.activeSeats.length !== 2) return;
-      const playTo = this.matchDetails && this.matchDetails.matchRules
-        ? Number(this.matchDetails.matchRules.playTo)
-        : NaN;
+      const match = this.matchDetails;
       for (const current of this.activeSeats) {
         const isWinner = current.seatId === seat.seatId;
         current.resultMatchPlace = isWinner ? 1 : 2;
-        if (Number.isFinite(playTo)) {
-          if (isWinner) current.resultPoints = playTo;
-          else if (Number(current.resultPoints) === playTo) current.resultPoints = null;
+        const finish = this.matchSeatFinish(match, current);
+        if (Number.isFinite(finish)) {
+          if (isWinner) current.resultPoints = finish;
+          else if (Number(current.resultPoints) === finish) current.resultPoints = null;
         }
       }
       this.resultError = '';
@@ -2910,15 +2946,14 @@ const matchesApp = new Vue({
 
     setLoser(seat) {
       if (!this.matchEditAllowed || !seat || this.activeSeats.length !== 2) return;
-      const playTo = this.matchDetails && this.matchDetails.matchRules
-        ? Number(this.matchDetails.matchRules.playTo)
-        : NaN;
+      const match = this.matchDetails;
       for (const current of this.activeSeats) {
         const isWinner = current.seatId !== seat.seatId;
         current.resultMatchPlace = isWinner ? 1 : 2;
-        if (Number.isFinite(playTo)) {
-          if (isWinner) current.resultPoints = playTo;
-          else if (Number(current.resultPoints) === playTo) current.resultPoints = null;
+        const finish = this.matchSeatFinish(match, current);
+        if (Number.isFinite(finish)) {
+          if (isWinner) current.resultPoints = finish;
+          else if (Number(current.resultPoints) === finish) current.resultPoints = null;
         }
       }
       this.resultError = '';
@@ -2995,9 +3030,8 @@ const matchesApp = new Vue({
         return 'A winner must be selected.';
       }
 
-      // In this scoring model every player starts at PlayFrom and the winner
-      // always finishes exactly on PlayTo. The loser's remaining score determines
-      // the winning margin / score difference.
+      // Downward handicap changes the player's starting score, not the finishing
+      // score. Upward handicap changes the player's finishing score.
       if (this.activeSeats.length === 2 && this.matchDetails.matchRules) {
         const rules = this.matchDetails.matchRules;
         const from = Number(rules.playFrom);
@@ -3007,25 +3041,23 @@ const matchesApp = new Vue({
 
         if (Number.isFinite(to)) {
           if (!winner || winner.resultPoints === '' || winner.resultPoints === null || winner.resultPoints === undefined) {
-            return 'The winner must have a final score of ' + to + '.';
+            return 'The winner must have a final score.';
           }
-          if (Number(winner.resultPoints) !== to) {
-            return 'The winner must finish exactly on PlayTo (' + to + ').';
+          const winnerFinish = this.matchSeatFinish(this.matchDetails, winner);
+          const loserFinish = this.matchSeatFinish(this.matchDetails, loser);
+          if (Number(winner.resultPoints) !== winnerFinish) {
+            return 'The winner must finish on ' + winnerFinish + '.';
           }
           if (!loser || loser.resultPoints === '' || loser.resultPoints === null || loser.resultPoints === undefined || !Number.isFinite(Number(loser.resultPoints))) {
             return "Enter the loser's remaining score so the score difference can be calculated.";
           }
-          if (Number(loser.resultPoints) === to) {
-            return 'The loser cannot also finish on PlayTo (' + to + ').';
+          if (Number(loser.resultPoints) === loserFinish) {
+            return 'The loser cannot also finish on ' + loserFinish + '.';
           }
-
-          if (Number.isFinite(from)) {
-            const min = Math.min(from, to);
-            const max = Math.max(from, to);
-            const loserScore = Number(loser.resultPoints);
-            if (loserScore < min || loserScore > max) {
-              return "The loser's score must be between PlayFrom (" + from + ") and PlayTo (" + to + ").";
-            }
+          const loserStart = this.matchSeatStart(this.matchDetails, loser);
+          const loserScore = Number(loser.resultPoints);
+          if (loserScore < Math.min(loserStart, loserFinish) || loserScore > Math.max(loserStart, loserFinish)) {
+            return "The loser's score must be between their starting distance and finishing score.";
           }
         }
       }
