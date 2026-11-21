@@ -542,7 +542,8 @@ new Vue({
     buildPoolAdvanceVisualState(state) {
       const done = !!(state && state.stageComplete);
       const playerStatuses = {};
-      if (!state || !done) return { done, playerStatuses, replacementDestinations: {} };
+      const playerPlaces = {};
+      if (!state || !done) return { done, playerStatuses, playerPlaces, replacementDestinations: {} };
 
       const advancingPlaces = new Set(
         (Array.isArray(state.destinations) ? state.destinations : [])
@@ -569,6 +570,9 @@ new Vue({
         const playerId = Number(player && player.playerId);
         const playerName = player && player.playerName ? player.playerName : (Number.isFinite(playerId) ? ('Player #' + playerId) : 'Player');
         const place = Number(player && player.place);
+        if (player && player.place !== null && player.place !== undefined && Number.isInteger(place) && place > 0) {
+          playerPlaces[this.normalizePlayerName(playerName)] = place;
+        }
         if (wildcardAdvancedIds.has(playerId) || advancingPlaces.has(place)) addStatus(playerName, 'advanced');
         else if (player && player.place !== null && player.place !== undefined) addStatus(playerName, 'eliminated');
       }
@@ -609,7 +613,7 @@ new Vue({
         const player = [...players, ...wildcardCandidates].find(p => Number(p.playerId) === Number(slot.playerId));
         if (player && player.playerName) reservedWildcardNames.push(this.normalizePlayerName(player.playerName));
       }
-      return { done, playerStatuses, replacementDestinations, reservedWildcardNames };
+      return { done, playerStatuses, playerPlaces, replacementDestinations, reservedWildcardNames };
     },
     async loadPoolAdvanceStates() {
       const poolIds = this.stages.flatMap(stage => stage.pools.map(pool => Number(pool.matchId))).filter(id => Number.isFinite(id));
@@ -668,7 +672,29 @@ new Vue({
       const state = this.poolVisualState(pool);
       return state && state.playerStatuses ? (state.playerStatuses[this.normalizePlayerName(playerName)] || '') : '';
     },
+    finalPlayerPlace(pool, playerName) {
+      // Only the single pool in the final stage awards tournament placements.
+      // Use saved finishing places; never infer a ranking from list order.
+      const finalStage = this.stages[this.stages.length - 1];
+      if (!finalStage || finalStage.pools.length !== 1 ||
+          Number(finalStage.pools[0].matchId) !== Number(pool && pool.matchId)) return null;
+      const state = this.poolVisualState(pool);
+      if (!state.done || !state.playerPlaces) return null;
+      const place = state.playerPlaces[this.normalizePlayerName(playerName)];
+      return Number.isInteger(place) && place > 0 ? place : null;
+    },
+    finalPlaceLabel(place) {
+      if (place === 1) return 'Winner';
+      if (place === 2) return 'Second place';
+      if (place === 3) return 'Third place';
+      if (place === 4) return 'Fourth place';
+      const suffix = place % 100 >= 11 && place % 100 <= 13 ? 'th' :
+        (place % 10 === 1 ? 'st' : (place % 10 === 2 ? 'nd' : (place % 10 === 3 ? 'rd' : 'th')));
+      return place + suffix + ' place';
+    },
     playerClass(pool, playerName) {
+      const finalPlace = this.finalPlayerPlace(pool, playerName);
+      if (finalPlace !== null) return finalPlace === 1 ? 'vizPlayerAdvanced' : '';
       const status = this.playerVisualStatus(pool, playerName);
       return status === 'advanced' ? 'vizPlayerAdvanced' :
         (status === 'out' ? 'vizPlayerOut' : (status === 'eliminated' ? 'vizPlayerEliminated' : ''));
@@ -679,6 +705,8 @@ new Vue({
       return target ? target.stage.matchName + ' · ' + target.pool.matchName : null;
     },
     playerStatusText(pool, playerName) {
+      const finalPlace = this.finalPlayerPlace(pool, playerName);
+      if (finalPlace !== null) return this.finalPlaceLabel(finalPlace);
       const status = this.playerVisualStatus(pool, playerName);
       if (status === 'out') return 'Out';
       if (status === 'eliminated') return 'eliminated';

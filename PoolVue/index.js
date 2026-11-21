@@ -248,7 +248,7 @@ var dash = new Vue({
     matchingTemplates: function () {
       var count = Number(this.formdata.tournamentplayers);
       var seen = new Set();
-      // The API returns newest tournaments first. Show the latest copy of each
+      // The API returns newest tournaments first. Keep the OLDEST copy of each
       // distinct FormData configuration, ignoring name, scheduling, and venue settings.
       function canonical(value, isRoot) {
         if (Array.isArray(value)) {
@@ -263,7 +263,9 @@ var dash = new Vue({
         }
         return JSON.stringify(value);
       }
-      return this.tournamentTemplates.filter(function (template) {
+      // Deduplicate oldest-first. This keeps the original template instead
+      // of the most recently created duplicate (the API lists newest first).
+      return this.tournamentTemplates.slice().reverse().filter(function (template) {
         if (Number(template.playerCount) !== count) return false;
         var signature = canonical(template.form, true);
         if (seen.has(signature)) return false;
