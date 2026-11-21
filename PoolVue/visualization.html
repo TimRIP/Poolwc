@@ -110,7 +110,7 @@
 </section></div>
 <div v-if="editorPool" class="vizModalOverlay" @click.self="closePool" @keydown.esc="closePool">
   <section class="vizModal" role="dialog" aria-modal="true" :aria-label="'Match results for '+editorPool.matchName">
-    <div class="vizModalHeader"><div><span class="vizEyebrow">MATCH RESULTS</span><h2>{{editorPool.matchName}}</h2><p>Enter each player’s finishing place for a beer-pot, or edit scores in the result matrix for regular matches.</p></div><button class="vizClose" type="button" @click="closePool" aria-label="Close">×</button></div>
+    <div class="vizModalHeader"><div><span class="vizEyebrow">MATCH RESULTS</span><h2>{{editorPool.matchName}}</h2><p>Enter finishing places for Beer pot and Multi pot, or scores for Swiss and regular matches.</p></div><button class="vizClose" type="button" @click="closePool" aria-label="Close">×</button></div>
     <div class="vizModalBody"><div v-if="editorLoading" class="vizEmpty">Loading matches…</div><div v-if="editorError" class="vizError" role="alert">{{editorError}}</div><div v-if="editorMessage" class="vizSuccess" role="status">{{editorMessage}}</div>
       <div v-if="!editorLoading && editorIsBeerPot" class="vizMatrixScroll">
         <p class="vizMatrixHint">Beer-pot: enter the finishing place (1 = winner) for every player. All places must be different. Saving the places determines qualification and progression.</p>
@@ -126,6 +126,49 @@
           </tr></tbody>
         </table>
       </div>
+      <section v-if="!editorLoading && editorIsMultiPot" class="vizSwissPanel vizMultiPotPanel">
+        <h3>Multi pot standings</h3>
+        <p class="vizMatrixHint">Each player earns placement points in every round. {{editorMultiPotDescending ? 'Highest total points wins' : 'Lowest total points wins'}}. Tables are randomized for each new round; all players compete once per round.</p>
+        <div class="vizMatrixScroll"><table class="vizMatrix">
+          <thead><tr><th>Place</th><th>Player</th><th>Points</th><th>Rounds played</th></tr></thead>
+          <tbody><tr v-for="player in editorMultiPotStandings" :key="player.key">
+            <td class="vizMatrixTotal">{{player.tied ? ('T' + player.place) : player.place}}</td>
+            <th>{{player.name}}</th><td class="vizMatrixTotal">{{player.points}}</td>
+            <td class="vizMatrixTotal">{{player.played}}</td>
+          </tr></tbody>
+        </table></div>
+        <div v-for="round in editorMultiPotRounds" :key="'multi-round-'+round.number" class="vizSwissRound">
+          <h4>Round {{round.number}} <small>{{round.completed}} of {{round.matches.length}} matches saved</small></h4>
+          <div v-for="match in round.matches" :key="match.matchId" class="vizSwissMatch">
+            <div class="vizSwissMatchHeading">{{match.matchName}} · {{match.seats.length}} players</div>
+            <div class="vizMatrixScroll"><table class="vizMatrix vizBeerPotTable">
+              <thead><tr><th>Player</th><th>Place</th><th>Points</th></tr></thead>
+              <tbody><tr v-for="seat in match.seats" :key="seat.seatId">
+                <th>{{seat.playerName}}</th>
+                <td class="vizMatrixEditable"><input type="number" min="1" :max="match.seats.length" step="1" v-model="seat.place" :disabled="editorSaving" :aria-label="'Place for '+seat.playerName" /></td>
+                <td class="vizMatrixTotal">{{multiPotPointsForSeat(match,seat)}}</td>
+              </tr></tbody>
+            </table></div>
+          </div>
+        </div>
+        <section v-if="editorMultiPotPlayoffs.length" class="vizSwissRound vizMultiPotPlayoff">
+          <h4>Qualification playoff · Beer pot</h4>
+          <p class="vizMatrixHint">Only the players tied across the qualification cutoff compete here. Enter a unique finishing place for each player. The other tied groups do not need a playoff, and these placements do not add to Multi pot points.</p>
+          <div v-for="match in editorMultiPotPlayoffs" :key="'playoff-'+match.matchId" class="vizSwissMatch">
+            <div class="vizSwissMatchHeading">{{match.matchName}}</div>
+            <div class="vizMatrixScroll"><table class="vizMatrix vizBeerPotTable">
+              <thead><tr><th>Player</th><th>Beer pot placing</th></tr></thead>
+              <tbody><tr v-for="seat in match.seats" :key="seat.seatId">
+                <th>{{seat.playerName}}</th>
+                <td class="vizMatrixEditable"><input type="number" min="1" :max="match.seats.length" step="1"
+                  v-model="seat.place" :disabled="editorSaving" :aria-label="'Playoff place for '+seat.playerName" placeholder="Place" /></td>
+              </tr></tbody>
+            </table></div>
+          </div>
+          <p class="vizMatrixHint">Press Save all changes to confirm which tied players advance.</p>
+        </section>
+        <p class="vizMatrixHint">Press Save all changes after completing a round. The next round appears automatically when all tables are saved.</p>
+      </section>
       <section v-if="!editorLoading && editorIsSwiss" class="vizSwissPanel">
         <h3>Swiss standings</h3>
         <p class="vizMatrixHint">Rank: wins → Buchholz (opponents’ total wins) → score difference (scored minus conceded) → head-to-head, when two tied players have met. Fully tied players share the same place. Values include saved results and scores currently entered below; save results to generate the next round.</p>
@@ -161,7 +204,7 @@
         </div>
         <p class="vizMatrixHint">Save all changes after entering the scores for a round. Visualization will refresh to show newly generated Swiss matches.</p>
       </section>
-      <div v-if="!editorLoading && editorPlayers.length && !editorIsBeerPot && !editorIsSwiss" class="vizMatrixScroll">
+      <div v-if="!editorLoading && editorPlayers.length && !editorIsBeerPot && !editorIsSwiss && !editorIsMultiPot" class="vizMatrixScroll">
         <table class="vizMatrix"><thead><tr><th class="vizMatrixCorner"></th>
           <template v-if="editorIsSeries"><th v-for="(game,i) in editorMatches" :key="'g'+game.matchId">kamp{{i+1}}</th></template>
           <template v-else><th v-for="p in editorPlayers" :key="p.key">{{p.playerName}}</th></template>

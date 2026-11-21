@@ -417,6 +417,11 @@ var dash = new Vue({
       var preferredSize = Number(round.puljesize);
       if (!Number.isInteger(players) || players < 2 || !Number.isInteger(preferredSize) || preferredSize < 2) return [];
 
+      if (round.playstyle === 'multipot') {
+        // One overall standings pulje; each round is split into rotating tables.
+        return [players];
+      }
+
       if (round.distributeEvenly !== false) {
         return this.calculateEvenPoolSizes(players, preferredSize);
       }
@@ -1412,6 +1417,15 @@ var dash = new Vue({
 
       if (round.playstyle === 'beerpot') {
         this.$delete(round, 'BestOf');
+      } else if (round.playstyle === 'multipot') {
+        this.$delete(round, 'BestOf');
+        if (!Number.isInteger(Number(round.swissRounds)) || Number(round.swissRounds) < 1) {
+          this.$set(round, 'swissRounds', 3);
+        }
+        if (round.multiPotPointOrder !== 'ascending' && round.multiPotPointOrder !== 'descending') {
+          this.$set(round, 'multiPotPointOrder', 'descending');
+        }
+        this.$set(round, 'distributeEvenly', true);
       } else if (round.playstyle === 'swiss') {
         // A Swiss round is one pairing per player. The next pairing round is
         // generated only after every match in the current round is complete.
@@ -1643,7 +1657,7 @@ var dash = new Vue({
           var size = Number(round.puljesize);
           if (!Number.isInteger(size) || size < 2) {
             errors.push({ type: 'pool-size-' + i, description: label + ': players per group must be at least 2.' });
-          } else if (round.distributeEvenly === false && roundPlayers > 0 && roundPlayers % size !== 0) {
+          } else if (round.playstyle !== 'multipot' && round.distributeEvenly === false && roundPlayers > 0 && roundPlayers % size !== 0) {
             errors.push({ type: 'pool-div-' + i, description: label + ': ' + roundPlayers + ' players cannot be split into equal groups of exactly ' + size + '. Turn on “Distribute players evenly” or change the group size.' });
           } else if (round.distributeEvenly !== false && roundPlayers > 0) {
             var sizes = this.getPoolSizes(round);
@@ -1656,7 +1670,15 @@ var dash = new Vue({
             errors.push({ type: 'style-' + i, description: label + ': choose how the group is played.' });
           }
 
-          if (round.playstyle === 'swiss') {
+          if (round.playstyle === 'multipot') {
+            var multiRounds = Number(round.swissRounds);
+            if (!Number.isInteger(multiRounds) || multiRounds < 1 || multiRounds > 20) {
+              errors.push({ type: 'multipot-rounds-' + i, description: label + ': Multi pot rounds must be from 1 to 20.' });
+            }
+            if (Number(round.puljesize) < 3 || Number(round.puljesize) > 12) {
+              errors.push({ type: 'multipot-size-' + i, description: label + ': Multi pot table size must be between 3 and 12.' });
+            }
+          } else if (round.playstyle === 'swiss') {
             var swissRounds = Number(round.swissRounds);
             if (!Number.isInteger(swissRounds) || swissRounds < 1 || swissRounds > 20) {
               errors.push({ type: 'swiss-rounds-' + i, description: label + ': Swiss rounds must be a whole number from 1 to 20.' });
@@ -1867,6 +1889,8 @@ var dash = new Vue({
       var size = Number(round.puljesize) || 0;
       if (!size || players < 1) return '';
 
+      if (round.playstyle === 'multipot') return 'One standings pulje · rotating tables of about ' + size + ' players';
+
       var sizes = this.getPoolSizes(round);
       if (!sizes.length) return players + ' players / groups of ' + size;
 
@@ -1881,8 +1905,12 @@ var dash = new Vue({
     stageSummary: function (round) {
       var players = Number(round.NbPlayers) || 0;
       if (round.selected === 'pool') {
-        var styleNames = { roundrobin: 'Round robin', swiss: 'Swiss', beerpot: 'Beer pot' };
+        var styleNames = { roundrobin: 'Round robin', swiss: 'Swiss', beerpot: 'Beer pot', multipot: 'Multi pot' };
         var style = styleNames[round.playstyle] || 'Pool';
+        if (round.playstyle === 'multipot') {
+          style += ' • ' + (Number(round.swissRounds) || 3) + ' rounds, random tables of ' + round.puljesize +
+            ' • ' + (round.multiPotPointOrder === 'ascending' ? '1 to N points' : 'N to 1 points');
+        }
         if (round.playstyle === 'swiss') {
           style += ' • ' + (Number(round.swissRounds) || this.recommendedSwissRounds(round.puljesize)) + ' rounds';
         }

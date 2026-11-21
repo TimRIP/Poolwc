@@ -269,7 +269,7 @@
                   <template v-if="runde.selected === 'pool'">
                     <div class="form-grid three-col">
                       <label class="field">
-                        <span>Preferred players per group</span>
+                        <span>{{runde.playstyle === 'multipot' ? 'Preferred players per Multi pot table' : 'Preferred players per group'}}</span>
                         <input type="number" min="2" step="1" v-model.number="runde.puljesize" @change="onPoolSizeChange(index)">
                       </label>
 
@@ -279,14 +279,28 @@
                           <option value="roundrobin">Round robin</option>
                           <option value="swiss">Swiss</option>
                           <option value="beerpot">Beer pot</option>
+                          <option value="multipot">Multi pot</option>
                         </select>
                       </label>
 
-                      <label class="field" v-if="runde.playstyle !== 'beerpot' && runde.playstyle !== 'swiss'">
+                      <label class="field" v-if="runde.playstyle !== 'beerpot' && runde.playstyle !== 'swiss' && runde.playstyle !== 'multipot'">
                         <span>Best of</span>
                         <input type="number" min="1" step="1" v-model.number="runde.BestOf" @change="recalculate">
                       </label>
 
+                      <label class="field" v-if="runde.playstyle === 'multipot'">
+                        <span>Multi pot rounds per player</span>
+                        <input type="number" min="1" max="20" step="1" v-model.number="runde.swissRounds" @change="recalculate">
+                        <small>Every player competes once per round. Random tables of approximately the preferred group size; the remainder is spread across tables.</small>
+                      </label>
+                      <label class="field" v-if="runde.playstyle === 'multipot'">
+                        <span>Placement points</span>
+                        <select v-model="runde.multiPotPointOrder" @change="recalculate">
+                          <option value="descending">4, 3, 2, 1 — highest total wins</option>
+                          <option value="ascending">1, 2, 3, 4 — lowest total wins</option>
+                        </select>
+                        <small>For tables of 3 or 5, points automatically adjust to 3–1 or 5–1.</small>
+                      </label>
                       <label class="field" v-if="runde.playstyle === 'swiss'">
                         <span>Swiss rounds</span>
                         <input type="number" min="1" max="20" step="1" v-model.number="runde.swissRounds" @change="recalculate">
@@ -298,7 +312,7 @@
                       <input type="checkbox" v-model="runde.distributeEvenly" @change="onEvenDistributionChange(index)">
                       <span>
                         <strong>Distribute players evenly</strong>
-                        <small>If the number does not divide exactly, the groups differ by at most one player. Example: 13 players with preferred group size 4 becomes 4 / 3 / 3 / 3.</small>
+                        <small>If the number does not divide exactly, the groups differ by at most one player. Example: 13 players with preferred group size 4 becomes 4 / 3 / 3 / 3. For Multi pot, groups are re-randomized every round.</small>
                       </span>
                     </label>
 

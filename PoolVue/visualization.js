@@ -85,6 +85,52 @@ new Vue({
       }
       return [...names.values()];
     },
+    editorIsMultiPot() {
+      return this.editorMatches.some(m => /\bMulti pot round\s+\d+\b/i.test(m.matchName || ''));
+    },
+    editorMultiPotRounds() {
+      const groups = new Map();
+      for (const game of this.editorMatches) {
+        const match = /\bMulti pot round\s+(\d+)\b/i.exec(game.matchName || '');
+        if (!match) continue;
+        const round = Number(match[1]);
+        if (!groups.has(round)) groups.set(round, []);
+        groups.get(round).push(game);
+      }
+      return [...groups.entries()].sort((a,b)=>a[0]-b[0]).map(([number,matches])=>({
+        number, matches,
+        completed: matches.filter(m=>m.seats.length>=2 && m.seats.every(x=>x.originalPlace!=null)).length
+      }));
+    },
+    editorMultiPotPlayoffs() {
+      return this.editorMatches.filter(m => /^Multi pot qualification playoff/i.test(m.matchName || ''));
+    },
+    editorMultiPotDescending() {
+      const game = this.editorMatches.find(m=>m.multiPotPointOrder);
+      return !game || game.multiPotPointOrder !== 'ascending';
+    },
+    editorMultiPotStandings() {
+      const stats = new Map(this.editorPlayers.map(p=>[p.key, {key:p.key,name:p.playerName,points:0,played:0,place:'–',tied:false}]));
+      this.editorMatches.filter(game=>/\bMulti pot round\s+\d+\b/i.test(game.matchName || '')).forEach(game=>{
+        const size=game.seats.length;
+        const places=game.seats.map(x=>Number(x.place));
+        if (size<2 || places.some(p=>!Number.isInteger(p)||p<1||p>size) || new Set(places).size!==size) return;
+        game.seats.forEach((seat,i)=>{
+          const row=stats.get(this.seatKey(seat));
+          if(!row)return;
+          row.points+=this.editorMultiPotDescending ? size+1-places[i] : places[i];
+          row.played++;
+        });
+      });
+      const rows=[...stats.values()].sort((a,b)=>
+        (this.editorMultiPotDescending ? b.points-a.points : a.points-b.points) || a.name.localeCompare(b.name));
+      rows.forEach((row,i)=>{
+        const before=rows[i-1];
+        row.place=before && before.points===row.points ? before.place : i+1;
+        row.tied=rows.some(other=>other!==row && other.points===row.points);
+      });
+      return rows;
+    },
     editorIsSwiss() {
       return this.editorMatches.some(m => /\bswiss round\s+\d+\b/i.test(m.matchName || ''));
     },
@@ -186,7 +232,7 @@ new Vue({
          (group[0].headToHead===null && group[1].headToHead===null)));
     },
     editorIsBeerPot() {
-      return this.editorMatches.length === 1 && this.editorMatches[0].seats.length > 2;
+      return !this.editorIsMultiPot && this.editorMatches.length === 1 && this.editorMatches[0].seats.length > 2;
     },
     editorBeerPotSeats() {
       return this.editorIsBeerPot ? this.editorMatches[0].seats : [];
@@ -234,6 +280,13 @@ new Vue({
     }
   },
   methods: {
+    multiPotPointsForSeat(match, seat) {
+      const place = Number(seat.place);
+      if (String(seat.place).trim() === '' || !Number.isInteger(place) ||
+          place < 1 || place > match.seats.length) return '–';
+      if (/^Multi pot qualification playoff/i.test(match.matchName || '')) return '—';
+      return this.editorMultiPotDescending ? match.seats.length + 1 - place : place;
+    },
     tournamentListDate(value) {
       if (!value) return '';
       const date = new Date(value);
@@ -686,6 +739,8 @@ new Vue({
           return {
             matchId: pool.matches[i].matchId,
             matchName: details.matchName || pool.matches[i].matchName,
+            multiPotPointOrder: /^Multi pot:.*points ascending$/i.test(rules.description || '') ? 'ascending' :
+              (/^Multi pot:/i.test(rules.description || '') ? 'descending' : null),
             playTo: Number.isFinite(playTo) ? playTo : null,
             playFrom: Number.isFinite(playFrom) ? playFrom : null,
             minScore: Number.isFinite(playFrom) && Number.isFinite(playTo) ? Math.min(playFrom, playTo) : null,
@@ -726,7 +781,7 @@ new Vue({
       this.editorError='';this.editorMessage='';
       const changes=[];
       for(const m of this.editorMatches){
-        if (this.editorIsBeerPot && m === this.editorMatches[0]) {
+        if (this.editorIsMultiPot || (this.editorIsBeerPot && m === this.editorMatches[0])) {
           const seats = m.seats;
           if (seats.every(seat => String(seat.place || '') === (seat.originalPlace == null ? '' : String(seat.originalPlace)))) continue;
           if (seats.every(seat => seat.place === '')) {
@@ -735,7 +790,7 @@ new Vue({
           }
           const places = seats.map(seat => Number(seat.place));
           if (seats.some((seat, index) => !/^[1-9]\d*$/.test(String(seat.place)) || places[index] > seats.length) || new Set(places).size !== seats.length) {
-            this.editorError = 'Beer-pot: assign each player a different placing from 1 to ' + seats.length + ', or clear every place.';
+            this.editorError = m.matchName + ': assign each player a different placing from 1 to ' + seats.length + ', or clear every place.';
             return false;
           }
           changes.push({id:m.matchId,clear:false,payload:{matchId:m.matchId,results:seats.map(seat => ({
@@ -883,7 +938,7 @@ new Vue({
         // Snapshot user choices before saving scores: a results refresh can replace the editor state.
         selections = await this.requestPoolEditorAction('snapshot', poolId);
       } catch (e) {
-        if (!this.editorIsSwiss) {
+        if (!this.editorIsSwiss && !this.editorIsMultiPot) {
           this.editorError = e.message || 'Cannot access the advancement editor.';
           return;
         }
@@ -891,7 +946,7 @@ new Vue({
         const saved = await this.savePoolResults(true);
         if (!saved) return;
         await this.refreshOpenPoolAfterSave(poolId);
-        this.editorMessage = 'Swiss scores saved. Newly generated round matches are shown above.';
+        this.editorMessage = 'Results saved. Newly generated round matches are shown above.';
         return;
       }
       if (!(await this.savePoolResults(true))) return;
@@ -910,7 +965,7 @@ new Vue({
           // A Swiss round can finish with no advancement assignments yet.
           // This is not a score-save failure. Always reopen the current pool
           // in place so the final-round tie-break state is fetched immediately.
-          if (this.editorIsSwiss) {
+          if (this.editorIsSwiss || this.editorIsMultiPot) {
             await this.refreshOpenPoolAfterSave(poolId);
             this.editorMessage = 'Swiss match scores saved. Final standings and tie-break choices refreshed.';
           } else {
@@ -926,7 +981,7 @@ new Vue({
         // The Swiss standings and tie-break control must still reflect any
         // scores that were successfully saved, even if the optional
         // advancement synchronization failed.
-        if (this.editorIsSwiss) {
+        if (this.editorIsSwiss || this.editorIsMultiPot) {
           try { await this.refreshOpenPoolAfterSave(poolId); }
           catch (refreshError) { console.warn('Could not refresh Swiss pool after saving:', refreshError); }
         }

@@ -2419,6 +2419,7 @@ ORDER BY S.Id;";
                         // is no longer trustworthy. Remove later rounds first so they can
                         // be generated again from the corrected standings.
                         InvalidateFutureSwissRounds(conn, transaction, matchId);
+                        InvalidateFutureMultiPotRounds(conn, transaction, matchId);
 
                         // Re-saving a match must never award MMR twice. Undo any previous
                         // MMR change for this match before applying the new result.
@@ -2453,6 +2454,7 @@ ORDER BY S.Id;";
                     {
                         int? stageMatchId = GetParentStageMatchId(conn, transaction, matchId);
                         InvalidateFutureSwissRounds(conn, transaction, matchId);
+                        InvalidateFutureMultiPotRounds(conn, transaction, matchId);
                         UndoMmrForMatch(conn, transaction, matchId);
 
                         using (SqlCommand cmd = new SqlCommand(@"
@@ -2503,6 +2505,40 @@ WHERE MatchId = @MatchId;", conn, transaction))
             int matchId,
             IList<MatchResultUpdate> results)
         {
+            // Multi pot always awards rank-points. The frontend only submits
+            // finishing positions; never trust a client-supplied points total.
+            int multiPotRound;
+            int multiPotSize;
+            bool multiPotDescending;
+            int? multiPotStageId = GetParentStageMatchId(conn, transaction, matchId);
+            if (multiPotStageId.HasValue &&
+                TryGetMultiPotConfig(conn, transaction, multiPotStageId.Value,
+                    out multiPotRound, out multiPotSize, out multiPotDescending) &&
+                (GetMultiPotRoundForMatch(conn, transaction, matchId) > 0 ||
+                 GetMultiPotPlayoffMatchId(conn, transaction, multiPotStageId.Value) == matchId))
+            {
+                int seatCount;
+                using (var countCmd = new SqlCommand(@"SELECT COUNT(1) FROM Seat WHERE MatchId=@MatchId AND PlayerId IS NOT NULL", conn, transaction))
+                {
+                    countCmd.Parameters.Add("@MatchId", SqlDbType.Int).Value = matchId;
+                    seatCount = Convert.ToInt32(countCmd.ExecuteScalar());
+                }
+                if (seatCount < 2 || results.Count != seatCount ||
+                    results.Select(r => r.SeatId).Distinct().Count() != seatCount ||
+                    !results.Select(r => r.ResultMatchPlace).OrderBy(x=>x)
+                        .SequenceEqual(Enumerable.Range(1, seatCount)))
+                    throw new ArgumentException("Multi pot needs one unique finishing place (1 to " + seatCount + ") for every player.");
+                bool isQualificationPlayoff = GetMultiPotPlayoffMatchId(conn, transaction, multiPotStageId.Value) == matchId;
+                results = results.Select(r => new MatchResultUpdate {
+                    SeatId = r.SeatId,
+                    ResultMatchPlace = r.ResultMatchPlace,
+                    // Playoff results select the last qualifiers; they do not add
+                    // points to the completed regular Multi pot standings.
+                    ResultPoints = isQualificationPlayoff ? (int?)null :
+                        (multiPotDescending ? seatCount + 1 - r.ResultMatchPlace : r.ResultMatchPlace)
+                }).ToList();
+            }
+
             const string sql = @"
 UPDATE Seat
 SET ResultMatchPlace = @ResultMatchPlace,
@@ -2826,6 +2862,13 @@ WHERE ParentMatchId = @StageMatchId
                 PlacementResolved = false
             };
 
+            int multiPotRounds, multiPotSize;
+            bool multiPotDescending;
+            if (TryGetMultiPotConfig(conn, transaction, stageId, out multiPotRounds, out multiPotSize, out multiPotDescending))
+            {
+                return RecalculateMultiPotStage(conn, transaction, stageId, stageName,
+                    multiPotRounds, multiPotSize, multiPotDescending);
+            }
             if (IsSwissStage(conn, transaction, stageId))
             {
                 return RecalculateSwissStage(conn, transaction, stageId, stageName);
@@ -2886,6 +2929,286 @@ WHERE ParentMatchId = @StageMatchId
             return response;
         }
 
+
+        // Multi pot uses the existing beer-pot match style (3), with a distinct
+        // description to avoid affecting legacy single-match Beer pot stages.
+        private static bool TryGetMultiPotConfig(SqlConnection conn, SqlTransaction tx,
+            int poolId, out int rounds, out int tableSize, out bool highPointsWin)
+        {
+            rounds = 0; tableSize = 0; highPointsWin = true;
+            using (var cmd = new SqlCommand(@"SELECT TOP 1 MR.Description
+FROM [Match] M INNER JOIN MatchRules MR ON MR.Id=M.MatchRulesId
+WHERE M.ParentMatchId=@PoolId AND M.IndividualMatch=1 AND MR.PlayStyleId=3
+AND MR.Description LIKE 'Multi pot:%' ORDER BY M.Id", conn, tx))
+            {
+                cmd.Parameters.Add("@PoolId", SqlDbType.Int).Value = poolId;
+                var found = cmd.ExecuteScalar();
+                if (found == null || found == DBNull.Value) return false;
+                var match = Regex.Match(Convert.ToString(found),
+                    @"^Multi pot:\s*(\d+) rounds; size (\d+); points (ascending|descending)$",
+                    RegexOptions.IgnoreCase);
+                if (!match.Success) throw new InvalidOperationException("Multi pot configuration is invalid.");
+                rounds = Int32.Parse(match.Groups[1].Value);
+                tableSize = Int32.Parse(match.Groups[2].Value);
+                highPointsWin = String.Equals(match.Groups[3].Value, "descending", StringComparison.OrdinalIgnoreCase);
+                return true;
+            }
+        }
+
+        private static int ParseMultiPotRound(string name)
+        {
+            var match = Regex.Match(name ?? "", @"Multi pot round (\d+)", RegexOptions.IgnoreCase);
+            return match.Success ? Int32.Parse(match.Groups[1].Value) : 0;
+        }
+
+        private static int GetMultiPotRoundForMatch(SqlConnection conn, SqlTransaction tx, int matchId)
+        {
+            using (var cmd = new SqlCommand("SELECT Name FROM [Match] WHERE Id=@MatchId", conn, tx))
+            {
+                cmd.Parameters.Add("@MatchId", SqlDbType.Int).Value=matchId;
+                var value=cmd.ExecuteScalar();
+                return ParseMultiPotRound(value == DBNull.Value || value==null ? "" : Convert.ToString(value));
+            }
+        }
+
+        private static List<SwissMatchInfo> GetMultiPotMatches(SqlConnection conn, SqlTransaction tx, int poolId)
+        {
+            var matches = new List<SwissMatchInfo>();
+            using (var cmd = new SqlCommand(@"SELECT M.Id, M.Name, M.MatchRulesId
+FROM [Match] M INNER JOIN MatchRules MR ON MR.Id=M.MatchRulesId
+WHERE M.ParentMatchId=@PoolId AND M.IndividualMatch=1
+AND MR.PlayStyleId=3 AND MR.Description LIKE 'Multi pot:%' ORDER BY M.Id", conn, tx))
+            {
+                cmd.Parameters.Add("@PoolId", SqlDbType.Int).Value=poolId;
+                using (var reader=cmd.ExecuteReader()) while(reader.Read())
+                {
+                    string name=Convert.ToString(reader["Name"]);
+                    int round=ParseMultiPotRound(name);
+                    if (round>0) matches.Add(new SwissMatchInfo { MatchId=Convert.ToInt32(reader["Id"]),
+                        MatchName=name, MatchRulesId=Convert.ToInt32(reader["MatchRulesId"]), Round=round });
+                }
+            }
+            return matches;
+        }
+
+        private const string MultiPotPlayoffPrefix = "Multi pot qualification playoff";
+
+        private static int? GetMultiPotPlayoffMatchId(SqlConnection conn, SqlTransaction tx, int poolId)
+        {
+            using (var cmd = new SqlCommand(@"SELECT TOP 1 Id FROM [Match]
+WHERE ParentMatchId=@PoolId AND IndividualMatch=1 AND Name LIKE 'Multi pot qualification playoff%'
+ORDER BY Id DESC",conn,tx))
+            {
+                cmd.Parameters.Add("@PoolId", SqlDbType.Int).Value=poolId;
+                var value=cmd.ExecuteScalar();
+                return value==null || value==DBNull.Value ? (int?)null : Convert.ToInt32(value);
+            }
+        }
+
+        private static void DeleteMultiPotPlayoff(SqlConnection conn, SqlTransaction tx, int poolId)
+        {
+            var matchId=GetMultiPotPlayoffMatchId(conn,tx,poolId);
+            if (!matchId.HasValue) return;
+            UndoMmrForMatch(conn,tx,matchId.Value);
+            using (var cmd=new SqlCommand(@"DELETE FROM Seat WHERE MatchId=@Id;
+DELETE FROM [Match] WHERE Id=@Id;",conn,tx))
+            {
+                cmd.Parameters.Add("@Id",SqlDbType.Int).Value=matchId.Value;
+                cmd.ExecuteNonQuery();
+            }
+        }
+
+        private static List<int> MultiPotTableSizes(int players, int preferredSize)
+        {
+            if (players<2) throw new InvalidOperationException("Not enough players for Multi pot.");
+            int groups=Math.Max(1,(int)Math.Round((double)players / preferredSize, MidpointRounding.AwayFromZero));
+            groups=Math.Min(groups,Math.Max(1,players/3));
+            return Enumerable.Range(0,groups).Select(i=>players/groups+(i<players%groups?1:0)).ToList();
+        }
+
+        private static void InvalidateFutureMultiPotRounds(SqlConnection conn, SqlTransaction tx, int matchId)
+        {
+            int? pool=GetParentStageMatchId(conn,tx,matchId);
+            if (!pool.HasValue) return;
+            int total,size; bool descending;
+            if (!TryGetMultiPotConfig(conn,tx,pool.Value,out total,out size,out descending)) return;
+            int round=GetMultiPotRoundForMatch(conn,tx,matchId);
+            if (round<=0) return;
+            // A changed normal-round placing invalidates the qualification playoff.
+            // Saving the playoff itself must not delete it.
+            DeleteMultiPotPlayoff(conn,tx,pool.Value);
+            var later=GetMultiPotMatches(conn,tx,pool.Value).Where(x=>x.Round>round)
+                .OrderByDescending(x=>x.Round).ThenByDescending(x=>x.MatchId).ToList();
+            if (later.Count==0) return;
+            ClearStageOutcomeAndDestinations(conn,tx,pool.Value,false,new HashSet<int>());
+            foreach (var game in later)
+            {
+                UndoMmrForMatch(conn,tx,game.MatchId);
+                using(var cmd=new SqlCommand(@"DELETE FROM Seat WHERE MatchId=@Id; DELETE FROM [Match] WHERE Id=@Id;",conn,tx))
+                {
+                    cmd.Parameters.Add("@Id",SqlDbType.Int).Value=game.MatchId;
+                    cmd.ExecuteNonQuery();
+                }
+            }
+        }
+
+        private static StageAdvanceResult RecalculateMultiPotStage(SqlConnection conn, SqlTransaction tx,
+            int poolId, string name, int totalRounds, int preferredSize, bool highPointsWin)
+        {
+            var stageSeats=GetStageSeats(conn,tx,poolId);
+            var games=GetMultiPotMatches(conn,tx,poolId);
+            var results=GetChildResults(conn,tx,poolId);
+            var response=new StageAdvanceResult { StageMatchId=poolId,StageName=name,
+                StageComplete=false,PlacementResolved=false };
+            if (stageSeats.Count<2 || games.Count==0)
+            {
+                ClearStageOutcomeAndDestinations(conn,tx,poolId,false,new HashSet<int>());
+                response.Message="Multi pot is waiting for assigned players.";
+                return response;
+            }
+            int round=games.Max(x=>x.Round);
+            var current=games.Where(x=>x.Round==round).ToList();
+            foreach(var game in current)
+            {
+                var seats=results.Where(x=>x.MatchId==game.MatchId).ToList();
+                if (seats.Count<2 || seats.Any(x=>!x.ResultMatchPlace.HasValue||!x.ResultPoints.HasValue) ||
+                    !seats.Select(x=>x.ResultMatchPlace.Value).OrderBy(x=>x)
+                        .SequenceEqual(Enumerable.Range(1,seats.Count)))
+                {
+                    ClearStageOutcomeAndDestinations(conn,tx,poolId,false,new HashSet<int>());
+                    response.Message="Complete all placings in Multi pot round " + round + " to create the next round.";
+                    return response;
+                }
+            }
+            // Each player has one result per round; points are computed from the
+            // recorded group size, so unequal groups can score 3-1 or 5-1.
+            var totals=stageSeats.ToDictionary(x=>x.SeatId, x=>0);
+            var regularGameIds=new HashSet<int>(games.Select(g=>g.MatchId));
+            foreach(var result in results.Where(x=>regularGameIds.Contains(x.MatchId) && x.ResultPoints.HasValue))
+                if(totals.ContainsKey(result.StageSeatId)) totals[result.StageSeatId]+=result.ResultPoints.Value;
+            foreach(var seat in stageSeats) seat.DirectPoints=totals[seat.SeatId];
+            if (round<totalRounds)
+            {
+                int next=round+1;
+                // Shuffle and choose the grouping with the least repeated pairings
+                // seen so far. This does not make a pair-free grouping impossible.
+                var sizes=MultiPotTableSizes(stageSeats.Count,preferredSize);
+                var prior=new Dictionary<string,int>();
+                foreach(var game in games)
+                {
+                    var seats=results.Where(r=>r.MatchId==game.MatchId).Select(x=>x.StageSeatId).ToList();
+                    for(int a=0;a<seats.Count;a++) for(int b=a+1;b<seats.Count;b++)
+                    {
+                        var key=SwissPairKey(seats[a],seats[b]);
+                        prior[key]=prior.ContainsKey(key)?prior[key]+1:1;
+                    }
+                }
+                var rng=new Random(Guid.NewGuid().GetHashCode());
+                List<StageSeatScore> best=null;
+                long bestCost=long.MaxValue;
+                for(int attempt=0;attempt<Math.Min(150,stageSeats.Count*12);attempt++)
+                {
+                    var ordered=stageSeats.OrderBy(x=>rng.Next()).ToList();
+                    int offset=0; long cost=0;
+                    foreach(int size in sizes)
+                    {
+                        var group=ordered.Skip(offset).Take(size).ToList(); offset+=size;
+                        for(int a=0;a<group.Count;a++) for(int b=a+1;b<group.Count;b++)
+                        {
+                            int seen; if(prior.TryGetValue(SwissPairKey(group[a].SeatId,group[b].SeatId),out seen)) cost+=seen*seen;
+                        }
+                    }
+                    if(cost<bestCost){bestCost=cost;best=ordered;}
+                    if(cost==0)break;
+                }
+                int matchRuleId=games[0].MatchRulesId;
+                int position=0;
+                for(int i=0;i<sizes.Count;i++)
+                {
+                    string matchName="Multi pot round " + next + " Match " + (i+1);
+                    int matchId=InsertSwissMatch(conn,tx,poolId,matchRuleId,matchName);
+                    for(int player=0;player<sizes[i];player++)
+                    {
+                        var seat=best[position++];
+                        InsertSwissSeat(conn,tx,seat.SeatId,seat.PlayerId,matchId,null,null);
+                    }
+                }
+                response.Message="Multi pot round " + round + " completed. Round " + next + " is ready.";
+                return response;
+            }
+            // Only break a points tie if it straddles the qualification cutoff.
+            // Ties fully within the advancing or eliminated group do not need
+            // additional matches. The saved seat places remain unique/stable,
+            // but the scoreboard can continue showing tied points.
+            var orderedSeats=(highPointsWin
+                ?stageSeats.OrderByDescending(x=>x.DirectPoints)
+                :stageSeats.OrderBy(x=>x.DirectPoints))
+                .ThenBy(x=>x.SeatId).ToList();
+            var routes=GetConfiguredManualAdvancementDestinations(conn,tx,poolId);
+            var qualifyingPlaces=new HashSet<int>(routes.Where(r=>r.AutoSelectPlace.HasValue)
+                .Select(r=>r.AutoSelectPlace.Value));
+            int cutoff=qualifyingPlaces.Count==0 ? 0 : qualifyingPlaces.Max();
+            if (cutoff>orderedSeats.Count) cutoff=orderedSeats.Count;
+            if (cutoff>0 && cutoff<orderedSeats.Count)
+            {
+                int crossingPoints=orderedSeats[cutoff-1].DirectPoints ?? 0;
+                if (crossingPoints==(orderedSeats[cutoff].DirectPoints ?? 0))
+                {
+                    var tied=orderedSeats.Where(x=>x.DirectPoints==crossingPoints).ToList();
+                    int guaranteedAbove=orderedSeats.Count(x=>
+                        highPointsWin ? x.DirectPoints>crossingPoints : x.DirectPoints<crossingPoints);
+                    int needed=cutoff-guaranteedAbove;
+                    int? playoffId=GetMultiPotPlayoffMatchId(conn,tx,poolId);
+                    if (!playoffId.HasValue)
+                    {
+                        // Playoff uses the existing multi-player placement editor.
+                        // Its finish-order separates only players at the cutoff.
+                        string playoffName=MultiPotPlayoffPrefix + " - " + tied.Count +
+                            " players, " + needed + " qualify";
+                        int matchId=InsertSwissMatch(conn,tx,poolId,games[0].MatchRulesId,playoffName);
+                        foreach(var player in tied)
+                            InsertSwissSeat(conn,tx,player.SeatId,player.PlayerId,matchId,null,null);
+                        ClearStageOutcomeAndDestinations(conn,tx,poolId,false,new HashSet<int>());
+                        response.Message="Multi pot rounds complete. Qualification playoff created: " +
+                            tied.Count + " tied players compete for " + needed + " places.";
+                        return response;
+                    }
+                    var playoffResults=results.Where(x=>x.MatchId==playoffId.Value).ToList();
+                    bool complete=playoffResults.Count==tied.Count &&
+                        playoffResults.All(x=>x.ResultMatchPlace.HasValue) &&
+                        playoffResults.Select(x=>x.ResultMatchPlace.Value).OrderBy(x=>x)
+                            .SequenceEqual(Enumerable.Range(1,tied.Count)) &&
+                        new HashSet<int>(playoffResults.Select(x=>x.StageSeatId))
+                            .SetEquals(tied.Select(x=>x.SeatId));
+                    if (!complete)
+                    {
+                        ClearStageOutcomeAndDestinations(conn,tx,poolId,false,new HashSet<int>());
+                        response.Message="Finish the Multi pot qualification playoff: " +
+                            needed + " of " + tied.Count + " tied players will qualify.";
+                        return response;
+                    }
+                    var playoffOrder=playoffResults.ToDictionary(x=>x.StageSeatId,x=>x.ResultMatchPlace.Value);
+                    orderedSeats=orderedSeats.OrderBy(x=>
+                            highPointsWin ? -(x.DirectPoints ?? 0) : (x.DirectPoints ?? 0))
+                        .ThenBy(x=>x.DirectPoints==crossingPoints ? playoffOrder[x.SeatId] : 0)
+                        .ThenBy(x=>x.SeatId).ToList();
+                }
+                else if (GetMultiPotPlayoffMatchId(conn,tx,poolId).HasValue)
+                {
+                    // If a previously tied standings table now has a clear cutoff,
+                    // a stale playoff must not affect advancement.
+                    DeleteMultiPotPlayoff(conn,tx,poolId);
+                }
+            }
+            response.StageComplete=true;
+            response.PlacementResolved=true;
+            SaveStagePlacements(conn,tx,orderedSeats);
+            response.AdvancedPlayers=MovePlayersToDestinationSeats(conn,tx,poolId,orderedSeats);
+            // Downstream updates must not replace the resolved source placements.
+            SaveStagePlacements(conn,tx,orderedSeats);
+            response.Message="Multi pot complete. Qualification cutoff resolved and placements saved.";
+            return response;
+        }
 
         private static bool IsSwissStage(
             SqlConnection conn,
@@ -4440,6 +4763,25 @@ WHERE MatchId = @StageMatchId;", conn, transaction))
             {
                 UndoMmrForStageChildMatches(conn, transaction, stageMatchId);
 
+                int multiRounds, multiSize; bool multiDescending;
+                if (TryGetMultiPotConfig(conn, transaction, stageMatchId,
+                    out multiRounds, out multiSize, out multiDescending))
+                {
+                    // A changed upstream player makes subsequent randomized tables
+                    // invalid; retain the first round and clear its previous result.
+                    var later = GetMultiPotMatches(conn, transaction, stageMatchId)
+                        .Where(x=>x.Round>1).OrderByDescending(x=>x.Round)
+                        .ThenByDescending(x=>x.MatchId).ToList();
+                    foreach (var game in later)
+                    {
+                        UndoMmrForMatch(conn, transaction, game.MatchId);
+                        using(var remove=new SqlCommand(@"DELETE FROM Seat WHERE MatchId=@Id; DELETE FROM [Match] WHERE Id=@Id;", conn, transaction))
+                        {
+                            remove.Parameters.Add("@Id",SqlDbType.Int).Value=game.MatchId;
+                            remove.ExecuteNonQuery();
+                        }
+                    }
+                }
                 bool swissStage = IsSwissStage(conn, transaction, stageMatchId);
                 if (swissStage)
                 {

@@ -579,6 +579,21 @@ namespace TournamentBackend
             }
         }
 
+        // Group all players, using groups of approximately the requested size.
+        // A 7-player round becomes 4+3, 9 becomes 5+4, 11 becomes 4+4+3.
+        public static List<int> MultiPotTableSizes(int playerCount, int preferredSize)
+        {
+            if (playerCount < 2) throw new ArgumentException("Multi pot needs at least two players.");
+            int count = Math.Max(1, (int)Math.Round((double)playerCount / preferredSize, MidpointRounding.AwayFromZero));
+            int maxGroups = Math.Max(1, playerCount / 3);
+            count = Math.Min(count, maxGroups);
+            int baseSize = playerCount / count;
+            int excess = playerCount % count;
+            var result = new List<int>();
+            for (int i = 0; i < count; i++) result.Add(baseSize + (i < excess ? 1 : 0));
+            return result;
+        }
+
         public int CreateTournamentFromString(string jsontext)
         {
             UserBackoffice ubo = new UserBackoffice();
@@ -667,6 +682,13 @@ namespace TournamentBackend
                     distributeEvenly = distributeToken.ToObject<bool>();
                 }
 
+                if (run.playstyle == "multipot")
+                {
+                    if (puljesize < 3 || puljesize > 12)
+                        throw new ArgumentException("Multi pot table size must be between 3 and 12.");
+                    poolSizes = new List<int> { NbPlayers };
+                }
+
                 if (!IsValidPoolSizes(poolSizes, NbPlayers))
                 {
                     if (distributeEvenly)
@@ -722,6 +744,14 @@ namespace TournamentBackend
                     {
                         MatchRuleId = ubo.SP_CreateMatchRule(3, playFrom, playTo, null);
                     }
+                    else if (String.Compare(playstyle, "multipot") == 0)
+                    {
+                        int rounds = item.Value<int?>("swissRounds") ?? 3;
+                        if (rounds < 1 || rounds > 20) throw new ArgumentException("Multi pot rounds must be 1–20.");
+                        string order = item.Value<string>("multiPotPointOrder") == "ascending" ? "ascending" : "descending";
+                        MatchRuleId = ubo.SP_CreateMatchRule(3, playFrom, playTo,
+                            "Multi pot: " + rounds + " rounds; size " + puljesize + "; points " + order);
+                    }
                     else if (String.Compare(playstyle, "swiss") == 0)
                     {
                         int swissRounds = 0;
@@ -760,6 +790,36 @@ namespace TournamentBackend
                         {
                             int FirstSeatId = ubo.SP_CreateSeat(puljematch.seats[l].SeatId, null, mat.MatchId, null, null);
                             mat.seats.Add(new Tournament.Seat() { SeatId = FirstSeatId, ParentSeatId = puljematch.seats[l].SeatId });
+                        }
+                    }
+                    else if (String.Compare(playstyle, "multipot") == 0)
+                    {
+                        // The first round is a set of randomly mixed multi-player
+                        // tables. Subsequent rounds are created after all places
+                        // in the preceding round are saved.
+                        var sizes = MultiPotTableSizes(currentPoolSize, puljesize);
+                        var order = Enumerable.Range(0, currentPoolSize).ToList();
+                        var rng = new Random(Guid.NewGuid().GetHashCode());
+                        for (int j = order.Count - 1; j > 0; j--)
+                        {
+                            int k = rng.Next(j + 1);
+                            int tmp = order[j]; order[j] = order[k]; order[k] = tmp;
+                        }
+                        int offset = 0;
+                        for (int table = 0; table < sizes.Count; table++)
+                        {
+                            string name = "runde: " + item.GetValue("navn") + " Pulje " + (i + 1) +
+                                " Multi pot round 1 Match " + (table + 1);
+                            int matchId = ubo.SP_CreateMatch(name, puljeMatchId, MatchRuleId, true);
+                            Tournament.Match mat = new Tournament.Match() { Individual = true, MatchId = matchId,
+                                name = name, ParentMatchId = puljeMatchId };
+                            pu.matches.Add(mat);
+                            for (int p = 0; p < sizes[table]; p++)
+                            {
+                                int parentId = puljematch.seats[order[offset++]].SeatId;
+                                int seatId = ubo.SP_CreateSeat(parentId, null, matchId, null, null);
+                                mat.seats.Add(new Tournament.Seat() { SeatId = seatId, ParentSeatId = parentId });
+                            }
                         }
                     }
                     else if (String.Compare(playstyle, "swiss") == 0)
