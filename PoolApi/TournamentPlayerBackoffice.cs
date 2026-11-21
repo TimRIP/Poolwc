@@ -12,6 +12,7 @@ namespace DrukDatabaseLayer
     {
         public int PlayerId { get; set; }
         public string PlayerName { get; set; }
+        public int? HandicapPlayTo { get; set; }
     }
 
     public class TournamentNameShuffleAssignment
@@ -68,7 +69,7 @@ END;
 ),
 TournamentPlayers AS
 (
-    SELECT DISTINCT P.Id AS PlayerId, P.Name AS PlayerName
+    SELECT DISTINCT P.Id AS PlayerId, P.Name AS PlayerName, P.HandicapPlayTo AS HandicapPlayTo
     FROM TournamentTree TT
     INNER JOIN Seat S ON S.MatchId = TT.MatchId
     INNER JOIN Player P ON P.Id = S.PlayerId
@@ -81,7 +82,7 @@ TournamentPlayers AS
             AND TR.Status = 'registered'
       )
 )
-SELECT PlayerId, PlayerName
+SELECT PlayerId, PlayerName, HandicapPlayTo
 FROM TournamentPlayers
 ORDER BY
     CASE WHEN PlayerName LIKE 'Player:%' THEN 0 ELSE 1 END,
@@ -101,7 +102,8 @@ OPTION (MAXRECURSION 1000);";
                             players.Add(new TournamentUnregisteredPlayer
                             {
                                 PlayerId = Convert.ToInt32(reader["PlayerId"]),
-                                PlayerName = Convert.ToString(reader["PlayerName"])
+                                PlayerName = Convert.ToString(reader["PlayerName"]),
+                                HandicapPlayTo = reader["HandicapPlayTo"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["HandicapPlayTo"])
                             });
                         }
                     }
@@ -227,6 +229,66 @@ WHERE Id = @PlayerId
             }
         }
 
+        // Handicap is a player attribute, not a match rule. A null value uses
+        // the match's configured PlayTo. Only tournament owner can edit it.
+        public TournamentUnregisteredPlayer SavePlayerHandicap(int tournamentId, int adminUserId, int playerId, int? handicapPlayTo)
+        {
+            if (handicapPlayTo.HasValue && (handicapPlayTo.Value < 1 || handicapPlayTo.Value > 100000))
+                throw new InvalidOperationException("Handicap must be a whole number between 1 and 100000, or empty to use the default.");
+
+            using (var conn = new SqlConnection(_configuration["connectionstring"]))
+            {
+                conn.Open();
+                using (var tx = conn.BeginTransaction(IsolationLevel.Serializable))
+                {
+                    try
+                    {
+                        if (!IsTournamentAdmin(conn, tx, tournamentId, adminUserId))
+                            throw new UnauthorizedAccessException("Only the tournament owner can update player handicaps.");
+
+                        // Reuse the exact tournament membership and registration safeguards
+                        // used by the rename API. The joins only locate eligible players.
+                        const string sql = @"
+DECLARE @RootMatchId INT;
+SELECT @RootMatchId = MatchId FROM Tournament WITH (UPDLOCK, HOLDLOCK) WHERE Id = @TournamentId;
+;WITH TournamentTree AS
+(
+ SELECT M.Id AS MatchId, CAST('|' + CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX)) AS [Path]
+ FROM [Match] M WHERE M.Id = @RootMatchId
+ UNION ALL
+ SELECT M.Id, CAST(TT.[Path] + CAST(M.Id AS VARCHAR(20)) + '|' AS VARCHAR(MAX))
+ FROM TournamentTree TT JOIN [Match] M ON M.ParentMatchId = TT.MatchId
+ WHERE CHARINDEX('|' + CAST(M.Id AS VARCHAR(20)) + '|', TT.[Path]) = 0
+)
+UPDATE P SET HandicapPlayTo=@HandicapPlayTo, LastUsedAt=GETUTCDATE()
+FROM Player P
+WHERE P.Id=@PlayerId AND P.RegisteredUserID IS NULL AND P.ParentPlayerId IS NULL
+ AND EXISTS (SELECT 1 FROM TournamentTree TT JOIN Seat S ON S.MatchId=TT.MatchId WHERE S.PlayerId=P.Id)
+ AND NOT EXISTS (SELECT 1 FROM TournamentRegistration TR WHERE TR.PlayerId=P.Id AND TR.Status='registered')
+OPTION (MAXRECURSION 1000);";
+                        // A guarded update cannot edit an unrelated player.
+                        using (var cmd = new SqlCommand(sql, conn, tx))
+                        {
+                            cmd.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
+                            cmd.Parameters.Add("@PlayerId", SqlDbType.Int).Value = playerId;
+                            cmd.Parameters.Add("@HandicapPlayTo", SqlDbType.Int).Value = (object)handicapPlayTo ?? DBNull.Value;
+                            if (cmd.ExecuteNonQuery() != 1)
+                                throw new InvalidOperationException("Player not found in this tournament or cannot be edited.");
+                        }
+                        string name;
+                        using (var cmd = new SqlCommand("SELECT Name FROM Player WHERE Id=@Id;", conn, tx))
+                        {
+                            cmd.Parameters.Add("@Id", SqlDbType.Int).Value = playerId;
+                            name = Convert.ToString(cmd.ExecuteScalar());
+                        }
+                        tx.Commit();
+                        return new TournamentUnregisteredPlayer { PlayerId = playerId, PlayerName = name, HandicapPlayTo = handicapPlayTo };
+                    }
+                    catch { tx.Rollback(); throw; }
+                }
+            }
+        }
+
         // Copy existing player names to a permutation of Player IDs, and move
         // child ParentPlayerId links with the original names, atomically.
         public void RandomizeNamesWithParents(int tournamentId, int adminUserId, List<TournamentNameShuffleAssignment> assignments)
@@ -260,7 +322,7 @@ SELECT @RootMatchId = MatchId FROM Tournament WITH (UPDLOCK, HOLDLOCK) WHERE Id 
  FROM TournamentTree TT JOIN [Match] M ON M.ParentMatchId = TT.MatchId
  WHERE CHARINDEX('|' + CAST(M.Id AS VARCHAR(20)) + '|', TT.[Path]) = 0
 )
-SELECT DISTINCT P.Id, P.Name
+SELECT DISTINCT P.Id, P.Name, P.HandicapPlayTo
 FROM TournamentTree TT
 JOIN Seat S ON S.MatchId = TT.MatchId
 JOIN Player P WITH (UPDLOCK, HOLDLOCK) ON P.Id = S.PlayerId
@@ -268,11 +330,17 @@ WHERE P.RegisteredUserID IS NULL AND P.ParentPlayerId IS NULL
  AND NOT EXISTS (SELECT 1 FROM TournamentRegistration TR WHERE TR.PlayerId=P.Id AND TR.Status='registered')
 OPTION (MAXRECURSION 1000);";
                         var names = new Dictionary<int, string>();
+                        var handicaps = new Dictionary<int, int?>();
                         using (var cmd = new SqlCommand(eligibleSql, conn, tx))
                         {
                             cmd.Parameters.Add("@TournamentId", SqlDbType.Int).Value = tournamentId;
                             using (var reader = cmd.ExecuteReader())
-                                while (reader.Read()) names.Add(reader.GetInt32(0), reader.GetString(1));
+                                while (reader.Read())
+                                {
+                                    var id = reader.GetInt32(0);
+                                    names.Add(id, reader.GetString(1));
+                                    handicaps.Add(id, reader.IsDBNull(2) ? (int?)null : reader.GetInt32(2));
+                                }
                         }
 
                         // Require an exact permutation of all eligible top-level
@@ -296,10 +364,11 @@ OPTION (MAXRECURSION 1000);";
                         foreach (var assignment in assignments)
                         {
                             using (var cmd = new SqlCommand(@"
-UPDATE Player SET Name=@Name, LastUsedAt=GETUTCDATE()
+UPDATE Player SET Name=@Name, HandicapPlayTo=@HandicapPlayTo, LastUsedAt=GETUTCDATE()
 WHERE Id=@PlayerId AND RegisteredUserID IS NULL AND ParentPlayerId IS NULL;", conn, tx))
                             {
                                 cmd.Parameters.Add("@Name", SqlDbType.NVarChar, 255).Value = names[assignment.SourcePlayerId];
+                                cmd.Parameters.Add("@HandicapPlayTo", SqlDbType.Int).Value = (object)handicaps[assignment.SourcePlayerId] ?? DBNull.Value;
                                 cmd.Parameters.Add("@PlayerId", SqlDbType.Int).Value = assignment.PlayerId;
                                 if (cmd.ExecuteNonQuery() != 1)
                                     throw new InvalidOperationException("Could not update all player names.");

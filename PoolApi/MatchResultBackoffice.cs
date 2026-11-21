@@ -45,6 +45,7 @@ namespace DrukDatabaseLayer
         public int? ResultMatchPlace { get; set; }
         public int? ResultPoints { get; set; }
         public int? Mmr { get; set; }
+        public int? HandicapPlayTo { get; set; }
     }
 
     public class MatchDetails
@@ -1031,6 +1032,78 @@ IF @@ROWCOUNT = 0
                             cmd.ExecuteNonQuery();
                         }
                         SetPlayerOnSeatAndChildren(conn, transaction, route.SeatId, eliminatedPlayerId);
+                        transaction.Commit();
+                    }
+                    catch
+                    {
+                        transaction.Rollback();
+                        throw;
+                    }
+                }
+            }
+            return GetManualAdvancement(sourcePoolMatchId);
+        }
+
+        // Undo a saved administrative replacement. Restore the original qualified
+        // player to their existing route without changing source match standings.
+        public ManualAdvancementState UndoQualifiedPlayerReplacement(
+            int sourcePoolMatchId, int replacementPlayerId)
+        {
+            if (sourcePoolMatchId <= 0 || replacementPlayerId <= 0)
+                throw new ArgumentException("Select a valid pulje and replacement player.");
+
+            using (var conn = new SqlConnection(_configuration["connectionstring"]))
+            {
+                conn.Open();
+                using (var transaction = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        var saved = GetSavedPoolReplacements(conn, transaction, sourcePoolMatchId)
+                            .SingleOrDefault(x => x.ReplacementPlayerId == replacementPlayerId);
+                        if (saved == null)
+                            throw new InvalidOperationException("No saved replacement exists for this player. Refresh the pulje.");
+
+                        var routes = GetConfiguredManualAdvancementDestinations(conn, transaction, sourcePoolMatchId);
+                        var route = routes.SingleOrDefault(x => x.SeatId == saved.DestinationSeatId);
+                        if (route == null || route.PlayerId != saved.ReplacementPlayerId)
+                            throw new InvalidOperationException("The destination has changed since the replacement was saved. Refresh the pulje.");
+
+                        // Do not undo if any scores or results already exist in the
+                        // destination seat, its child seats, or its pool's matches.
+                        using (var check = new SqlCommand(@"
+SELECT COUNT(1) FROM Seat S
+WHERE (S.Id = @SeatId OR S.ParentSeatId = @SeatId)
+AND (S.ResultMatchPlace IS NOT NULL OR S.ResultPoints IS NOT NULL);", conn, transaction))
+                        {
+                            check.Parameters.Add("@SeatId", SqlDbType.Int).Value = saved.DestinationSeatId;
+                            if (Convert.ToInt32(check.ExecuteScalar()) > 0)
+                                throw new InvalidOperationException("The destination has played results. The replacement cannot be undone safely.");
+                        }
+                        using (var check = new SqlCommand(@"
+SELECT COUNT(1) FROM Seat S
+INNER JOIN [Match] M ON M.Id = S.MatchId
+WHERE M.ParentMatchId = @PoolId AND M.IndividualMatch = 1
+AND (S.ResultMatchPlace IS NOT NULL OR S.ResultPoints IS NOT NULL);", conn, transaction))
+                        {
+                            check.Parameters.Add("@PoolId", SqlDbType.Int).Value = route.MatchId;
+                            if (Convert.ToInt32(check.ExecuteScalar()) > 0)
+                                throw new InvalidOperationException("The destination pulje has recorded results. The replacement cannot be undone.");
+                        }
+
+                        SetPlayerOnSeatAndChildren(conn, transaction, saved.DestinationSeatId, saved.QualifiedPlayerId);
+                        using (var cmd = new SqlCommand(@"
+DELETE FROM PoolAdvancementReplacement
+WHERE SourcePoolMatchId = @PoolId AND ReplacementPlayerId = @ReplacementId
+AND DestinationSeatId = @SeatId AND QualifiedPlayerId = @QualifiedId;", conn, transaction))
+                        {
+                            cmd.Parameters.Add("@PoolId", SqlDbType.Int).Value = sourcePoolMatchId;
+                            cmd.Parameters.Add("@ReplacementId", SqlDbType.Int).Value = saved.ReplacementPlayerId;
+                            cmd.Parameters.Add("@QualifiedId", SqlDbType.Int).Value = saved.QualifiedPlayerId;
+                            cmd.Parameters.Add("@SeatId", SqlDbType.Int).Value = saved.DestinationSeatId;
+                            if (cmd.ExecuteNonQuery() != 1)
+                                throw new InvalidOperationException("The saved replacement changed. Refresh the pulje and retry.");
+                        }
                         transaction.Commit();
                     }
                     catch
@@ -2296,6 +2369,7 @@ SELECT
     S.Id AS SeatId,
     S.PlayerId,
     P.Name AS PlayerName,
+    P.HandicapPlayTo AS HandicapPlayTo,
     S.ResultMatchPlace,
     S.ResultPoints,
     RU.Mmr AS PlayerMmr
@@ -2391,7 +2465,8 @@ ORDER BY S.Id;";
                                 PlayerName = ToNullableString(reader["PlayerName"]),
                                 ResultMatchPlace = ToNullableInt(reader["ResultMatchPlace"]),
                                 ResultPoints = ToNullableInt(reader["ResultPoints"]),
-                                Mmr = ToNullableInt(reader["PlayerMmr"])
+                                Mmr = ToNullableInt(reader["PlayerMmr"]),
+                                HandicapPlayTo = ToNullableInt(reader["HandicapPlayTo"])
                             });
                         }
                     }
@@ -2537,6 +2612,68 @@ WHERE MatchId = @MatchId;", conn, transaction))
                     ResultPoints = isQualificationPlayoff ? (int?)null :
                         (multiPotDescending ? seatCount + 1 - r.ResultMatchPlace : r.ResultMatchPlace)
                 }).ToList();
+            }
+
+            // Respect player-specific distances on two-player score matches.
+            // Without handicaps, preserve the existing match scoring behavior.
+            // The winner is the player whose own score reaches their own target,
+            // not the opponent's target or the match-wide default.
+            if (results.Count == 2 && results.All(r => r.ResultPoints.HasValue))
+            {
+                var targets = new Dictionary<int, (int? PlayerId, int? Handicap, int? PlayTo, int? PlayFrom)>();
+                using (var targetCmd = new SqlCommand(@"
+SELECT S.Id AS SeatId, S.PlayerId, P.HandicapPlayTo, MR.PlayTo, MR.PlayFrom
+FROM Seat S
+INNER JOIN [Match] M ON M.Id = S.MatchId
+LEFT JOIN MatchRules MR ON MR.Id = M.MatchRulesId
+LEFT JOIN Player P ON P.Id = S.PlayerId
+WHERE S.MatchId = @MatchId;", conn, transaction))
+                {
+                    targetCmd.Parameters.Add("@MatchId", SqlDbType.Int).Value = matchId;
+                    using (var targetReader = targetCmd.ExecuteReader())
+                    {
+                        while (targetReader.Read())
+                        {
+                            int id = Convert.ToInt32(targetReader["SeatId"]);
+                            targets[id] = (
+                                targetReader["PlayerId"] == DBNull.Value ? (int?)null : Convert.ToInt32(targetReader["PlayerId"]),
+                                targetReader["HandicapPlayTo"] == DBNull.Value ? (int?)null : Convert.ToInt32(targetReader["HandicapPlayTo"]),
+                                targetReader["PlayTo"] == DBNull.Value ? (int?)null : Convert.ToInt32(targetReader["PlayTo"]),
+                                targetReader["PlayFrom"] == DBNull.Value ? (int?)null : Convert.ToInt32(targetReader["PlayFrom"]));
+                        }
+                    }
+                }
+                if (targets.Count == 2 && targets.Values.Any(t => t.Handicap.HasValue) &&
+                    results.Select(r => r.SeatId).Distinct().Count() == 2 &&
+                    results.All(r => targets.ContainsKey(r.SeatId) && targets[r.SeatId].PlayerId.HasValue))
+                {
+                    int winners = 0;
+                    int winningSeatId = 0;
+                    foreach (var result in results)
+                    {
+                        var target = targets[result.SeatId];
+                        if (!target.PlayTo.HasValue)
+                            throw new InvalidOperationException("A two-player match needs a PlayTo rule to apply handicaps.");
+                        int playTo = target.Handicap ?? target.PlayTo.Value;
+                        int playFrom = target.PlayFrom ?? 0;
+                        int low = Math.Min(playFrom, playTo);
+                        int high = Math.Max(playFrom, playTo);
+                        if (result.ResultPoints.Value < low || result.ResultPoints.Value > high)
+                            throw new InvalidOperationException("A score is outside the player's permitted distance (" + low + " to " + high + ").");
+                        if (result.ResultPoints.Value == playTo)
+                        {
+                            winners++;
+                            winningSeatId = result.SeatId;
+                        }
+                    }
+                    if (winners != 1)
+                        throw new InvalidOperationException("Exactly one player must reach their own PlayTo distance (handicap if set).");
+                    results = results.Select(r => new MatchResultUpdate {
+                        SeatId = r.SeatId,
+                        ResultPoints = r.ResultPoints,
+                        ResultMatchPlace = r.SeatId == winningSeatId ? 1 : 2
+                    }).ToList();
+                }
             }
 
             const string sql = @"

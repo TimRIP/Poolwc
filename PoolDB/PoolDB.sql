@@ -1100,3 +1100,18 @@ BEGIN
             CONSTRAINT DF_Tournament_IsPublicTemplate DEFAULT (0);
 END;
 GO
+
+-- Run once against the same database configured in PoolApi/appsettings.json.
+-- NULL means use the match's normal PlayTo distance.
+IF COL_LENGTH('dbo.Player', 'HandicapPlayTo') IS NULL
+BEGIN
+    ALTER TABLE dbo.Player ADD HandicapPlayTo INT NULL;
+END;
+GO
+-- Existing players remain NULL (no individual handicap).
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_Player_HandicapPlayTo' AND parent_object_id = OBJECT_ID('dbo.Player'))
+BEGIN
+    ALTER TABLE dbo.Player WITH CHECK ADD CONSTRAINT CK_Player_HandicapPlayTo
+    CHECK (HandicapPlayTo IS NULL OR HandicapPlayTo BETWEEN 1 AND 100000);
+END;
+GO

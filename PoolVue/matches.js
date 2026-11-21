@@ -1282,34 +1282,51 @@ const matchesApp = new Vue({
 
     async saveManualReplacements() {
       if (!this.matchEditAllowed || !this.manualAdvanceState) return;
-      const items = Object.entries(this.manualReplacementAssignments)
-        .filter(([eliminated, qualified]) => qualified !== null && qualified !== undefined && qualified !== '' &&
-          Number(qualified) !== Number(this.manualReplacementSaved[String(eliminated)]))
-        .map(([eliminated, qualified]) => ({eliminatedPlayerId:Number(eliminated),qualifiedPlayerId:Number(qualified)}));
-      if (!items.length) return;
-      if (items.some(item => this.manualWildcardAssignments[String(item.eliminatedPlayerId)] != null)) {
+      const changes = Object.entries(this.manualReplacementAssignments).filter(([playerId, selected]) => {
+        const previous = this.manualReplacementSaved[String(playerId)];
+        const oldId = previous == null || previous === '' ? null : Number(previous);
+        const newId = selected == null || selected === '' ? null : Number(selected);
+        return oldId !== newId;
+      }).map(([playerId, selected]) => ({
+        eliminatedPlayerId: Number(playerId),
+        qualifiedPlayerId: selected == null || selected === '' ? null : Number(selected)
+      }));
+      if (!changes.length) return;
+      if (changes.some(item => item.qualifiedPlayerId != null &&
+          this.manualWildcardAssignments[String(item.eliminatedPlayerId)] != null)) {
         this.manualAdvanceError = 'Remove the wildcard selection before replacing a qualified player.';
         return;
       }
-      if (new Set(items.map(item => item.qualifiedPlayerId)).size !== items.length) {
+      const selected = Object.values(this.manualReplacementAssignments)
+        .filter(x => x !== null && x !== undefined && x !== '').map(Number);
+      if (new Set(selected).size !== selected.length) {
         this.manualAdvanceError = 'A qualifying player can only be replaced once.';
         return;
       }
       this.manualAdvanceError = '';
       this.manualAdvanceMessage = '';
       try {
-        for (const item of items) {
-          await axios.post('http://localhost:5000/api/match/' +
-            encodeURIComponent(this.selectedMatchId) + '/advancement/replace', item,
-            { headers: Object.assign({'Content-Type':'application/json; charset=utf-8'},this.authHeaders()) });
+        const endpoint = 'http://localhost:5000/api/match/' + encodeURIComponent(this.selectedMatchId) + '/advancement/replace';
+        const headers = this.authHeaders();
+        // Restore old qualification routes before applying any new replacements.
+        for (const item of changes.filter(x => x.qualifiedPlayerId == null)) {
+          await axios.delete(endpoint + '/' + encodeURIComponent(item.eliminatedPlayerId), {headers});
+        }
+        for (const item of changes.filter(x => x.qualifiedPlayerId != null)) {
+          await axios.post(endpoint, item,
+            {headers:Object.assign({'Content-Type':'application/json; charset=utf-8'},headers)});
         }
         await this.loadManualAdvancement(this.selectedMatchId);
-        this.manualAdvanceMessage = 'Qualified player replacement saved.';
+        if (this.manualAdvanceError) throw new Error(this.manualAdvanceError);
+        for (const item of changes) {
+          const saved = this.manualReplacementSaved[String(item.eliminatedPlayerId)];
+          if ((saved == null ? null : Number(saved)) !== item.qualifiedPlayerId)
+            throw new Error('The replacement change for player ' + item.eliminatedPlayerId + ' was not saved.');
+        }
+        this.manualAdvanceMessage = 'Player replacement changes saved.';
       } catch(e) {
         this.manualAdvanceError = (e.response && e.response.data && e.response.data.message) ||
-          (e.response ? 'Could not replace the qualified player (HTTP ' + e.response.status + '). ' +
-            'Verify database/004_pool_advancement_replacement.sql is installed.' :
-            'Could not contact PoolApi to save the player replacement.');
+          e.message || 'Could not save the player replacement change.';
       }
     },
 
@@ -3280,10 +3297,14 @@ window.addEventListener('message', async function(event) {
       return desired != null && desired !== '' && (!old || Number(old.seatId) !== Number(desired));
     });
     const requestedReplacements = Object.entries(chosen.replacements || {})
-      .filter(([_, value]) => value !== null && value !== undefined && value !== '')
-      .map(([eliminated, qualified]) => ({ eliminated: Number(eliminated), qualified: Number(qualified) }));
-    const hasReplacementChanges = requestedReplacements.some(item =>
-      Number(matchesApp.manualReplacementSaved[String(item.eliminated)]) !== item.qualified);
+      .map(([eliminated, qualified]) => ({
+        eliminated: Number(eliminated),
+        qualified: qualified == null || qualified === '' ? null : Number(qualified)
+      }));
+    const hasReplacementChanges = requestedReplacements.some(item => {
+      const old = matchesApp.manualReplacementSaved[String(item.eliminated)];
+      return (old == null ? null : Number(old)) !== item.qualified;
+    });
     if (matchesApp.manualAdvanceState.stageComplete) {
       if (changedWildcards) {
         await matchesApp.saveManualWildcards();
@@ -3359,23 +3380,23 @@ window.addEventListener('message', async function(event) {
         if (!verified) throw new Error('Wildcard destination was not persisted. The save was not confirmed; check the chosen pulje.');
       }
     }
-    if (matchesApp.manualAdvanceState.stageComplete && requestedReplacements.length) {
+    if (matchesApp.manualAdvanceState.stageComplete && hasReplacementChanges) {
       await matchesApp.loadManualAdvancement(poolId);
       if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
       const saved = matchesApp.manualReplacementSaved || {};
-      const toSave = requestedReplacements.filter(item => Number(saved[String(item.eliminated)]) !== item.qualified);
-      if (toSave.length) {
-        // Do not replay saved choices: a prior replacement may no longer appear
-        // as a newly eligible candidate in some tournament formats.
-        for (const item of toSave) matchesApp.$set(matchesApp.manualReplacementAssignments,
-          String(item.eliminated), item.qualified);
-        await matchesApp.saveManualReplacements();
-        if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
-      }
+      const toSave = requestedReplacements.filter(item => {
+        const old = saved[String(item.eliminated)];
+        return (old == null ? null : Number(old)) !== item.qualified;
+      });
+      for (const item of toSave) matchesApp.$set(matchesApp.manualReplacementAssignments,
+        String(item.eliminated), item.qualified);
+      await matchesApp.saveManualReplacements();
+      if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
       await matchesApp.loadManualAdvancement(poolId);
       if (matchesApp.manualAdvanceError) throw new Error(matchesApp.manualAdvanceError);
       for (const item of requestedReplacements) {
-        if (Number(matchesApp.manualReplacementSaved[String(item.eliminated)]) !== item.qualified)
+        const actual = matchesApp.manualReplacementSaved[String(item.eliminated)];
+        if ((actual == null ? null : Number(actual)) !== item.qualified)
           throw new Error('The replacement for player ' + item.eliminated + ' was not saved.');
       }
     }

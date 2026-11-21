@@ -166,3 +166,10 @@
 .vizChildNone{display:block;margin-top:8px}
 .vizNamesBody:has(.vizChildPlayers){max-height:500px}
 @media(max-width:750px){.vizChildPlayersForm{grid-template-columns:1fr}}
+
+/* Optional player handicap / individual play-to distance. */
+.vizRenameRow{grid-template-columns:minmax(130px,1fr) minmax(140px,1.6fr) auto minmax(120px,140px) auto}
+.vizHandicapField{display:flex;flex-direction:column;gap:5px;min-width:0;font-size:11px;font-weight:650;color:#b9d0ea}
+.vizRenameRow .vizHandicapField input{width:100%;min-width:0;padding:9px 10px}
+@media(max-width:900px){.vizRenameRow{grid-template-columns:minmax(130px,1fr) minmax(130px,1fr) auto}.vizHandicapField{grid-column:2}.vizHandicapField+button{grid-column:3}}
+@media(max-width:560px){.vizRenameRow{grid-template-columns:1fr 1fr}.vizRenameIdentity{grid-column:1/-1}.vizRenameRow>input{grid-column:1}.vizHandicapField{grid-column:1}.vizHandicapField+button{grid-column:2}}

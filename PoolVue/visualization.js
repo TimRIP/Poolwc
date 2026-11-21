@@ -161,7 +161,7 @@ new Vue({
         if (a.score === '' || b.score === '') continue;
         const av=Number(a.score), bv=Number(b.score);
         if (!Number.isFinite(av) || !Number.isFinite(bv)) continue;
-        const aw=av===m.playTo, bw=bv===m.playTo;
+        const aw=av===this.seatPlayTo(m,a), bw=bv===this.seatPlayTo(m,b);
         if (aw === bw) continue;
         const ak=this.seatKey(a), bk=this.seatKey(b);
         const x=stats.get(ak), y=stats.get(bk);
@@ -264,7 +264,7 @@ new Vue({
         if (a.score === '' || b.score === '') continue;
         const av = Number(a.score), bv = Number(b.score);
         if (!Number.isFinite(av) || !Number.isFinite(bv)) continue;
-        const aw = av === m.playTo, bw = bv === m.playTo;
+        const aw = av === this.seatPlayTo(m,a), bw = bv === this.seatPlayTo(m,b);
         if (aw === bw) continue;
         const x = byKey.get(this.seatKey(a)), y = byKey.get(this.seatKey(b));
         if (!x || !y) continue;
@@ -361,7 +361,9 @@ new Vue({
         this.renameablePlayers = list.map(x => ({
           playerId: Number(x.playerId),
           playerName: x.playerName || ('Player #' + x.playerId),
-          editName: x.playerName || ('Player #' + x.playerId)
+          editName: x.playerName || ('Player #' + x.playerId),
+          handicapPlayTo: x.handicapPlayTo == null ? null : Number(x.handicapPlayTo),
+          editHandicapPlayTo: x.handicapPlayTo == null ? '' : String(x.handicapPlayTo)
         }));
       } catch (e) {
         this.playerNameError = (e.response && e.response.data && e.response.data.message) || 'Could not load player names. Administrator access may be required.';
@@ -395,6 +397,37 @@ new Vue({
         this.savingPlayerNameId = null;
       }
     },
+    async savePlayerHandicap(player) {
+      if (this.randomizingPlayerNames || this.savingPlayerNameId !== null) return;
+      const raw = String(player.editHandicapPlayTo == null ? '' : player.editHandicapPlayTo).trim();
+      const handicap = raw === '' ? null : Number(raw);
+      if (handicap !== null && (!Number.isInteger(handicap) || handicap < 1 || handicap > 100000)) {
+        this.playerNameError = 'Handicap must be a whole number between 1 and 100000, or blank for the default distance.';
+        return;
+      }
+      this.savingPlayerNameId = player.playerId;
+      this.playerNameError = '';
+      this.playerNameMessage = '';
+      try {
+        await axios.put(
+          'http://localhost:5000/api/tournament/' + encodeURIComponent(this.selectedTournamentId) +
+          '/players/' + encodeURIComponent(player.playerId) + '/handicap',
+          { handicapPlayTo: handicap },
+          { headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, this.authHeaders()) }
+        );
+        player.handicapPlayTo = handicap;
+        player.editHandicapPlayTo = handicap === null ? '' : String(handicap);
+        this.playerNameMessage = 'Handicap saved for ' + player.playerName + '.';
+      } catch (e) {
+        this.playerNameError = (e.response && e.response.data && e.response.data.message) || 'Could not save handicap.';
+      } finally {
+        this.savingPlayerNameId = null;
+      }
+    },
+    playerHandicapChanged(player) {
+      const saved = player.handicapPlayTo == null ? '' : String(player.handicapPlayTo);
+      return String(player.editHandicapPlayTo == null ? '' : player.editHandicapPlayTo).trim() !== saved;
+    },
     async randomizePlayerNames() {
       if (this.randomizingPlayerNames || this.savingPlayerNameId !== null || this.playerNamesLoading) return;
       const tournamentId = String(this.selectedTournamentId || '');
@@ -408,7 +441,7 @@ new Vue({
         this.playerNameError = 'At least two eligible players are needed to randomize names.';
         return;
       }
-      if (!window.confirm('Randomize ' + players.length + ' names? Children of a parent will follow that parent’s name to the new Player ID. Player IDs and match results stay unchanged.')) return;
+      if (!window.confirm('Randomize ' + players.length + ' names? Children and handicap values will follow their parent/player name to the new Player ID. Player IDs and match results stay unchanged.')) return;
       const order = players.map((_, i) => i);
       for (let i = order.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -432,7 +465,7 @@ new Vue({
         if (String(this.selectedTournamentId || '') !== tournamentId) return;
         await this.loadMatches();
         await this.loadChildPlayers();
-        this.playerNameMessage = 'Names randomized. Children now follow the parent name to its new Player ID.';
+        this.playerNameMessage = 'Names randomized. Children and handicap values follow their associated player names.';
       } catch (e) {
         const details = e.response && e.response.data && e.response.data.message;
         this.playerNameError = details || e.message || 'Could not randomize names.';
@@ -674,14 +707,22 @@ new Vue({
     seriesSeat(player, match) {
       return match.seats.find(s => this.seatKey(s) === player.key) || null;
     },
+    seatPlayTo(match, seat) {
+      if (!seat) return match ? match.playTo : null;
+      return Number.isInteger(seat.handicapPlayTo) && seat.handicapPlayTo > 0
+        ? seat.handicapPlayTo : match.playTo;
+    },
     matchCellClass(match, player) {
       if (!match || !player || match.seats.length !== 2) return '';
       const other = match.seats.find(s => s !== player);
-      if (!other || player.score === '' || other.score === '' || !Number.isFinite(match.playTo)) return '';
+      if (!other || player.score === '' || other.score === '') return '';
       const mine = Number(player.score), theirs = Number(other.score);
-      if (!Number.isFinite(mine) || !Number.isFinite(theirs)) return '';
-      if (mine === match.playTo && theirs !== match.playTo) return 'vizMatrixWinner';
-      if (theirs === match.playTo && mine !== match.playTo) return 'vizMatrixLoser';
+      const myTarget = this.seatPlayTo(match, player);
+      const theirTarget = this.seatPlayTo(match, other);
+      if (!Number.isFinite(mine) || !Number.isFinite(theirs) ||
+          !Number.isFinite(myTarget) || !Number.isFinite(theirTarget)) return '';
+      if (mine === myTarget && theirs !== theirTarget) return 'vizMatrixWinner';
+      if (theirs === theirTarget && mine !== myTarget) return 'vizMatrixLoser';
       return '';
     },
     matrixCellClass(row, col) {
@@ -692,11 +733,14 @@ new Vue({
       if (!seat || !match) return;
       seat.score = value;
       const opponent = match.seats.find(s => s !== seat);
-      if (!opponent || value === '' || !Number.isFinite(match.playTo)) return;
+      const ownTarget = this.seatPlayTo(match, seat);
+      const otherTarget = this.seatPlayTo(match, opponent);
+      if (!opponent || value === '' || !Number.isFinite(ownTarget) || !Number.isFinite(otherTarget)) return;
       const entered = Number(value);
-      if (!Number.isInteger(entered) || entered === match.playTo) return;
-      if (match.minScore !== null && (entered < match.minScore || entered > match.maxScore)) return;
-      opponent.score = String(match.playTo);
+      const low = Math.min(Number.isFinite(match.playFrom) ? match.playFrom : 0, ownTarget);
+      const high = Math.max(Number.isFinite(match.playFrom) ? match.playFrom : 0, ownTarget);
+      if (!Number.isInteger(entered) || entered === ownTarget || entered < low || entered > high) return;
+      opponent.score = String(otherTarget);
     },
     seriesChange(player, match, value) {
       this.setMatchScore(match, this.seriesSeat(player, match), value);
@@ -725,7 +769,17 @@ new Vue({
       this.editorMessage = '';
       this.editorLoading = true;
       try {
-        const response = await Promise.all(pool.matches.map(m => axios.get('http://localhost:5000/api/match/' + encodeURIComponent(m.matchId), { headers: this.authHeaders() })));
+        // The Player Names endpoint is the source used to save handicap distances.
+        // Match details may be served by an older API instance which does not yet
+        // expose handicapPlayTo. Cross-check by PlayerId, never by display name.
+        const responses = await Promise.all([
+          Promise.all(pool.matches.map(m => axios.get('http://localhost:5000/api/match/' + encodeURIComponent(m.matchId), { headers: this.authHeaders() }))),
+          axios.get('http://localhost:5000/api/tournament/' + encodeURIComponent(this.selectedTournamentId) + '/players', { headers: this.authHeaders() }).catch(() => null)
+        ]);
+        const response = responses[0];
+        const rosterPlayers = responses[1] && responses[1].data && Array.isArray(responses[1].data.players) ? responses[1].data.players : [];
+        const rosterHandicaps = new Map(rosterPlayers.filter(p => p.playerId != null)
+          .map(p => [Number(p.playerId), p.handicapPlayTo == null ? null : Number(p.handicapPlayTo)]));
         this.swissTieSaved = null;
         this.swissTieFirstPlayerId = '';
         this.swissTieReady = false;
@@ -751,6 +805,9 @@ new Vue({
                 seatId: x.seatId,
                 playerId: x.playerId,
                 playerName: x.playerName || ('Player #' + x.playerId),
+                handicapPlayTo: rosterHandicaps.has(Number(x.playerId))
+                  ? rosterHandicaps.get(Number(x.playerId))
+                  : (x.handicapPlayTo == null ? null : Number(x.handicapPlayTo)),
                 score: x.resultPoints === null || x.resultPoints === undefined ? '' : String(x.resultPoints),
                 original: x.resultPoints === null || x.resultPoints === undefined ? '' : String(x.resultPoints),
                 originalPlace: x.resultMatchPlace,
@@ -758,6 +815,14 @@ new Vue({
               }))
           };
         });
+        const handicapMismatch = response.some(res => (res.data && res.data.seats || []).some(seat => {
+          const id = Number(seat.playerId);
+          return rosterHandicaps.has(id) && rosterHandicaps.get(id) != null &&
+            (seat.handicapPlayTo == null || Number(seat.handicapPlayTo) !== rosterHandicaps.get(id));
+        }));
+        if (handicapMismatch) {
+          this.editorError = 'Your match API is returning a different handicap than Player Names. The displayed Play to uses the saved player value, but restart/rebuild PoolApi before saving results so the server applies it too.';
+        }
         if (this.editorIsSwiss) {
           try { await this.loadSwissTieState(pool.matchId); }
           catch (e) { console.warn('Could not load Swiss tie-break status:', e); }
@@ -778,6 +843,7 @@ new Vue({
     },
     async savePoolResults(skipRefresh=false){
       if(this.editorSaving)return;
+      if (this.editorError && this.editorError.includes('match API is returning a different handicap')) return false;
       this.editorError='';this.editorMessage='';
       const changes=[];
       for(const m of this.editorMatches){
@@ -807,15 +873,22 @@ new Vue({
         if(a.score===''||b.score===''||!Number.isInteger(scoreA)||!Number.isInteger(scoreB)){
           this.editorError=m.matchName+': enter two whole-number scores, or clear both.';return;
         }
-        if(m.minScore!==null&&(scoreA<m.minScore||scoreB<m.minScore||scoreA>m.maxScore||scoreB>m.maxScore)){
-          this.editorError=m.matchName+': scores must be between '+m.minScore+' and '+m.maxScore+'.';return;
+        const targetA=this.seatPlayTo(m,a), targetB=this.seatPlayTo(m,b);
+        if (!Number.isFinite(targetA) || !Number.isFinite(targetB)) {
+          this.editorError=m.matchName+': a PlayTo distance is required.';return false;
         }
-        if(m.playTo===null || (scoreA===m.playTo)===(scoreB===m.playTo)){
-          this.editorError=m.matchName+': exactly one player must finish on PlayTo ('+m.playTo+').';return;
+        const base=Number.isFinite(m.playFrom)?m.playFrom:0;
+        if(scoreA<Math.min(base,targetA)||scoreA>Math.max(base,targetA)||
+           scoreB<Math.min(base,targetB)||scoreB>Math.max(base,targetB)){
+          this.editorError=m.matchName+': scores must be within each player’s own distance (PlayTo/handicap).';return false;
+        }
+        const winA=scoreA===targetA, winB=scoreB===targetB;
+        if (winA === winB) {
+          this.editorError=m.matchName+': exactly one player must reach their own PlayTo ('+targetA+' / '+targetB+').';return false;
         }
         changes.push({id:m.matchId,clear:false,payload:{matchId:m.matchId,results:[
-          {seatId:a.seatId,resultMatchPlace:scoreA===m.playTo?1:2,resultPoints:scoreA},
-          {seatId:b.seatId,resultMatchPlace:scoreB===m.playTo?1:2,resultPoints:scoreB}
+          {seatId:a.seatId,resultMatchPlace:winA?1:2,resultPoints:scoreA},
+          {seatId:b.seatId,resultMatchPlace:winB?1:2,resultPoints:scoreB}
         ]}});
       }
       if(!changes.length){if(!skipRefresh){await this.refreshOpenPoolAfterSave(this.editorPool && this.editorPool.matchId);this.editorMessage='Scores are up to date.';}return true;}

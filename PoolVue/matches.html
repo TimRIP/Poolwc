@@ -809,7 +809,9 @@ html.embeddedPool #vuematch{min-width:0!important;width:100%!important;padding:0
                         <strong>{{ player.playerName || ('Player #' + player.playerId) }}</strong>
                         <span>place {{ player.place }} · eliminated</span>
                       </div>
-                      <div v-if="savedReplacementForPlayer(player.playerId)" class="resultNote" style="margin:6px 0;color:#a8e3c4">
+                      <div v-if="savedReplacementForPlayer(player.playerId) &&
+                            Number(manualReplacementAssignments[String(player.playerId)]) === Number(manualReplacementSaved[String(player.playerId)])"
+                           class="resultNote" style="margin:6px 0;color:#a8e3c4">
                         Replacement saved: takes the qualifying place of {{ savedReplacementForPlayer(player.playerId) }}.
                       </div>
                       <label class="manualAdvanceSelect">
@@ -859,7 +861,9 @@ html.embeddedPool #vuematch{min-width:0!important;width:100%!important;padding:0
                     </div>
                     <div class="resultActions manualAdvanceActions">
                       <button type="button" class="saveResultBtn" @click="saveManualReplacements"
-                              :disabled="!matchEditAllowed || !Object.values(manualReplacementAssignments).some(x => x != null)">
+                              :disabled="!matchEditAllowed || !Object.keys(manualReplacementAssignments).some(id =>
+                                (manualReplacementAssignments[id] == null ? null : Number(manualReplacementAssignments[id])) !==
+                                (manualReplacementSaved[id] == null ? null : Number(manualReplacementSaved[id])))">
                         Save player replacements
                       </button>
                       <button type="button" class="saveResultBtn" @click="saveManualWildcards"

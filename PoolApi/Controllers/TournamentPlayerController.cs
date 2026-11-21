@@ -12,6 +12,11 @@ namespace TournamentBackend.Controllers
         public string Name { get; set; }
     }
 
+    public class SaveTournamentPlayerHandicapRequest
+    {
+        public int? HandicapPlayTo { get; set; }
+    }
+
     public class RandomizeTournamentNamesRequest
     {
         public List<TournamentNameShuffleAssignment> Assignments { get; set; }
@@ -76,6 +81,22 @@ namespace TournamentBackend.Controllers
                 Console.WriteLine(ex);
                 return StatusCode(500, new { message = "The player name could not be saved." });
             }
+        }
+
+        [HttpPut("{playerId:int}/handicap")]
+        public IActionResult SaveHandicap(int tournamentId, int playerId, [FromBody] SaveTournamentPlayerHandicapRequest model)
+        {
+            if (!TryGetUserId(out int userId)) return Unauthorized();
+            if (model == null) return BadRequest(new { message = "Handicap value is missing." });
+            try
+            {
+                var player = new TournamentPlayerBackoffice().SavePlayerHandicap(
+                    tournamentId, userId, playerId, model.HandicapPlayTo);
+                return Ok(new { player, message = "Handicap saved." });
+            }
+            catch (UnauthorizedAccessException ex) { return StatusCode(403, new { message = ex.Message }); }
+            catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+            catch (Exception ex) { Console.WriteLine(ex); return StatusCode(500, new { message = "Could not save handicap." }); }
         }
 
         [HttpPost("randomize-names")]
